@@ -92,29 +92,30 @@ opsmind:
     planner-strategy: ${PLANNER_STRATEGY:default}
   llm:
     routing:
-      # 兜底模型：callName 未命中任何前缀时用。沿用 qwen-plus 保证不配也能跑。
+      # 兜底模型：callName 未命中时用。默认 qwen-plus（复杂任务默认用强模型保效果）。
       default-model: ${LLM_DEFAULT_MODEL:qwen-plus}
+      # 简单任务用的快模型（省成本）。
+      simple-model: ${LLM_SIMPLE_MODEL:qwen-turbo}
+      # 走 simple-model 的 callName（简单任务：抽取/缺口/工具选择/追问/摘要）。
+      # 这些是结构化任务，用快模型省成本、效果不损。其余走 default-model。
+      simple-calls:
+        - llm.ticket-extract
+        - llm.info-gap
+        - llm.tool-select
+        - llm.follow-up
+        - llm.context-summarize
+      # mappings 留空——模型路由由 default-model + simple-model + simple-calls 三项决定。
+      # 仅当某个 callName 需要单独指定模型时才在此覆盖（精确匹配优先级最高）。
+      # mappings: {}
       # 模型 → 上下文窗口（token）。供 truncate 按目标模型窗口动态截断 userContent。
-      # 未列出的模型用 default-model-window 兜底（保守按小窗口算更安全）。
       model-windows:
-        qwen-turbo: 8192      # qwen-turbo 窗口 8k
-        qwen-plus: 32768      # qwen-plus 窗口 32k
-        qwen-max: 32768       # qwen-max 窗口 32k
+        qwen-turbo: 8192
+        qwen-plus: 32768
+        qwen-max: 32768
       default-model-window: ${DEFAULT_MODEL_WINDOW:8192}
-      # 多模型路由：简单环节用 qwen-turbo（快+省 token），复杂环节用 qwen-plus（保效果）。
-      # 前缀匹配（以 .* 结尾）+ 精确匹配，由 ModelRouter.resolveModel 解析。
-      mappings:
-        llm.ticket-extract: ${MODEL_EXTRACT:qwen-turbo}      # 抽取：结构化任务，简单
-        llm.info-gap:       ${MODEL_GAP:qwen-turbo}          # 缺口：结构化任务，简单
-        llm.tool-select:    ${MODEL_TOOL_SELECT:qwen-turbo}  # 工具选择：从白名单选，简单
-        llm.follow-up:      ${MODEL_FOLLOWUP:qwen-turbo}     # 追问：生成问题，简单
-        llm.agent-plan:     ${MODEL_PLAN:qwen-plus}          # 规划：需要推理，中等
-        llm.root-cause:     ${MODEL_ROOT_CAUSE:qwen-plus}    # 根因：复杂推理，用强模型
-        llm.routing-suggest: ${MODEL_ROUTING:qwen-plus}       # 路由建议：需要推理
-        llm.suggestion:     ${MODEL_SUGGESTION:qwen-plus}    # 处置建议：需要推理
-        llm.context-summarize: ${MODEL_SUMMARIZE:qwen-turbo} # 历史摘要：简单压缩，用快模型省钱      chat-memory:
-        # 工单级短期记忆：按 runId 隔离各工单对话历史，多轮追问复用上下文而非重跑。
-        # 关闭时退化为单轮（现状）。出问题可一键关闭回退。
+      # 工单级短期记忆：按 runId 隔离各工单对话历史，多轮追问复用上下文而非重跑。
+      # 关闭时退化为单轮（现状）。出问题可一键关闭回退。
+      chat-memory:
         enabled: ${CHAT_MEMORY_ENABLED:true}
         # 每个工单保留最近 N 条消息（防 context 膨胀）。
         history-size: ${CHAT_MEMORY_HISTORY_SIZE:10}
@@ -160,13 +161,10 @@ opsmind:
       default-count: ${ADVERSARIAL_DEFAULT_COUNT:8}
       strategies: OMIT_FIELD,CONTRADICTION,CROSS_DOMAIN,COLLOQUIAL,NON_INCIDENT,NOISE
   resilience:
-    # 通配 key（* 结尾）作为前缀规则：未显式列出的 callName 按前缀自动继承策略，
-    # 新增调用点零配置即纳入治理，防遗漏裸奔。精确 key 优先于前缀规则（见 CallRegistry.get）。
-    call-mappings:
-      llm.*:      { retry: llm-default, timelimiter: llm-default, circuitbreaker: llm-default }
-      vector.*:   { retry: vector-default, timelimiter: vector-default, circuitbreaker: vector-default }
-      tool.*:     { retry: tool-default, timelimiter: tool-default }
-      rerank.*:   { retry: rerank-default, timelimiter: rerank-default, circuitbreaker: rerank-default }
+    # call-mappings 已内置到 CallRegistry 代码（BUILTIN_DEFAULTS）：
+    # llm.*（可重试+超时+熔断）/ vector.*（可重试+熔断）/ tool.*（不重试）/ rerank.*（可重试+熔断）。
+    # 治理策略按调用类型语义决定，极少变化，无需配置。需要覆盖时在此配 call-mappings。
+    # call-mappings: {}
 
 resilience4j:
   retry:

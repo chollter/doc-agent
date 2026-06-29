@@ -49,8 +49,12 @@ public class ModelRouter {
         if (callName == null || callName.isBlank()) {
             return properties.getDefaultModel();
         }
+        // 0. 简单任务快路径：simpleCalls 里的 callName 用 simpleModel（省成本）
+        if (properties.getSimpleCalls() != null && properties.getSimpleCalls().contains(callName)) {
+            return properties.getSimpleModel();
+        }
         Map<String, String> mappings = properties.getMappings();
-        // 1. 精确匹配
+        // 1. 精确匹配（mappings 显式配置覆盖 simpleCalls，优先级最高）
         String exact = mappings.get(callName);
         if (exact != null && !exact.isBlank()) {
             return exact;

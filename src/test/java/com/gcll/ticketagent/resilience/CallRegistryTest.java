@@ -102,11 +102,13 @@ class CallRegistryTest {
     }
 
     @Test
-    void emptyMappingsReturnsEmpty() {
+    void emptyMappingsFallsBackToBuiltinDefault() {
+        // yml 不配 call-mappings 时，用内置默认（llm.* → llm-default 策略）
         CallRegistry registry = registryWith(new LinkedHashMap<>());
 
         CallDecorators d = registry.get("llm.anything");
 
-        assertThat(d.retry()).isNull();
+        // 内置默认：llm.* 应匹配到 llm-default 重试策略（不再返回 empty）
+        assertThat(d.retry()).isNotNull();
     }
 }

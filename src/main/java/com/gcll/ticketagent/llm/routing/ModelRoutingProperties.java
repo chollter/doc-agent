@@ -37,7 +37,23 @@ public class ModelRoutingProperties {
     /** 兜底模型：callName 未命中任何前缀时用。默认沿用现有 qwen-plus，保证不配也能跑。 */
     private String defaultModel = "qwen-plus";
 
-    /** callName（精确或前缀匹配）→ 模型名。 */
+    /**
+     * 简单任务用的快模型（省钱）。{@link #simpleCalls} 里列出的 callName 用这个模型。
+     * 默认 qwen-turbo。
+     */
+    private String simpleModel = "qwen-turbo";
+
+    /**
+     * 走 {@link #simpleModel} 的 callName 集合（简单任务：抽取/缺口/工具选择/追问/摘要）。
+     * 这些是结构化/简单任务，用快模型省成本，效果不损。
+     * <p>方案B 简化：不再在 mappings 里逐条配，用集合列出"哪些是简单任务"即可。
+     */
+    private java.util.Set<String> simpleCalls = java.util.Set.of(
+            "llm.ticket-extract", "llm.info-gap", "llm.tool-select",
+            "llm.follow-up", "llm.context-summarize"
+    );
+
+    /** callName（精确或前缀匹配）→ 模型名。用于需要单独指定模型时覆盖默认逻辑。 */
     private Map<String, String> mappings = new HashMap<>();
 
     /**
@@ -57,6 +73,22 @@ public class ModelRoutingProperties {
 
     public void setDefaultModel(String defaultModel) {
         this.defaultModel = defaultModel;
+    }
+
+    public String getSimpleModel() {
+        return simpleModel;
+    }
+
+    public void setSimpleModel(String simpleModel) {
+        this.simpleModel = simpleModel;
+    }
+
+    public java.util.Set<String> getSimpleCalls() {
+        return simpleCalls;
+    }
+
+    public void setSimpleCalls(java.util.Set<String> simpleCalls) {
+        this.simpleCalls = simpleCalls;
     }
 
     public Map<String, String> getMappings() {
