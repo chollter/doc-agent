@@ -46,6 +46,18 @@ public class McpToolsConfig {
             }
             """;
 
+    private static final String VIEW_LOG_SCHEMA = """
+            {
+              "type": "object",
+              "properties": {
+                "serviceName": { "type": "string", "description": "服务名（对应日志文件名，如 payment-service）" },
+                "keyword": { "type": "string", "description": "过滤关键字（如 OOM、OutOfMemoryError），为空则取最近行" },
+                "tailLines": { "type": "integer", "description": "返回最近多少行", "default": 50 }
+              },
+              "required": ["serviceName"]
+            }
+            """;
+
     @Bean
     public List<McpServerFeatures.SyncToolSpecification> opsTools(OpsQueryService queryService) {
         McpServerFeatures.SyncToolSpecification logTool = new McpServerFeatures.SyncToolSpecification(
@@ -66,7 +78,15 @@ public class McpToolsConfig {
                         intVal(arguments, "limit", 8)
                 ))
         );
-        return List.of(logTool, metricTool);
+        McpServerFeatures.SyncToolSpecification viewLogTool = new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("view_logs", "查看服务日志文件（通过 grep/tail 命令检索真实日志，适合排查具体错误堆栈）", VIEW_LOG_SCHEMA),
+                (exchange, arguments) -> toTextResult(queryService.viewLogFiles(
+                        str(arguments, "serviceName"),
+                        str(arguments, "keyword"),
+                        intVal(arguments, "tailLines", 50)
+                ))
+        );
+        return List.of(logTool, metricTool, viewLogTool);
     }
 
     private static McpSchema.CallToolResult toTextResult(String text) {
