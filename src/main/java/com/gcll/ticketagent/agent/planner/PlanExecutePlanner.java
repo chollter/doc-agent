@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Plan-and-Execute 规划器（阶段3）：LLM 先规划有序步骤序列，支持执行中改计划与断点续跑。
+ * Plan-and-Execute 规划器（阶段3）：LLM 先规划有序步骤序列，按计划顺序执行证据收集。
  *
  * <p>激活条件：{@code opsmind.agent.planner-strategy=plan-execute}（默认走 SpringAiAgentPlanner）。
  * 与 {@link SpringAiAgentPlanner}（@Primary）共存：本类不是 Primary，通过配置开关显式启用时，
@@ -32,6 +32,11 @@ import java.util.UUID;
  *   <li>{@link SpringAiAgentPlanner}：输出无序动作集合（actions/skipped），"做不做某动作"</li>
  *   <li>本类：输出有序步骤 + 每步目标（{@link ExecutionPlan}），"按什么顺序做、为什么"</li>
  * </ul>
+ *
+ * <p><b>计划如何驱动执行（重构后）</b>：
+ * AnalysisWorkflowService.executeEvidenceByPlan 遍历计划步骤，按 action 类型分派执行
+ * （KNOWLEDGE_SEARCH→知识检索，QUERY_LOGS→查日志，QUERY_METRIC→查指标），
+ * 每步执行后标记 DONE 并持久化——支持断点续跑（从第一个 PENDING 继续，跳过已 DONE 的）。
  *
  * <p><b>降级</b>：LLM 规划失败/输出非法 → 回退到 {@link SpringAiAgentPlanner}（把它输出的
  * AgentPlan 转成单步 ExecutionPlan），保证 plan-execute 出问题不致命。

@@ -15,11 +15,13 @@ import java.util.List;
  *   <li>{@code ExecutionPlan}：有序步骤序列，每步有明确目标与执行状态，可动态调整</li>
  * </ul>
  *
- * <p>Plan-and-Execute 范式：LLM 先全局规划出完整步骤序列（Plan），执行某步后发现不对能改计划（Execute）。
- * 比 ReAct（边走边看）更可控，符合"不依赖 LLM 自由判断、先规划再执行"的工程化主线。
+ * <p>Plan-and-Execute 范式：LLM 先全局规划出完整步骤序列（Plan），执行时按计划顺序逐个
+ * 执行证据收集（Execute）。比 ReAct（边走边看）更可控，符合"不依赖 LLM 自由判断、先规划
+ * 再执行"的工程化主线。
  *
  * <p><b>状态机</b>：每个 step 有 PENDING/RUNNING/DONE/SKIPPED/FAILED 状态，支持断点续跑
- * （从第一个 PENDING 步继续，不重跑已 DONE 的）。
+ * （从第一个 PENDING 步继续，不重跑已 DONE 的）。AnalysisWorkflowService.executeEvidenceByPlan
+ * 遍历步骤、按 action 分派执行、每步完成后 markStep(DONE) 并持久化。
  */
 public class ExecutionPlan {
 

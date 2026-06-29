@@ -138,25 +138,25 @@ public class AnalysisWorkflowService {
             boolean extractLlmUsed
     ) {
         long start = System.currentTimeMillis();
+
+        // 计划驱动 vs 固定顺序：plan-execute 模式时，证据收集由计划驱动
         AgentPlan plan = resolvePlan(run, draft, extract);
 
-        List<KnowledgeHit> hits = searchKnowledgeIfNeeded(run, draft, extract, plan);
+        // 尝试加载持久化的 ExecutionPlan（plan-execute 模式才会生成）
+        ExecutionPlan execPlan = contextPersister.loadExecutionPlan(run);
 
-        start = System.currentTimeMillis();
-        StepOutcome<ToolSelection> selectionOutcome = toolSelector.select(draft.fullContent(), extract, plan);
-        ToolSelection selection = selectionOutcome.value();
-        long selectionCostMs = selectionOutcome.costMs() > 0 ? selectionOutcome.costMs() : System.currentTimeMillis() - start;
-        auditLogService.recordStep(run, AgentStepName.TOOL_SELECTION, plan.auditSummary(), selection.auditSummary(),
-                selectionOutcome.llmUsed(), selectionOutcome.llmUsed() ? "SpringAI" : null, selectionCostMs, null);
+        // 证据收集（两条路径分流）
+        StepExecutionContext ctx;
+        if (planExecutePlanner.isPresent() && execPlan != null && !execPlan.getSteps().isEmpty()) {
+            // ★ 计划驱动：按 ExecutionPlan 的 action 顺序逐个执行，标记状态，断点续跑
+            ctx = executeEvidenceByPlan(run, draft, extract, execPlan);
+        } else {
+            // 固定顺序（原逻辑，或 plan-execute 回退后）
+            ctx = executeEvidenceFixedOrder(run, draft, extract, plan);
+        }
 
-        start = System.currentTimeMillis();
-        List<ToolResult> toolResults = collectEvidenceSafely(run, extract, draft, selection);
-        String evidenceSummary = summaryFormatter.summarizeToolResults(toolResults);
-        auditLogService.recordStep(run, AgentStepName.EVIDENCE_COLLECTION, summaryFormatter.summarizeExtract(extract),
-                evidenceSummary, false, null, System.currentTimeMillis() - start, null);
-
-        start = System.currentTimeMillis();
-        RootCauseResult rootCause = resolveRootCause(run, draft, extract, hits, evidenceSummary, toolResults);
+        // ===== 以下后处理保持原样（rootcause/priority/routing/suggestion）=====
+        RootCauseResult rootCause = resolveRootCause(run, draft, extract, ctx.hits(), ctx.evidenceSummary(), ctx.toolResults());
 
         start = System.currentTimeMillis();
         PriorityResult priority = priorityEvaluationService.evaluate(extract);
@@ -165,9 +165,9 @@ public class AnalysisWorkflowService {
                 priority.toString(), false, null, System.currentTimeMillis() - start, null);
 
         start = System.currentTimeMillis();
-        RoutingResult ruleRouting = teamRoutingService.route(extract, hits);
+        RoutingResult ruleRouting = teamRoutingService.route(extract, ctx.hits());
         StepOutcome<RoutingSuggestion> routingSuggestionOutcome = routingSuggestionService.suggest(
-                draft.fullContent(), extract, hits, ruleRouting);
+                draft.fullContent(), extract, ctx.hits(), ruleRouting);
         RoutingResult routing = routingPolicyEngine.merge(ruleRouting, routingSuggestionOutcome.value());
         long routingCostMs = routingSuggestionOutcome.costMs() > 0
                 ? routingSuggestionOutcome.costMs()
@@ -180,13 +180,13 @@ public class AnalysisWorkflowService {
                 routingCostMs, null);
 
         start = System.currentTimeMillis();
-        StepOutcome<TicketSuggestion> suggestionOutcome = suggestionGenerationService.generate(extract, hits, toolResults, rootCause);
+        StepOutcome<TicketSuggestion> suggestionOutcome = suggestionGenerationService.generate(extract, ctx.hits(), ctx.toolResults(), rootCause);
         TicketSuggestion suggestion = suggestionOutcome.value();
         run.setCurrentSummary(suggestion.summary());
         long suggestionCostMs = suggestionOutcome.costMs() > 0
                 ? suggestionOutcome.costMs()
                 : System.currentTimeMillis() - start;
-        auditLogService.recordStep(run, AgentStepName.SUGGESTION_GENERATION, hits.toString(), suggestion.toString(),
+        auditLogService.recordStep(run, AgentStepName.SUGGESTION_GENERATION, ctx.hits().toString(), suggestion.toString(),
                 suggestionOutcome.llmUsed(), suggestionOutcome.llmUsed() ? "SpringAI" : null, suggestionCostMs, null);
 
         boolean aiGenerated = extractLlmUsed || rootCause.llmUsed() || routingSuggestionOutcome.llmUsed()
@@ -197,8 +197,136 @@ public class AnalysisWorkflowService {
                 extract, priority, routing, rootCause, suggestion, needConfirm, confirmReason);
 
         AgentRunResponse response = responseAssembler.analysisResult(run.getId(), analysis, needConfirm, aiGenerated);
-        completeRun(run, gap, plan, selection, analysis, needConfirm, confirmReason, routing);
+        completeRun(run, gap, plan, new ToolSelection(List.of(), java.util.Map.of(), "plan-driven", false), analysis, needConfirm, confirmReason, routing);
         return response;
+    }
+
+    /**
+     * 固定顺序执行证据收集（原逻辑，提取出来）：knowledge → toolSelect → evidence。
+     */
+    private StepExecutionContext executeEvidenceFixedOrder(
+            AgentRun run, TicketDraft draft, TicketExtractResult extract, AgentPlan plan) {
+        StepExecutionContext ctx = new StepExecutionContext();
+
+        List<KnowledgeHit> hits = searchKnowledgeIfNeeded(run, draft, extract, plan);
+        ctx.addHits(hits);
+
+        long start = System.currentTimeMillis();
+        StepOutcome<ToolSelection> selectionOutcome = toolSelector.select(draft.fullContent(), extract, plan);
+        ToolSelection selection = selectionOutcome.value();
+        long selectionCostMs = selectionOutcome.costMs() > 0 ? selectionOutcome.costMs() : System.currentTimeMillis() - start;
+        auditLogService.recordStep(run, AgentStepName.TOOL_SELECTION, plan.auditSummary(), selection.auditSummary(),
+                selectionOutcome.llmUsed(), selectionOutcome.llmUsed() ? "SpringAI" : null, selectionCostMs, null);
+
+        start = System.currentTimeMillis();
+        List<ToolResult> toolResults = collectEvidenceSafely(run, extract, draft, selection);
+        ctx.addToolResults(toolResults);
+        ctx.setEvidenceSummary(summaryFormatter.summarizeToolResults(toolResults));
+        auditLogService.recordStep(run, AgentStepName.EVIDENCE_COLLECTION, summaryFormatter.summarizeExtract(extract),
+                ctx.evidenceSummary(), false, null, System.currentTimeMillis() - start, null);
+        return ctx;
+    }
+
+    /**
+     * ★ 计划驱动执行证据收集（Plan-Execute 重构核心）。
+     *
+     * <p>遍历 {@link ExecutionPlan} 的有序步骤，按 {@link AgentAction} 类型分派执行，
+     * 每步执行后标记 DONE 并持久化（断点续跑用）。证据写入 {@link StepExecutionContext}。
+     *
+     * <p>这让计划真正驱动执行——不再是无脑固定顺序，而是按 LLM 规划的顺序逐个执行证据收集，
+     * 支持断点续跑（从第一个 PENDING 继续，跳过已 DONE 的）。
+     *
+     * @param execPlan 持久化的执行计划（可能含已完成的步骤，断点续跑场景）
+     */
+    private StepExecutionContext executeEvidenceByPlan(
+            AgentRun run, TicketDraft draft, TicketExtractResult extract, ExecutionPlan execPlan) {
+        StepExecutionContext ctx = new StepExecutionContext();
+        if (execPlan == null || execPlan.getSteps() == null || execPlan.getSteps().isEmpty()) {
+            log.warn("executeEvidenceByPlan got empty plan, runId={}, fallback to fixed order", run.getId());
+            return executeEvidenceFixedOrder(run, draft, extract, execPlan == null ? null : execPlan.toAgentPlan());
+        }
+
+        log.info("Plan-driven execution, runId={}, totalSteps={}, resuming={}",
+                run.getId(), execPlan.getSteps().size(),
+                execPlan.getSteps().stream().anyMatch(s -> s.status() == ExecutionPlan.StepStatus.DONE));
+
+        for (ExecutionPlan.PlanStep step : execPlan.getSteps()) {
+            // 断点续跑：跳过已完成的步骤
+            if (step.status() == ExecutionPlan.StepStatus.DONE
+                    || step.status() == ExecutionPlan.StepStatus.SKIPPED) {
+                log.info("Step [{}] already {}, skip (resume), runId={}", step.stepId(), step.status(), run.getId());
+                continue;
+            }
+            long start = System.currentTimeMillis();
+            try {
+                executePlanStep(run, draft, extract, step, ctx);
+                execPlan.markStep(step.stepId(), ExecutionPlan.StepStatus.DONE);
+            } catch (Exception ex) {
+                log.warn("Plan step [{}] failed, mark FAILED and continue, runId={}: {}",
+                        step.stepId(), run.getId(), ex.getMessage());
+                execPlan.markStep(step.stepId(), ExecutionPlan.StepStatus.FAILED);
+            }
+            // 每步执行后持久化计划状态（断点续跑用）
+            contextPersister.persistExecutionPlan(run, execPlan);
+        }
+
+        ctx.setEvidenceSummary(summaryFormatter.summarizeToolResults(ctx.toolResults()));
+        return ctx;
+    }
+
+    /**
+     * 按 action 类型分派执行单个计划步骤，结果写入 ctx。
+     */
+    private void executePlanStep(AgentRun run, TicketDraft draft, TicketExtractResult extract,
+                                 ExecutionPlan.PlanStep step, StepExecutionContext ctx) {
+        long start = System.currentTimeMillis();
+        switch (step.action()) {
+            case KNOWLEDGE_SEARCH, SIMILAR_CASE_SEARCH -> {
+                // 知识检索（KNOWLEDGE_SEARCH 和 SIMILAR_CASE_SEARCH 走同一个知识检索链路）
+                KnowledgeSearchOutcome outcome = searchKnowledgeSafely(run, draft, extract);
+                ctx.addHits(outcome.hits());
+                if (!outcome.hits().isEmpty()) {
+                    agentMetrics.recordRagHit();
+                }
+                auditLogService.recordStep(run, AgentStepName.KNOWLEDGE_SEARCH,
+                        "plan-step:" + step.stepId() + " goal=" + step.goal(),
+                        outcome.auditOutput(), false, null,
+                        System.currentTimeMillis() - start, outcome.errorMessage());
+            }
+            case QUERY_LOGS -> {
+                // 查日志工具
+                List<ToolResult> logs = collectSingleTool(run, extract, draft, "query_logs");
+                ctx.addToolResults(logs);
+                auditLogService.recordStep(run, AgentStepName.EVIDENCE_COLLECTION,
+                        "plan-step:" + step.stepId() + " goal=" + step.goal(),
+                        summaryFormatter.summarizeToolResults(logs), false, null,
+                        System.currentTimeMillis() - start, null);
+            }
+            case QUERY_METRIC -> {
+                // 查指标工具
+                List<ToolResult> metrics = collectSingleTool(run, extract, draft, "query_metric");
+                ctx.addToolResults(metrics);
+                auditLogService.recordStep(run, AgentStepName.EVIDENCE_COLLECTION,
+                        "plan-step:" + step.stepId() + " goal=" + step.goal(),
+                        summaryFormatter.summarizeToolResults(metrics), false, null,
+                        System.currentTimeMillis() - start, null);
+            }
+        }
+    }
+
+    /**
+     * 按单个工具名收集证据（计划驱动用：QUERY_LOGS/QUERY_METRIC 各调一次）。
+     */
+    private List<ToolResult> collectSingleTool(AgentRun run, TicketExtractResult extract,
+                                               TicketDraft draft, String toolName) {
+        ToolSelection singleSelection = new ToolSelection(List.of(toolName), java.util.Map.of(),
+                "plan-driven:" + toolName, false);
+        try {
+            return evidenceCollectionService.collect(run.getId(), extract, draft.fullContent(), singleSelection);
+        } catch (Exception ex) {
+            log.warn("Single tool [{}] collection failed, runId={}: {}", toolName, run.getId(), ex.getMessage());
+            return Collections.emptyList();
+        }
     }
 
     /**
