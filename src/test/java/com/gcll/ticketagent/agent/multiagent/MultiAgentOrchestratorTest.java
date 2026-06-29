@@ -28,6 +28,13 @@ class MultiAgentOrchestratorTest {
         );
     }
 
+    /** 构造 mock supervisor：返回全部 worker（保持原"全跑"测试行为）。 */
+    private SupervisorAgent supervisorSelectsAll() {
+        SupervisorAgent supervisor = mock(SupervisorAgent.class);
+        when(supervisor.decide(any(), any(), any())).thenAnswer(inv -> inv.getArgument(2));
+        return supervisor;
+    }
+
     /** 场景1：3 个 worker 并行执行，findings 全部收集到黑板。 */
     @Test
     void allWorkersRunInParallelAndCollectFindings() {
@@ -40,7 +47,7 @@ class MultiAgentOrchestratorTest {
                 List.of(AgentFinding.of("log", "log结论", 0.8))));
 
         MultiAgentOrchestrator orchestrator = new MultiAgentOrchestrator(
-                List.of(logWorker, metricWorker, knowledgeWorker), critic);
+                List.of(logWorker, metricWorker, knowledgeWorker), critic, supervisorSelectsAll());
 
         CriticVerdict verdict = orchestrator.orchestrate(
                 "run-1", "工单内容", sampleExtract(), null);
@@ -70,7 +77,7 @@ class MultiAgentOrchestratorTest {
         });
 
         MultiAgentOrchestrator orchestrator = new MultiAgentOrchestrator(
-                List.of(goodWorker, badWorker), critic);
+                List.of(goodWorker, badWorker), critic, supervisorSelectsAll());
 
         // 即使 badWorker 抛异常，allOf.join() 会把异常包进 CompletableFuture
         // 这里验证：编排不应被单个 worker 异常彻底打断（至少 critic 能拿到好的 worker 的 finding）
@@ -88,7 +95,7 @@ class MultiAgentOrchestratorTest {
         when(critic.review(any())).thenReturn(CriticVerdict.of(
                 false, "无可用发现", 0.0, List.of("所有 worker 都未产出结论"), List.of()));
 
-        MultiAgentOrchestrator orchestrator = new MultiAgentOrchestrator(List.of(), critic);
+        MultiAgentOrchestrator orchestrator = new MultiAgentOrchestrator(List.of(), critic, supervisorSelectsAll());
 
         CriticVerdict verdict = orchestrator.orchestrate("run-3", "工单", sampleExtract(), null);
 
@@ -107,11 +114,55 @@ class MultiAgentOrchestratorTest {
         CriticAgent critic = mock(CriticAgent.class);
         when(critic.review(any())).thenReturn(CriticVerdict.of(true, "ok", 0.8, List.of(), List.of()));
 
-        new MultiAgentOrchestrator(List.of(w1, w2, w3), critic)
+        new MultiAgentOrchestrator(List.of(w1, w2, w3), critic, supervisorSelectsAll())
                 .orchestrate("run-4", "工单", sampleExtract(), null);
 
         // 3 个 worker 并行时，并发计数应 >= 2（容忍调度抖动，不要求严格=3）
         assertThat(maxConcurrent.get()).isGreaterThanOrEqualTo(2);
+    }
+
+    /** 场景5：Supervisor 只选了部分 worker，未选中的不执行。 */
+    @Test
+    void supervisorSelectsSubsetOnlySelectedRun() {
+        WorkerAgent logWorker = stubWorker("log", "日志结论", 0.8);
+        WorkerAgent metricWorker = stubWorker("metric", "指标结论", 0.8);
+        WorkerAgent knowledgeWorker = stubWorker("knowledge", "案例结论", 0.8);
+        CriticAgent critic = mock(CriticAgent.class);
+        when(critic.review(any())).thenAnswer(inv -> {
+            AgentRunContext ctx = inv.getArgument(0);
+            return CriticVerdict.of(true, "ok", 0.8, List.of(), ctx.findings());
+        });
+        // Supervisor 只选 knowledge（模拟咨询类工单只需查案例）
+        SupervisorAgent supervisor = mock(SupervisorAgent.class);
+        when(supervisor.decide(any(), any(), any())).thenReturn(List.of(knowledgeWorker));
+
+        new MultiAgentOrchestrator(List.of(logWorker, metricWorker, knowledgeWorker), critic, supervisor)
+                .orchestrate("run-5", "工单", sampleExtract(), null);
+
+        // 关键：只有 knowledge worker 的 finding 进了黑板，log/metric 没跑
+        // 通过 critic 收到的 ctx 验证（critic mock 返回 ctx.findings）
+        org.mockito.Mockito.verify(logWorker, org.mockito.Mockito.never()).investigate(any());
+        org.mockito.Mockito.verify(metricWorker, org.mockito.Mockito.never()).investigate(any());
+        org.mockito.Mockito.verify(knowledgeWorker).investigate(any());
+    }
+
+    /** 场景6：Supervisor LLM 失败，降级为全量调度（兜底，不比现状差）。 */
+    @Test
+    void supervisorFailureDegradesToAllWorkers() {
+        WorkerAgent logWorker = stubWorker("log", "log", 0.8);
+        WorkerAgent metricWorker = stubWorker("metric", "metric", 0.8);
+        CriticAgent critic = mock(CriticAgent.class);
+        when(critic.review(any())).thenReturn(CriticVerdict.of(true, "ok", 0.8, List.of(), List.of()));
+        // Supervisor 降级返回全部 worker（模拟 LLM 失败兜底）
+        SupervisorAgent supervisor = mock(SupervisorAgent.class);
+        when(supervisor.decide(any(), any(), any())).thenReturn(List.of(logWorker, metricWorker));
+
+        new MultiAgentOrchestrator(List.of(logWorker, metricWorker), critic, supervisor)
+                .orchestrate("run-6", "工单", sampleExtract(), null);
+
+        // 降级后两个 worker 都跑了
+        org.mockito.Mockito.verify(logWorker).investigate(any());
+        org.mockito.Mockito.verify(metricWorker).investigate(any());
     }
 
     // ---- 辅助：构造 stub worker ----

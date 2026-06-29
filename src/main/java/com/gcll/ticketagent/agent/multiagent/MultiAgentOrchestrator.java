@@ -35,10 +35,13 @@ public class MultiAgentOrchestrator {
 
     private final List<WorkerAgent> workers;
     private final CriticAgent criticAgent;
+    private final SupervisorAgent supervisorAgent;
 
-    public MultiAgentOrchestrator(List<WorkerAgent> workers, CriticAgent criticAgent) {
+    public MultiAgentOrchestrator(List<WorkerAgent> workers, CriticAgent criticAgent,
+                                  SupervisorAgent supervisorAgent) {
         this.workers = workers;
         this.criticAgent = criticAgent;
+        this.supervisorAgent = supervisorAgent;
     }
 
     /**
@@ -51,17 +54,18 @@ public class MultiAgentOrchestrator {
         // 1. 共享黑板
         AgentRunContext ctx = new AgentRunContext(runId, originalContent, extract, gap);
 
-        // 2. Supervisor 拆任务（规则版：按可用 worker 拆，可演进为 LLM 拆解）
-        for (WorkerAgent w : workers) {
+        // 2. Supervisor 智能拆解：LLM 根据工单决定该跑哪些 worker（不是无脑全跑）
+        List<WorkerAgent> selectedWorkers = supervisorAgent.decide(originalContent, extract, workers);
+        for (WorkerAgent w : selectedWorkers) {
             ctx.addTask(w.role() + "-investigation");
         }
-        log.info("Multi-agent orchestrating, runId={}, workers={}, tasks={}",
-                runId, workers.size(), ctx.tasks());
+        log.info("Multi-agent orchestrating, runId={}, supervisor selected {} of {} workers, tasks={}",
+                runId, selectedWorkers.size(), workers.size(), ctx.tasks());
 
         // 3. Worker 并行调查（CompletableFuture.allOf 汇合）
         // 每个 future 内部 catch：即使某个 worker 违反契约抛异常，也不拖垮其他 worker 的并行
         List<java.util.concurrent.CompletableFuture<Void>> futures = new ArrayList<>();
-        for (WorkerAgent worker : workers) {
+        for (WorkerAgent worker : selectedWorkers) {
             futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
                 try {
                     AgentFinding finding = worker.investigate(ctx);
