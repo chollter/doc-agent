@@ -6,6 +6,7 @@ import com.gcll.ticketagent.agent.planner.AgentPlan;
 import com.gcll.ticketagent.agent.planner.ExecutionPlan;
 import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.execution.tool.ToolSelection;
+import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
 import com.gcll.ticketagent.understanding.gap.InfoGapAnalysis;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,9 +18,11 @@ public class AgentRunContextPersister {
     private static final Logger log = LoggerFactory.getLogger(AgentRunContextPersister.class);
 
     private final ObjectMapper objectMapper;
+    private final AgentRunRepository agentRunRepository;
 
-    public AgentRunContextPersister(ObjectMapper objectMapper) {
+    public AgentRunContextPersister(ObjectMapper objectMapper, AgentRunRepository agentRunRepository) {
         this.objectMapper = objectMapper;
+        this.agentRunRepository = agentRunRepository;
     }
 
     public void persist(AgentRun run, InfoGapAnalysis gap, AgentPlan plan, ToolSelection selection) {
@@ -41,6 +44,9 @@ public class AgentRunContextPersister {
     /**
      * 阶段3：持久化有序执行计划。复用 agentPlanJson 字段（存 ExecutionPlan 的 JSON），
      * 不新增 schema 列。断点续跑时从这里反序列化恢复未完成的步骤。
+     *
+     * <p><b>修复</b>：此前只 setAgentPlanJson 改了内存对象，没调 save 落盘——
+     * 应用崩溃后 DB 里还是初始状态，断点续跑会重跑所有步骤。现加 save 确保每步状态落盘。
      */
     public void persistExecutionPlan(AgentRun run, ExecutionPlan plan) {
         if (plan == null) {
@@ -48,8 +54,9 @@ public class AgentRunContextPersister {
         }
         try {
             run.setAgentPlanJson(objectMapper.writeValueAsString(plan));
-        } catch (JsonProcessingException ex) {
-            log.warn("Failed to serialize execution plan, runId={}, error={}", run.getId(), ex.getMessage());
+            agentRunRepository.save(run);  // ★ 落盘——此前漏了这行
+        } catch (Exception ex) {
+            log.warn("Failed to persist execution plan, runId={}, error={}", run.getId(), ex.getMessage());
         }
     }
 

@@ -9,7 +9,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
@@ -86,19 +85,15 @@ public class ReActLoop {
      */
     public ReActResult run(String runId, TicketExtractResult extract, String originalContent) {
         long start = System.currentTimeMillis();
-        // ToolContext：把 extract/originalContent 注入，adapter 从中取
+        // 工具上下文：extract/originalContent/toolCallLog 注入，adapter 从中取
         Map<String, Object> ctxMap = new HashMap<>();
         ctxMap.put(ReActToolAdapter.CTX_EXTRACT, extract);
         ctxMap.put(ReActToolAdapter.CTX_ORIGINAL_CONTENT, originalContent);
-        // 共享的"已调工具记录"，adapter 每次执行追加（用于审计 + 判断是否该停）
         List<String> toolCallLog = new ArrayList<>();
         ctxMap.put("toolCallLog", toolCallLog);
 
-        ToolContext toolContext = new ToolContext(ctxMap);
-
         try {
-            // 构造请求：系统提示 + ReAct prompt + 工单内容 + 注入工具 + ToolContext
-            long remaining = MAX_TOTAL_MS;
+            // 构造请求：系统提示 + ReAct prompt + 工单内容 + 注入工具 + 上下文
             ChatClient.ChatClientRequestSpec request = chatClientBuilder.build().prompt()
                     .system(systemBasePrompt)
                     .user(reactPrompt + "\n\n工单内容：\n" + originalContent
@@ -106,16 +101,27 @@ public class ReActLoop {
                     .tools(toolAdapter)
                     .toolContext(ctxMap);
 
-            // 框架自动跑 think→act→observe 循环，直到 LLM 给文本结论
-            ChatResponse response = request.call().chatResponse();
+            // ★ 真超时控制：在独立线程执行框架循环，主线程用 future.get(MAX_TOTAL_MS) 超时取消
+            // 此前是同步阻塞调用 request.call() + 跑完后再 log.warn——"假兜底"，超时了也不管。
+            // 改后：超过 MAX_TOTAL_MS 直接 cancel(true) 中断，抛 ReActException 触发回退线性。
+            java.util.concurrent.CompletableFuture<ChatResponse> future =
+                    java.util.concurrent.CompletableFuture.supplyAsync(() -> request.call().chatResponse());
+            ChatResponse response;
+            try {
+                response = future.get(MAX_TOTAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException ex) {
+                future.cancel(true);
+                log.warn("ReAct loop timed out after {}ms, runId={}, fallback to linear", MAX_TOTAL_MS, runId);
+                throw new ReActException("ReAct loop timed out after " + MAX_TOTAL_MS + "ms");
+            } catch (java.util.concurrent.ExecutionException ex) {
+                Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                if (cause instanceof ReActException re) throw re;
+                log.warn("ReAct loop failed, runId={}, will fallback to linear: {}", runId, cause.getMessage());
+                throw new ReActException("ReAct loop failed: " + cause.getMessage(), cause);
+            }
+
             String content = response.getResult().getOutput().getText();
             long durationMs = System.currentTimeMillis() - start;
-
-            // 兜底：总耗时超限（框架循环可能已跑完但太久）
-            if (durationMs > MAX_TOTAL_MS) {
-                log.warn("ReAct loop exceeded total time budget, runId={}, durationMs={}, maxMs={}",
-                        runId, durationMs, MAX_TOTAL_MS);
-            }
 
             RootCauseJson rc = parseRootCause(content);
             log.info("ReAct loop done, runId={}, steps≈{}, durationMs={}, confidence={}",
@@ -124,7 +130,7 @@ public class ReActLoop {
             return new ReActResult(rc.hypothesis(), rc.evidence(), rc.confidence(),
                     rc.unknowns(), rc.actions(), new ArrayList<>(toolCallLog), durationMs);
         } catch (ReActException ex) {
-            throw ex; // 已是 ReActException，透传
+            throw ex;
         } catch (Exception ex) {
             log.warn("ReAct loop failed, runId={}, will fallback to linear pipeline: {}",
                     runId, ex.getMessage(), ex);
