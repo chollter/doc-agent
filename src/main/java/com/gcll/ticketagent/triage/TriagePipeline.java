@@ -6,7 +6,6 @@ import com.gcll.ticketagent.governance.priority.PriorityEvaluationService;
 import com.gcll.ticketagent.governance.priority.PriorityResult;
 import com.gcll.ticketagent.governance.priority.TicketPriority;
 import com.gcll.ticketagent.governance.routing.RoutingPolicyEngine;
-import com.gcll.ticketagent.governance.routing.RoutingSuggestion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -34,14 +33,16 @@ public class TriagePipeline {
     private static final int MAX_FOLLOW_UP_ROUNDS = 2;
 
     private final RuleBasedTriageEngine ruleEngine;
+    private final IntentIdentificationService intentService;
     private final PriorityEvaluationService priorityService;
     private final RoutingPolicyEngine routingPolicyEngine;
-    // LLM 分类+粗抽 和 定向精抽 将在 Day6 实现，当前为预留接口
 
     public TriagePipeline(RuleBasedTriageEngine ruleEngine,
+                          IntentIdentificationService intentService,
                           PriorityEvaluationService priorityService,
                           RoutingPolicyEngine routingPolicyEngine) {
         this.ruleEngine = ruleEngine;
+        this.intentService = intentService;
         this.priorityService = priorityService;
         this.routingPolicyEngine = routingPolicyEngine;
     }
@@ -66,9 +67,10 @@ public class TriagePipeline {
             return enrichWithExtract(ruleResult, extract, runId, followUpRound);
         }
 
-        // Step 2-3: LLM 分类+粗抽 → 定向精抽（Day6 实现）
-        // 当前降级：从 extract 直接取
-        TriageResult result = buildFromExtract(extract, runId, followUpRound);
+        // Step 2-3: LLM 分类+粗抽 → 定向精抽
+        TriageResult result = intentService.identify(content, runId);
+        // 补充 followUpRound
+        result = withFollowUpRound(result, followUpRound);
 
         // Step 4: 规则校验（一致性检查 + 矛盾检测）
         result = validate(result, extract);
@@ -143,7 +145,7 @@ public class TriagePipeline {
     }
 
     /**
-     * 降级路径：从 extract 直接构建 TriageResult（LLM 分类未就绪时使用）。
+     * 降级路径已被 IntentIdentificationService 替代，保留为 fallback。
      */
     private TriageResult buildFromExtract(TicketExtractResult extract, String runId, int followUpRound) {
         PriorityResult priorityResult = priorityService.evaluate(extract);
@@ -240,6 +242,22 @@ public class TriagePipeline {
         }
         // 其他类型不强制追问
         return false;
+    }
+
+    private TriageResult withFollowUpRound(TriageResult result, int followUpRound) {
+        return TriageResult.builder()
+                .issueType(result.issueType())
+                .priority(result.priority())
+                .confidence(result.confidence())
+                .source(result.source())
+                .affectedSystem(result.affectedSystem())
+                .affectedModule(result.affectedModule())
+                .routedTeam(result.routedTeam())
+                .needFollowUp(result.needFollowUp())
+                .followUpReason(result.followUpReason())
+                .followUpRound(followUpRound)
+                .needHumanConfirm(result.needHumanConfirm())
+                .build();
     }
 
     // --- 追问决策结果 ---
