@@ -1,0 +1,72 @@
+@host = http://localhost:8020
+@runId = replace-with-run-id
+
+###
+# 1. 信息不足追问：预期返回 NEED_MORE_INFO / questions
+POST {{host}}/api/tickets/agent-runs
+Content-Type: application/json
+
+{
+  "sessionId": "demo-need-info",
+  "userId": "u-demo",
+  "content": "接口报错了",
+  "source": "WEB"
+}
+
+###
+# 2. 完整故障分析：复制响应里的 runId 到上面的 @runId
+POST {{host}}/api/tickets/agent-runs
+Content-Type: application/json
+
+{
+  "sessionId": "demo-incident",
+  "userId": "u-demo",
+  "content": "生产环境 payment-service Pod OOMKilled，从上午 10 点开始多个用户支付失败，内存使用从 200Mi 飙升到 512Mi 后被 kill，错误为 java.lang.OutOfMemoryError: Java heap space",
+  "source": "WEB"
+}
+
+###
+# 3. 审计步骤：查看 Agent 执行链路
+GET {{host}}/api/audit/agent-runs/{{runId}}
+
+###
+# 4. LLM 调用统计：查看单个 run 调了几次 LLM、耗时、失败/fallback、token
+GET {{host}}/api/audit/agent-runs/{{runId}}/llm-stats
+
+###
+# 5. Eval：查看 total/passed/failed/failureByAssertion/caseResults
+POST {{host}}/api/evals/run
+
+###
+# 5.1 Eval：导出页面/客户端已持有的 EvalReport，不会重新运行 case
+# POST {{host}}/api/evals/export
+# Content-Type: application/json
+#
+# {
+#   "report": { "粘贴 /api/evals/run 或 /api/evals/run-case 返回的完整 JSON" },
+#   "outputPath": "data/eval/reports/current-eval.json"
+# }
+
+###
+# 5.2 Eval：单 case 运行，仅返回结果；如需导出，在页面点击“导出当前结果”
+POST {{host}}/api/evals/run-case?caseId=intermittent-slow-followup
+
+###
+# 6. Prometheus 指标：搜索 agent_run_total / llm_call_total / tool_call_total / rag_hit_total / fallback_total
+GET {{host}}/actuator/prometheus
+
+###
+# 7. 单独查看最小业务指标
+GET {{host}}/actuator/metrics/agent_run_total
+
+###
+GET {{host}}/actuator/metrics/llm_call_total
+
+###
+GET {{host}}/actuator/metrics/tool_call_total
+
+###
+GET {{host}}/actuator/metrics/rag_hit_total
+
+###
+GET {{host}}/actuator/metrics/fallback_total

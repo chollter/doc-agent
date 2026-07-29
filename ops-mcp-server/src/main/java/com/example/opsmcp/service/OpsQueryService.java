@@ -247,18 +247,8 @@ public class OpsQueryService {
             logFile = matched;
         }
 
-        // 3. 执行命令：有关键字 → grep 过滤后 tail；无关键字 → tail 最近 N 行
-        String cmd = buildViewCommand(logFile, keyword, maxLines);
         try {
-            ProcessBuilder pb = new ProcessBuilder("/bin/sh", "-c", cmd);
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-            String output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            boolean finished = process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                return "查询超时（10s），日志文件可能过大，建议缩小关键字范围";
-            }
+            String output = readTail(logFile, keyword, maxLines);
 
             // 4. 输出截断：超 MAX_OUTPUT_CHARS 字符时保留首尾
             if (output.length() > MAX_OUTPUT_CHARS) {
@@ -271,25 +261,19 @@ public class OpsQueryService {
         }
     }
 
-    /** 拼接查询命令（固定模板，不执行任意命令）。 */
-    private String buildViewCommand(java.nio.file.Path logFile, String keyword, int maxLines) {
-        String escapedPath = escapeShell(logFile.toString());
-        if (hasText(keyword)) {
-            String escapedKeyword = escapeShell(keyword);
-            // grep 过滤 + tail 截断：先 grep 出含关键字的行，再取最近 maxLines 行
-            return "grep -i " + escapedKeyword + " " + escapedPath + " | tail -" + maxLines;
+    private String readTail(java.nio.file.Path logFile, String keyword, int maxLines) throws java.io.IOException {
+        String lowerKeyword = hasText(keyword) ? keyword.toLowerCase(Locale.ROOT) : null;
+        java.util.ArrayDeque<String> tail = new java.util.ArrayDeque<>(maxLines);
+        try (java.util.stream.Stream<String> lines = java.nio.file.Files.lines(logFile, java.nio.charset.StandardCharsets.UTF_8)) {
+            lines.filter(line -> lowerKeyword == null || line.toLowerCase(Locale.ROOT).contains(lowerKeyword))
+                    .forEach(line -> {
+                        if (tail.size() == maxLines) {
+                            tail.removeFirst();
+                        }
+                        tail.addLast(line);
+                    });
         }
-        // 无关键字：直接取最近 maxLines 行
-        return "tail -" + maxLines + " " + escapedPath;
-    }
-
-    /** shell 转义：只允许字母数字和少量安全字符，其余用单引号包裹防注入。 */
-    private String escapeShell(String input) {
-        if (input.matches("[a-zA-Z0-9_./=-]+")) {
-            return input;
-        }
-        // 用单引号包裹，内部单引号用 '"'"' 转义
-        return "'" + input.replace("'", "'\"'\"'") + "'";
+        return String.join("\n", tail);
     }
 
     /** 模糊匹配服务名变体（payment-service → payment_service / payment_service.log）。 */

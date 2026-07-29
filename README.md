@@ -1,3 +1,29 @@
+## 项目定位
+
+OpsMind Agent 是一个面向技术支持工单的 AI 分诊与故障排查样板。它不是“大而全”的工单平台，而是聚焦几个高价值问题：工单描述经常信息不足，排查需要结合日志、历史案例和处理流程，LLM 输出需要来源约束、审计追踪、失败降级和人工确认。
+
+核心闭环：
+
+```text
+工单输入 -> 结构化抽取 -> 信息缺口判断 -> Agent 规划 -> 工具 / RAG 取证
+        -> 根因分析 -> 优先级评估 -> 团队路由 -> 人工确认 -> 审计与评测
+```
+
+项目重点展示：
+
+- Agent 编排：把抽取、追问、规划、查证、根因、路由、建议拆成可审计步骤。
+- RAG 来源约束：建议和根因尽量绑定标准处理流程、排查手册、历史故障等知识来源。
+- 工具治理：LLM 负责选择和解释，真实工具调用由后端统一执行、超时、记录和降级。
+- HITL 风控：P1 / 高风险 / 低置信度结果进入人工确认，不让模型直接闭环高风险动作。
+- Eval 与观测：支持 Golden Case 回归评测，并按 run 查看 LLM 调用次数、耗时、失败和 fallback。
+
+推荐先看：
+
+- `docs/demo-guide.md`：本地演示顺序和讲解口径。
+- `docs/project-design-tradeoffs.md`：架构设计、取舍和边界。
+- `docs/demo-cases.md`：固定演示用例。
+- `docs/interview-deep-dive-playbook.md`：面试连续追问准备。
+
 ## 快速启动
 
 > 默认向量后端为 **PgVector**（复用主库 PostgreSQL，无需额外容器）。如需切换 Milvus，
@@ -6,7 +32,7 @@
 ### 第 -1 步：构建 MCP server 子进程（仅首次/代码变更后，手动执行）
 
 主应用启动时会通过 STDIO 拉起一个独立的 MCP server 子进程（`ops-mcp-server`）来执行
-`query_logs` / `query_metric` 工具。该模块是**仓库内的独立工程**（根 pom 不含 `<modules>`，
+`query_logs` 等受控工具。该模块是**仓库内的独立工程**（根 pom 不含 `<modules>`，
 根目录 `mvn package` 不会打包它），需要单独构建一次：
 
 ```bash
@@ -53,7 +79,7 @@ http://localhost:8020/
 |---|---|---|---|
 | **0** | `db/init-database.sql` | **手动**，仅首次（或环境重建时） | 建库 + 应用账号 + 安装 pgvector 扩展 |
 | **1** | `db/schema.sql` | 应用每次启动自动 | 建业务表（`agent_run` / `agent_step` / `knowledge_document` / `tool_execution_log` / `pending_action` / `ops_log_sample` / `ops_metric_sample`） |
-| **2** | `db/data-knowledge.sql` | 应用每次启动自动 | 灌知识库种子数据（SOP / Runbook / 历史故障等） |
+| **2** | `db/data-knowledge.sql` | 应用每次启动自动 | 灌知识库种子数据（标准处理流程 / 排查手册 / 历史故障等） |
 | **3** | `PgVectorStoreConfig`（`initializeSchema=true`） | 应用首次启动自动 | 建 `vector_store` 表 + HNSW 索引（依赖第 0 步已装扩展） |
 | —（手动）| `db/pgvector-init.sql` | 仅当选择「预建表」路径时手动跑 | 预建 `vector_store` 表（此时需把 `PgVectorStoreConfig` 的 `initializeSchema` 改为 `false`） |
 
@@ -116,6 +142,12 @@ curl.exe -N http://localhost:8020/api/tickets/agent-runs/{runId}/stream
 curl.exe http://localhost:8020/api/audit/agent-runs/{runId}
 ```
 
+LLM 调用统计：
+
+```bash
+curl.exe http://localhost:8020/api/audit/agent-runs/{runId}/llm-stats
+```
+
 运行 Eval：
 
 ```bash
@@ -132,9 +164,6 @@ mvn spring-boot:run -Dspring-boot.run.profiles=milvus -Dspring-boot.run.argument
 
 异步模式下提交接口先返回 runId，后台通过 Kafka 消费 run execution event 推进 Agent 流程。
 
-## 简历表达参考
-
-完整 canonical 版本见 [AGENTS.md §10.2](AGENTS.md#102-简历表达唯一-canonical-版本)。
 
 ## 目录
 
@@ -152,7 +181,7 @@ analysis/        L4 根因分析
 governance/      L5 优先级、路由、HITL（重构目标）
 priority/        优先级规则（重构中迁至 governance/）
 routing/         团队路由（重构中迁至 governance/）
-suggestion/      L4 处理建议 + Runbook
+suggestion/      L4 处理建议 + 操作步骤
 human/           人工确认（重构中迁至 governance/）
 persistence/     MyBatis-Plus
 llm/             Spring AI 网关

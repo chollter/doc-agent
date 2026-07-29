@@ -47,6 +47,19 @@ class ApiExceptionHandlerTest extends com.gcll.ticketagent.testsupport.RedisIsol
     }
 
     @Test
+    void exposesAgentRunLlmStats() throws Exception {
+        var response = ticketApplicationService.submit(new SubmitAgentRunRequest(
+                "sess-llm-stats", "u3003", "", "接口报错了", "WEB", null, null
+        ));
+
+        mockMvc.perform(get("/api/audit/agent-runs/" + response.runId() + "/llm-stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.runId").value(response.runId()))
+                .andExpect(jsonPath("$.totalCalls", org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.byCallName", notNullValue()));
+    }
+
+    @Test
     void returnsValidationErrorCode() throws Exception {
         mockMvc.perform(post("/api/tickets/agent-runs")
                         .contentType(MediaType.APPLICATION_JSON)

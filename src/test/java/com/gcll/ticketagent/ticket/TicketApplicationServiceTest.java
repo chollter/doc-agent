@@ -9,7 +9,9 @@ import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.domain.AgentRunStatus;
 import com.gcll.ticketagent.audit.AuditLogService;
 import com.gcll.ticketagent.infra.RunConcurrencyService;
+import com.gcll.ticketagent.metrics.AgentMetrics;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -80,7 +82,8 @@ class TicketApplicationServiceTest {
                 new AsyncAgentRunProperties(),
                 Optional.empty(),
                 new TicketInputProcessor(8000),
-                mock(AuditLogService.class)
+                mock(AuditLogService.class),
+                new AgentMetrics(new SimpleMeterRegistry())
         );
 
         AgentRunResponse response = service.submit(new SubmitAgentRunRequest(
