@@ -137,4 +137,4 @@ CREATE TABLE IF NOT EXISTS semantic_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_semantic_cache_type_hash ON semantic_cache (cache_type, query_hash);
-CREATE INDEX IF NOT EXISTS idx_semantic_cache_expires ON semantic_cache (expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_semantic_cache_expires ON semantic_cache (expires_at);

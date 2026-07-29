@@ -9,6 +9,9 @@ import com.gcll.ticketagent.governance.human.HumanConfirmTrigger;
 import com.gcll.ticketagent.governance.priority.PriorityResult;
 import com.gcll.ticketagent.governance.routing.RoutingResult;
 import com.gcll.ticketagent.investigation.InvestigationResult;
+import com.gcll.ticketagent.langchain4j.ReActAssistant;
+import com.gcll.ticketagent.langchain4j.ReActContextHolder;
+import com.gcll.ticketagent.langchain4j.ReActToolProvider;
 import com.gcll.ticketagent.observability.trace.TraceRecorder;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
 import com.gcll.ticketagent.triage.TriageResult;
@@ -26,12 +29,18 @@ import java.util.List;
  * 与 Linear 的核心区别：LLM 决定下一步做什么（而非固定顺序），
  * 可以根据中间结果动态调整排查方向。
  * <p>
- * 当前实现为 Spring AI 原生 ReAct 循环骨架：
- * - 最大步数限制（防无限循环）
- * - 每步记录 Trace（可观测性）
- * - 失败自动降级到 Linear
+ * 实现基于 LangChain4j AiService + @Tool：
+ * <ul>
+ *   <li>AiService 自动处理 Thought → Action → Observation 循环</li>
+ *   <li>@Tool 方法通过 {@link ReActToolProvider} 适配现有 {@link com.gcll.ticketagent.tool.ToolGateway}</li>
+ *   <li>步数限制由 AiServices.builder().maxToolCallingRoundTrips() 控制（{@code MAX_TOOL_CALLING_ROUNDS=8}）</li>
+ *   <li>每步记录 Trace（可观测性）</li>
+ *   <li>失败自动降级到分诊摘要</li>
+ * </ul>
  * <p>
- * TODO: 后续可切换为 LangChain4j 的 AiService + @Tool 实现（类型安全的工具调用）
+ * LangChain4j 与 Spring AI Alibaba 共存：
+ * Spring AI 管分诊/抽取/建议等流程调用，LangChain4j 管 ReAct 自主推理+工具迭代。
+ * 两者通过 OpenAI 兼容协议接入同一个 dashscope 模型，互不冲突。
  */
 @Component
 public class ReActInvestigationStrategy implements InvestigationStrategy {
@@ -41,17 +50,20 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
     /** 最大推理步数——防止无限循环 */
     private static final int MAX_STEPS = 8;
 
+    private final ReActAssistant reActAssistant;
     private final HumanConfirmTrigger humanConfirmTrigger;
     private final HumanConfirmService humanConfirmService;
     private final AgentRunRepository agentRunRepository;
     private final TransactionTemplate transactionTemplate;
 
     public ReActInvestigationStrategy(
+            ReActAssistant reActAssistant,
             HumanConfirmTrigger humanConfirmTrigger,
             HumanConfirmService humanConfirmService,
             AgentRunRepository agentRunRepository,
             TransactionTemplate transactionTemplate
     ) {
+        this.reActAssistant = reActAssistant;
         this.humanConfirmTrigger = humanConfirmTrigger;
         this.humanConfirmService = humanConfirmService;
         this.agentRunRepository = agentRunRepository;
@@ -67,9 +79,7 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
         String parentStepId = tracer.begin("REACT_INVESTIGATION");
 
         try {
-            // ReAct 推理循环骨架
-            // 每一步：LLM 决定 Thought → Action → Observation
-            // 直到 LLM 给出最终结论或达到最大步数
+            // ReAct 推理循环（LangChain4j AiService 驱动）
             String conclusion = executeReActLoop(run, triageResult, extract, draftContent, tracer, parentStepId);
 
             // 人工确认决策
@@ -112,18 +122,21 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
     }
 
     /**
-     * ReAct 推理循环——核心骨架。
+     * ReAct 推理循环——LangChain4j AiService 驱动的真实实现。
      * <p>
      * 流程：
-     * 1. 构造初始 prompt（含工单信息 + 可用工具列表）
-     * 2. LLM 生成 Thought + Action
-     * 3. 执行 Action（工具调用），返回 Observation
-     * 4. 将 Observation 追加到上下文，回到步骤2
-     * 5. 直到 LLM 输出 Final Answer 或达到最大步数
+     * 1. 构造系统提示词（含工单上下文 + 排查指令 + 输出格式）
+     * 2. 设置 ThreadLocal 上下文（系统提示词 + extract + originalContent）
+     * 3. 调用 AiService.investigate()，LangChain4j 自动执行：
+     *    - LLM 生成 Thought + Action
+     *    - 执行 Action（调用 @Tool 方法）
+     *    - 返回 Observation，追加到上下文
+     *    - 循环直到 Final Answer 或 MAX_STEPS
+     * 4. 清除 ThreadLocal
+     * 5. 每步记录 Trace
      * <p>
-     * 当前为骨架实现：使用 Spring AI ChatClient + ToolCallback，
-     * Spring AI 自动处理工具调用的 Reasoning-Acting 循环。
-     * 后续可替换为 LangChain4j AiService（类型安全 + 步数控制 + 记忆管理）。
+     * AiService 内部已处理步数限制（maxToolCallingRoundTrips=8）和超时，
+     * 此处额外做：Trace 记录 + 失败降级。
      */
     private String executeReActLoop(
             AgentRun run, TriageResult triageResult,
@@ -131,21 +144,101 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
             TraceRecorder tracer, String parentStepId) {
 
         String loopStepId = tracer.begin("REACT_LOOP", parentStepId);
-        tracer.end(loopStepId, "maxSteps=" + MAX_STEPS + ",status=skeleton", null);
 
-        // TODO: 实现 ReAct 循环
-        // 当前为骨架，返回基于分诊结果的摘要
-        // 完整实现需要：
-        // 1. ChatClient.builder().tools(toolCallbacks).build()
-        // 2. 循环调用 chat(prompt) 直到 LLM 返回 Final Answer
-        // 3. 每步记录 Thought/Action/Observation 到 Trace
-        // 4. 步数超限时强制输出当前最佳结论
-        log.info("ReAct循环骨架执行, runId={}, maxSteps={}", run.getId(), MAX_STEPS);
+        try {
+            // 1. 构造系统提示词并设置到 ThreadLocal（systemMessageProvider 会读取）
+            String systemPrompt = buildSystemPrompt(triageResult, extract);
+            ReActContextHolder.setSystemPrompt(systemPrompt);
 
-        return "P0紧急工单，ReAct推理循环执行中（骨架实现）。"
-                + "issueType=" + triageResult.issueType()
-                + ", priority=" + triageResult.priority()
-                + ", routedTeam=" + triageResult.routedTeam();
+            // 2. 设置工具上下文（ReActToolProvider 的 @Tool 方法会读取）
+            ReActToolProvider.setContext(extract, draftContent);
+
+            // 3. 调用 AiService（LangChain4j 自动执行 ReAct 循环）
+            String loopTraceStepId = tracer.begin("REACT_LLM_INVOKE", loopStepId);
+            tracer.recordMeta(loopTraceStepId, true, "LangChain4j");
+
+            String userMessage = buildUserMessage(draftContent);
+            String conclusion = reActAssistant.investigate(userMessage);
+
+            tracer.end(loopTraceStepId,
+                    TraceRecorder.fingerprint("conclusion", conclusion), null);
+            tracer.end(loopStepId,
+                    "maxSteps=" + MAX_STEPS + ",status=completed,rounds=auto", null);
+
+            log.info("ReAct循环完成, runId={}, conclusionLength={}", run.getId(), conclusion.length());
+            return conclusion;
+
+        } catch (Exception ex) {
+            tracer.end(loopStepId, "failed", ex.getMessage());
+            log.error("ReAct循环异常, runId={}, error={}", run.getId(), ex.getMessage());
+
+            // 降级：返回分诊摘要 + 异常信息
+            String fallback = "P0紧急工单，ReAct推理循环执行异常（已降级）。"
+                    + "issueType=" + triageResult.issueType()
+                    + ", priority=" + triageResult.priority()
+                    + ", routedTeam=" + triageResult.routedTeam()
+                    + ", error=" + ex.getMessage();
+            log.warn("ReAct降级到分诊摘要, runId={}", run.getId());
+            return fallback;
+        } finally {
+            // 4. 清除 ThreadLocal（防止内存泄漏）
+            ReActContextHolder.clear();
+            ReActToolProvider.clearContext();
+        }
+    }
+
+    /**
+     * 构造 ReAct 系统提示词。
+     * <p>
+     * 包含：
+     * - 角色定义（运维排查专家）
+     * - 工单上下文（issueType/priority/routedTeam）
+     * - 排查指令（逐步推理、调用工具、输出结论）
+     * - 输出格式要求（结构化结论，包含根因假设+证据摘要+建议动作）
+     */
+    private String buildSystemPrompt(TriageResult triageResult, TicketExtractResult extract) {
+        return """
+                你是一名资深运维排查专家，正在排查一个P0紧急工单。请使用 ReAct（推理+行动）方式逐步排查。
+
+                ## 工单上下文
+                - 问题类型：%s
+                - 优先级：%s
+                - 路由团队：%s
+                - 受影响系统：%s
+                - 受影响模块：%s
+
+                ## 排查指令
+                1. 先推理（Thought）：分析当前已知信息，判断下一步需要什么证据
+                2. 再行动（Action）：选择合适的工具调用获取证据
+                3. 观察（Observation）：根据工具返回结果更新推理
+                4. 重复以上步骤，直到可以得出结论
+                5. 最多%d步，超出时基于当前证据给出最佳判断
+
+                ## 可用工具
+                - query_logs：查询运维日志，定位错误位置（可传 system/module 参数缩小范围）
+                - query_metric：查询系统运行指标（CPU/内存/QPS/延迟），判断资源瓶颈
+                - searchSimilarCases：从历史案件库检索相似案例，参考根因与处置经验
+
+                ## 输出格式
+                排查完成后，请输出结构化结论：
+                - 根因假设：基于证据推断的最可能根因
+                - 证据摘要：支持该假设的关键证据
+                - 建议动作：具体的处置建议
+                """.formatted(
+                        triageResult.issueType(),
+                        triageResult.priority(),
+                        triageResult.routedTeam() != null ? triageResult.routedTeam() : "未分配",
+                        extract.affectedSystem() != null ? extract.affectedSystem() : "待确认",
+                        extract.affectedModule() != null ? extract.affectedModule() : "待确认",
+                        MAX_STEPS
+                );
+    }
+
+    /**
+     * 构造用户消息（工单详情）。
+     */
+    private String buildUserMessage(String draftContent) {
+        return "请排查以下工单：\n\n" + draftContent;
     }
 
     private void completeRun(

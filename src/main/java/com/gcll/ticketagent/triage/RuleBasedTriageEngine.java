@@ -2,6 +2,7 @@ package com.gcll.ticketagent.triage;
 
 import com.gcll.ticketagent.extract.IssueType;
 import com.gcll.ticketagent.governance.priority.TicketPriority;
+import org.springframework.stereotype.Component;
 
 /**
  * 规则前置引擎——零 LLM 快速分类。
@@ -16,6 +17,7 @@ import com.gcll.ticketagent.governance.priority.TicketPriority;
  *   <li>优先级也走规则：P0 信号（生产+核心+全量）直接判定，不依赖 LLM</li>
  * </ul>
  */
+@Component
 public class RuleBasedTriageEngine {
 
     /**
