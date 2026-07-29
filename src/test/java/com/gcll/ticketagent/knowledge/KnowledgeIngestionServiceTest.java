@@ -83,5 +83,13 @@ class KnowledgeIngestionServiceTest {
                     .limit(limit)
                     .toList();
         }
+
+        @Override
+        public List<KnowledgeDocumentEntity> findBySystemNameOrModuleName(String systemName, String moduleName) {
+            return documents.stream()
+                    .filter(d -> systemName == null || systemName.equals(d.getSystemName())
+                            || moduleName == null || moduleName.equals(d.getModuleName()))
+                    .toList();
+        }
     }
 }

@@ -14,6 +14,7 @@ import com.gcll.ticketagent.tool.ToolResult;
 import com.gcll.ticketagent.tool.react.ToolArgMerger;
 import com.gcll.ticketagent.tool.ToolType;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -41,7 +42,8 @@ class EvidenceCollectionServiceTest {
         return new ExternalCallGateway(
                 new CallRegistry(RetryRegistry.ofDefaults(),
                         TimeLimiterRegistry.ofDefaults(),
-                        CircuitBreakerRegistry.ofDefaults()),
+                        CircuitBreakerRegistry.ofDefaults(),
+                        RateLimiterRegistry.ofDefaults()),
                 new CallMetrics(new SimpleMeterRegistry()),
                 Executors.newScheduledThreadPool(1));
     }

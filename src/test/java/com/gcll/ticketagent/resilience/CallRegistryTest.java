@@ -2,6 +2,7 @@ package com.gcll.ticketagent.resilience;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiter;
@@ -24,7 +25,8 @@ class CallRegistryTest {
         CallRegistry registry = new CallRegistry(
                 RetryRegistry.ofDefaults(),
                 TimeLimiterRegistry.ofDefaults(),
-                CircuitBreakerRegistry.ofDefaults());
+                CircuitBreakerRegistry.ofDefaults(),
+                RateLimiterRegistry.ofDefaults());
         registry.setCallMappings(mappings);
         return registry;
     }

@@ -2,6 +2,7 @@ package com.gcll.ticketagent.resilience;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiterConfig;
@@ -44,7 +45,7 @@ class ExternalCallGatewayTest {
                 .minimumNumberOfCalls(5)
                 .waitDurationInOpenState(Duration.ofSeconds(10))
                 .build());
-        CallRegistry callRegistry = new CallRegistry(retryRegistry, tlRegistry, cbRegistry);
+        CallRegistry callRegistry = new CallRegistry(retryRegistry, tlRegistry, cbRegistry, RateLimiterRegistry.ofDefaults());
         CallRegistry.CallMapping mapping = new CallRegistry.CallMapping();
         mapping.setRetry("test");
         mapping.setTimelimiter("test");
@@ -116,7 +117,8 @@ class ExternalCallGatewayTest {
         CallRegistry emptyRegistry = new CallRegistry(
                 RetryRegistry.ofDefaults(),
                 TimeLimiterRegistry.ofDefaults(),
-                CircuitBreakerRegistry.ofDefaults());
+                CircuitBreakerRegistry.ofDefaults(),
+                RateLimiterRegistry.ofDefaults());
         ExternalCallGateway plainGateway = new ExternalCallGateway(
                 emptyRegistry,
                 new CallMetrics(new SimpleMeterRegistry()),

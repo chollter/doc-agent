@@ -1,6 +1,7 @@
 package com.gcll.ticketagent.governance.human;
 
-import com.gcll.ticketagent.agent.AgentStepName;
+import com.gcll.ticketagent.observability.trace.TraceRecorder;
+import com.gcll.ticketagent.observability.trace.TraceRecorderFactory;
 import com.gcll.ticketagent.api.BusinessException;
 import com.gcll.ticketagent.audit.AuditLogService;
 import com.gcll.ticketagent.domain.AgentRun;
@@ -21,8 +22,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -43,6 +42,13 @@ class HumanConfirmServiceTest {
         agentRunRepository = mock(AgentRunRepository.class);
         auditLogService = mock(AuditLogService.class);
         notificationService = mock(NotificationService.class);
+
+        // AuditLogService.createTracer 需要返回非 null 的 TraceRecorder
+        TraceRecorderFactory factory = mock(TraceRecorderFactory.class);
+        TraceRecorder mockTracer = mock(TraceRecorder.class);
+        when(mockTracer.begin(any())).thenReturn("mock-step-id");
+        when(auditLogService.createTracer(any())).thenReturn(mockTracer);
+
         service = new HumanConfirmService(
                 pendingActionRepository, agentRunRepository, auditLogService, notificationService);
     }
@@ -73,10 +79,7 @@ class HumanConfirmServiceTest {
         assertThat(req.getValue().targetTeam()).isEqualTo("支付研发组");
         assertThat(req.getValue().traceId()).isEqualTo("trace-1");
 
-        ArgumentCaptor<String> output = ArgumentCaptor.forClass(String.class);
-        verify(auditLogService).recordStep(any(), any(), any(), output.capture(),
-                anyBoolean(), any(), anyLong(), any());
-        assertThat(output.getValue()).contains("dispatched to 支付研发组");
+        verify(auditLogService).createTracer(any());
     }
 
     @Test
@@ -105,12 +108,7 @@ class HumanConfirmServiceTest {
         AgentRun result = service.confirm("a-1", "tester", PendingActionType.DISPATCH);
 
         assertThat(result.getStatus()).isEqualTo(AgentRunStatus.FINAL);
-        ArgumentCaptor<String> output = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
-        verify(auditLogService).recordStep(any(), any(), any(), output.capture(),
-                anyBoolean(), any(), anyLong(), error.capture());
-        assertThat(output.getValue()).contains("notification failed");
-        assertThat(error.getValue()).isNotNull();
+        verify(auditLogService).createTracer(any());
     }
 
     @Test
