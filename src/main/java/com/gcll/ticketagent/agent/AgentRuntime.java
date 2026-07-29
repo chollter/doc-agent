@@ -3,10 +3,6 @@ package com.gcll.ticketagent.agent;
 import com.gcll.ticketagent.agent.workflow.AnalysisWorkflowService;
 import com.gcll.ticketagent.api.dto.AgentRunResponse;
 import com.gcll.ticketagent.audit.AuditLogService;
-import com.gcll.ticketagent.understanding.completeness.CompletenessDecision;
-import com.gcll.ticketagent.understanding.completeness.CompletenessDecisionService;
-import com.gcll.ticketagent.understanding.gap.InfoGapAnalysis;
-import com.gcll.ticketagent.understanding.gap.InfoGapAnalysisService;
 import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.domain.AgentRunStatus;
 import com.gcll.ticketagent.extract.TicketExtractResult;
@@ -15,6 +11,12 @@ import com.gcll.ticketagent.llm.StepOutcome;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
 import com.gcll.ticketagent.resilience.LlmRunContext;
 import com.gcll.ticketagent.ticket.TicketDraft;
+import com.gcll.ticketagent.triage.TriagePipeline;
+import com.gcll.ticketagent.triage.TriageResult;
+import com.gcll.ticketagent.understanding.completeness.CompletenessDecision;
+import com.gcll.ticketagent.understanding.completeness.CompletenessDecisionService;
+import com.gcll.ticketagent.understanding.gap.InfoGapAnalysis;
+import com.gcll.ticketagent.understanding.gap.InfoGapAnalysisService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -28,6 +30,7 @@ public class AgentRuntime {
     private static final Logger log = LoggerFactory.getLogger(AgentRuntime.class);
 
     private final TicketExtractService ticketExtractService;
+    private final TriagePipeline triagePipeline;
     private final InfoGapAnalysisService infoGapAnalysisService;
     private final CompletenessDecisionService completenessDecisionService;
     private final AnalysisWorkflowService analysisWorkflowService;
@@ -40,6 +43,7 @@ public class AgentRuntime {
 
     public AgentRuntime(
             TicketExtractService ticketExtractService,
+            TriagePipeline triagePipeline,
             InfoGapAnalysisService infoGapAnalysisService,
             CompletenessDecisionService completenessDecisionService,
             AnalysisWorkflowService analysisWorkflowService,
@@ -51,6 +55,7 @@ public class AgentRuntime {
             AgentAuditSummaryFormatter summaryFormatter
     ) {
         this.ticketExtractService = ticketExtractService;
+        this.triagePipeline = triagePipeline;
         this.infoGapAnalysisService = infoGapAnalysisService;
         this.completenessDecisionService = completenessDecisionService;
         this.analysisWorkflowService = analysisWorkflowService;
@@ -90,6 +95,9 @@ public class AgentRuntime {
 
     private AgentRunResponse doExecute(AgentRun run, TicketDraft draft) {
         long start = System.currentTimeMillis();
+
+        // === 阶段1：分诊（同步，秒级出结果） ===
+        // Step 1: 结构化抽取（保留旧路径，TriagePipeline 内部会使用 extract 结果）
         StepOutcome<TicketExtractResult> extractOutcome = ticketExtractService.extract(draft.fullContent());
         TicketExtractResult extract = extractOutcome.value();
         run.setIssueType(extract.issueType().name());
@@ -98,48 +106,61 @@ public class AgentRuntime {
                 summaryFormatter.summarizeExtract(extract), extractOutcome.llmUsed(),
                 extractOutcome.llmUsed() ? "SpringAI" : null, extractCostMs, null);
 
+        // Step 2: 分诊 Pipeline（规则前置 → LLM分类+粗抽 → 定向精抽 → 规则校验 → 优先级 → 路由）
         start = System.currentTimeMillis();
-        StepOutcome<InfoGapAnalysis> gapOutcome = infoGapAnalysisService.analyze(draft.fullContent(), extract);
-        InfoGapAnalysis gap = gapOutcome.value();
-        long gapCostMs = gapOutcome.costMs() > 0 ? gapOutcome.costMs() : System.currentTimeMillis() - start;
-        auditLogService.recordStep(run, AgentStepName.INFO_GAP_ANALYSIS, summaryFormatter.summarizeExtract(extract),
-                summaryFormatter.summarizeGap(gap), gapOutcome.llmUsed(),
-                gapOutcome.llmUsed() ? "SpringAI" : null, gapCostMs, null);
+        int followUpRound = getFollowUpRound(run);
+        TriageResult triageResult = triagePipeline.execute(draft.fullContent(), extract, run.getId(), followUpRound);
+        long triageCostMs = System.currentTimeMillis() - start;
+        auditLogService.recordStep(run, AgentStepName.TRIAGE_PIPELINE,
+                "extract issueType=" + extract.issueType(),
+                "issueType=" + triageResult.issueType()
+                        + ",priority=" + triageResult.priority()
+                        + ",confidence=" + triageResult.confidence()
+                        + ",source=" + triageResult.source()
+                        + ",routedTeam=" + triageResult.routedTeam()
+                        + ",needFollowUp=" + triageResult.needFollowUp()
+                        + ",round=" + followUpRound,
+                false, null, triageCostMs, null);
 
-        start = System.currentTimeMillis();
-        CompletenessDecision decision = completenessDecisionService.decide(draft.fullContent(), extract, gap, run.getId());
-        auditLogService.recordStep(run, AgentStepName.COMPLETENESS_DECISION, summaryFormatter.summarizeGap(gap),
-                "canProceed=" + decision.canProceed() + ",reason=" + decision.decisionReason()
-                        + ",missing=" + decision.missingSchemaFields()
-                        + ",semanticGaps=" + decision.semanticGaps(),
-                false, null, System.currentTimeMillis() - start, null);
-        auditLogService.recordStep(run, AgentStepName.TRIAGE_DECISION,
-                "missing=" + decision.missingSchemaFields() + ",semanticGaps=" + decision.semanticGaps(),
-                "type=" + decision.triageType()
-                        + ",canAnalyze=" + decision.canProceed()
-                        + ",needFollowUp=" + decision.needFollowUp()
-                        + ",reason=" + decision.decisionReason(),
-                false, null, 0, null);
+        // 更新 AgentRun 的 issueType 和 priority
+        run.setIssueType(triageResult.issueType().name());
 
-        if (decision.needFollowUp()) {
-            start = System.currentTimeMillis();
+        // Step 3: 追问决策（四层兜底）
+        TriagePipeline.FollowUpDecision followUpDecision = triagePipeline.decideFollowUp(triageResult, extract);
+        if (followUpDecision.needFollowUp()) {
+            // 保留旧追问路径的 gap+completeness 分析（兼容现有 FollowUpQuestionService）
+            StepOutcome<InfoGapAnalysis> gapOutcome = infoGapAnalysisService.analyze(draft.fullContent(), extract);
+            CompletenessDecision decision = completenessDecisionService.decide(draft.fullContent(), extract, gapOutcome.value(), run.getId());
             List<String> questions = decision.followUpQuestions();
+            if (questions.isEmpty()) {
+                questions = List.of("请补充系统、环境、接口、错误信息和影响范围，方便准确分派。");
+            }
+
             auditLogService.recordStep(run, AgentStepName.FOLLOW_UP_QUESTION_GENERATE,
-                    decision.missingSchemaFields().toString(), questions.toString(),
-                    gapOutcome.llmUsed(), gapOutcome.llmUsed() ? "SpringAI" : null,
-                    System.currentTimeMillis() - start, null);
+                    "round=" + followUpDecision.nextRound(), questions.toString(),
+                    false, null, System.currentTimeMillis() - start, null);
 
             AgentRunResponse response = responseAssembler.needMoreInfo(
-                    run.getId(), questions, extractOutcome.llmUsed() || gapOutcome.llmUsed());
+                    run.getId(), questions, extractOutcome.llmUsed());
             transactionTemplate.executeWithoutResult(status -> {
-                contextPersister.persist(run, gap, null, null);
+                contextPersister.persist(run, gapOutcome.value(), null, null);
                 run.setStatus(AgentRunStatus.WAIT_USER_INPUT);
                 agentRunRepository.save(run);
             });
             return response;
         }
 
-        return analysisWorkflowService.execute(run, draft, extract, gap, extractOutcome.llmUsed());
+        // === 阶段2：排查（异步，工单已路由后后台跑） ===
+        // 当前仍走同步 analysisWorkflowService，后续 Day9-12 拆分为异步
+        return analysisWorkflowService.execute(run, draft, extract, null, extractOutcome.llmUsed());
+    }
+
+    /** 从 AgentRun 的步骤历史推断追问轮次。 */
+    private int getFollowUpRound(AgentRun run) {
+        if (run.getSteps() == null) return 0;
+        return (int) run.getSteps().stream()
+                .filter(s -> "FOLLOW_UP_QUESTION_GENERATE".equals(s.getStepName()))
+                .count();
     }
 
     private AgentRunResponse failRun(AgentRun run, TicketDraft draft, Exception ex) {
