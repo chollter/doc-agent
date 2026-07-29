@@ -1,6 +1,7 @@
 package com.gcll.ticketagent.resilience;
 
 import com.gcll.ticketagent.llm.LlmGateway;
+import com.gcll.ticketagent.metrics.AgentMetrics;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -18,13 +19,19 @@ public class LlmCallExecutor {
 
     private final ExternalCallGateway gateway;
     private final CallMetrics metrics;
+    private final AgentMetrics agentMetrics;
+    private final LlmRunStatsRecorder runStatsRecorder;
     private final ObjectProvider<LlmGateway> llmGatewayProvider;
 
     public LlmCallExecutor(ExternalCallGateway gateway,
                            CallMetrics metrics,
+                           AgentMetrics agentMetrics,
+                           LlmRunStatsRecorder runStatsRecorder,
                            ObjectProvider<LlmGateway> llmGatewayProvider) {
         this.gateway = gateway;
         this.metrics = metrics;
+        this.agentMetrics = agentMetrics;
+        this.runStatsRecorder = runStatsRecorder;
         this.llmGatewayProvider = llmGatewayProvider;
     }
 
@@ -50,11 +57,16 @@ public class LlmCallExecutor {
      * @param runId 工单运行 ID，作为记忆 conversationId；null 表示单轮（不挂记忆）
      */
     public CallResult<LlmResponse> execute(String callName, String promptFile, String userContent, String runId) {
+        String effectiveRunId = runId != null ? runId : LlmRunContext.currentRunId();
         LlmGateway llmGateway = llmGatewayProvider.getIfAvailable();
         if (llmGateway == null) {
-            return CallResult.fail(
+            CallResult<LlmResponse> result = CallResult.fail(
                     new NonRetryableCallException("LlmGateway bean not available (no ChatClient.Builder)"),
                     0, 0L);
+            agentMetrics.recordLlmCall(callName, false);
+            agentMetrics.recordFallback(callName);
+            runStatsRecorder.record(effectiveRunId, callName, result);
+            return result;
         }
         // runId 决定走记忆路径（4参）还是单轮路径（2参）
         CallResult<LlmResponse> result = runId != null
@@ -64,7 +76,11 @@ public class LlmCallExecutor {
             LlmResponse response = result.value();
             // 阶段4：按 callName + model 分维埋点，多模型路由后能定位"哪个调用费 token、用的哪个模型"
             metrics.recordTokenUsage(callName, response.model(), response.promptTokens(), response.completionTokens());
+        } else {
+            agentMetrics.recordFallback(callName);
         }
+        agentMetrics.recordLlmCall(callName, result.success());
+        runStatsRecorder.record(effectiveRunId, callName, result);
         return result;
     }
 }

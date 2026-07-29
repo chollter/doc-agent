@@ -16,6 +16,7 @@ import com.gcll.ticketagent.audit.AuditLogService;
 import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.domain.AgentRunStatus;
 import com.gcll.ticketagent.infra.RunConcurrencyService;
+import com.gcll.ticketagent.metrics.AgentMetrics;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,6 +40,7 @@ public class TicketApplicationService {
     private final Optional<AgentRunEventPublisher> eventPublisher;
     private final TicketInputProcessor inputProcessor;
     private final AuditLogService auditLogService;
+    private final AgentMetrics agentMetrics;
 
     public TicketApplicationService(
             AgentRunRepository agentRunRepository,
@@ -48,7 +50,8 @@ public class TicketApplicationService {
             AsyncAgentRunProperties asyncProperties,
             Optional<AgentRunEventPublisher> eventPublisher,
             TicketInputProcessor inputProcessor,
-            AuditLogService auditLogService
+            AuditLogService auditLogService,
+            AgentMetrics agentMetrics
     ) {
         this.agentRunRepository = agentRunRepository;
         this.orchestrator = orchestrator;
@@ -58,6 +61,7 @@ public class TicketApplicationService {
         this.eventPublisher = eventPublisher;
         this.inputProcessor = inputProcessor;
         this.auditLogService = auditLogService;
+        this.agentMetrics = agentMetrics;
     }
 
     public AgentRunResponse submit(SubmitAgentRunRequest request) {
@@ -90,6 +94,7 @@ public class TicketApplicationService {
         }
 
         runConcurrencyService.rememberRunId(idempotencyKey, run.getId());
+        agentMetrics.recordAgentRun();
         recordL0Audit(run, processed);
 
         if (asyncProperties.isEnabled()) {
