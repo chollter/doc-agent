@@ -27,6 +27,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_agent_run_idempotency ON agent_run (idempot
 CREATE TABLE IF NOT EXISTS agent_step (
     id              VARCHAR(64)  PRIMARY KEY,
     run_id          VARCHAR(64)  NOT NULL,
+    parent_step_id  VARCHAR(64),
     step_name       VARCHAR(64)  NOT NULL,
     status          VARCHAR(32)  NOT NULL,
     input_snapshot  TEXT,
@@ -35,6 +36,9 @@ CREATE TABLE IF NOT EXISTS agent_step (
     tool_used       VARCHAR(64),
     cost_ms         BIGINT       NOT NULL DEFAULT 0,
     error_message   TEXT,
+    span_id         VARCHAR(64),
+    started_at      TIMESTAMP,
+    finished_at     TIMESTAMP,
     created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
