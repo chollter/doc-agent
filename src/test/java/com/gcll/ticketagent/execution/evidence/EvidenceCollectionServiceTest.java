@@ -3,6 +3,7 @@ package com.gcll.ticketagent.execution.evidence;
 import com.gcll.ticketagent.execution.tool.ToolSelection;
 import com.gcll.ticketagent.extract.IssueType;
 import com.gcll.ticketagent.extract.TicketExtractResult;
+import com.gcll.ticketagent.metrics.AgentMetrics;
 import com.gcll.ticketagent.persistence.repository.ToolExecutionLogRepository;
 import com.gcll.ticketagent.resilience.CallMetrics;
 import com.gcll.ticketagent.resilience.CallRegistry;
@@ -33,6 +34,7 @@ import static org.mockito.Mockito.when;
 class EvidenceCollectionServiceTest {
 
     private final ToolExecutionLogRepository logRepository = mock(ToolExecutionLogRepository.class);
+    private final AgentMetrics agentMetrics = new AgentMetrics(new SimpleMeterRegistry());
 
     /** 空 CallRegistry（无 callMappings）→ 所有调用走 plain 路径（不治理），保留工具收集的测试语义。 */
     private static ExternalCallGateway plainGateway() {
@@ -61,7 +63,8 @@ class EvidenceCollectionServiceTest {
         );
 
         ToolRegistry registry = new ToolRegistry(List.of(tool1, tool2));
-        EvidenceCollectionService service = new EvidenceCollectionService(registry, logRepository, plainGateway(), new ToolArgMerger());
+        EvidenceCollectionService service = new EvidenceCollectionService(
+                registry, logRepository, plainGateway(), new ToolArgMerger(), agentMetrics);
 
         TicketExtractResult extract = sampleExtract();
         ToolSelection selection = new ToolSelection(List.of("query_logs"), java.util.Map.of(), "test", false);
@@ -84,7 +87,8 @@ class EvidenceCollectionServiceTest {
         );
 
         ToolRegistry registry = new ToolRegistry(List.of(failingTool));
-        EvidenceCollectionService service = new EvidenceCollectionService(registry, logRepository, plainGateway(), new ToolArgMerger());
+        EvidenceCollectionService service = new EvidenceCollectionService(
+                registry, logRepository, plainGateway(), new ToolArgMerger(), agentMetrics);
 
         List<ToolResult> results = service.collect(
                 "run-002",
@@ -101,7 +105,8 @@ class EvidenceCollectionServiceTest {
     @Test
     void returnsEmptyWhenNoToolsSelected() {
         ToolRegistry registry = new ToolRegistry(List.of());
-        EvidenceCollectionService service = new EvidenceCollectionService(registry, logRepository, plainGateway(), new ToolArgMerger());
+        EvidenceCollectionService service = new EvidenceCollectionService(
+                registry, logRepository, plainGateway(), new ToolArgMerger(), agentMetrics);
 
         List<ToolResult> results = service.collect(
                 "run-003",

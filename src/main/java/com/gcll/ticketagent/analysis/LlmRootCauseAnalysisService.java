@@ -1,6 +1,8 @@
 package com.gcll.ticketagent.analysis;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.gcll.ticketagent.execution.evidence.EvidenceBundle;
+import com.gcll.ticketagent.execution.evidence.EvidenceInterpreterService;
 import com.gcll.ticketagent.extract.TicketExtractResult;
 import com.gcll.ticketagent.knowledge.KnowledgeHit;
 import com.gcll.ticketagent.llm.StructuredOutputParser;
@@ -20,15 +22,18 @@ public class LlmRootCauseAnalysisService implements RootCauseAnalysisService {
     private final LlmCallExecutor llmCallExecutor;
     private final StructuredOutputParser parser;
     private final RuleBasedRootCauseAnalysisService fallback;
+    private final EvidenceInterpreterService evidenceInterpreterService;
 
     public LlmRootCauseAnalysisService(
             LlmCallExecutor llmCallExecutor,
             StructuredOutputParser parser,
-            RuleBasedRootCauseAnalysisService fallback
+            RuleBasedRootCauseAnalysisService fallback,
+            EvidenceInterpreterService evidenceInterpreterService
     ) {
         this.llmCallExecutor = llmCallExecutor;
         this.parser = parser;
         this.fallback = fallback;
+        this.evidenceInterpreterService = evidenceInterpreterService;
     }
 
     @Override
@@ -56,6 +61,15 @@ public class LlmRootCauseAnalysisService implements RootCauseAnalysisService {
     private String buildContext(TicketExtractResult extract, List<KnowledgeHit> hits, List<ToolResult> toolResults) {
         StringBuilder sb = new StringBuilder();
         sb.append("工单结构化信息:\n").append(extract).append("\n\n");
+
+        EvidenceBundle evidenceBundle = evidenceInterpreterService.interpret(toolResults);
+        sb.append("结构化证据解释:\n");
+        sb.append("summary=").append(evidenceBundle.summary()).append("\n");
+        appendList(sb, "日志信号", evidenceBundle.logSignals());
+        appendList(sb, "指标信号", evidenceBundle.metricSignals());
+        appendList(sb, "风险信号", evidenceBundle.riskSignals());
+        appendList(sb, "证据缺口", evidenceBundle.unknowns());
+        sb.append("\n");
 
         sb.append("历史案例:\n");
         if (hits == null || hits.isEmpty()) {
@@ -90,6 +104,17 @@ public class LlmRootCauseAnalysisService implements RootCauseAnalysisService {
             }
         }
         return sb.toString();
+    }
+
+    private void appendList(StringBuilder sb, String title, List<String> values) {
+        sb.append(title).append(":\n");
+        if (values == null || values.isEmpty()) {
+            sb.append("- 无\n");
+            return;
+        }
+        for (String value : values) {
+            sb.append("- ").append(value).append("\n");
+        }
     }
 
     private List<String> nullToEmpty(List<String> values) {

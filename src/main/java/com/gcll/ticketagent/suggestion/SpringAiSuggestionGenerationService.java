@@ -10,6 +10,8 @@ import com.gcll.ticketagent.resilience.LlmCallExecutor;
 import com.gcll.ticketagent.resilience.LlmResponse;
 import com.gcll.ticketagent.tool.ToolResult;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.gcll.ticketagent.execution.evidence.EvidenceBundle;
+import com.gcll.ticketagent.execution.evidence.EvidenceInterpreterService;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 
@@ -22,15 +24,18 @@ public class SpringAiSuggestionGenerationService implements SuggestionGeneration
     private final LlmCallExecutor llmCallExecutor;
     private final StructuredOutputParser parser;
     private final TemplateSuggestionGenerationService fallback;
+    private final EvidenceInterpreterService evidenceInterpreterService;
 
     public SpringAiSuggestionGenerationService(
             LlmCallExecutor llmCallExecutor,
             StructuredOutputParser parser,
-            TemplateSuggestionGenerationService fallback
+            TemplateSuggestionGenerationService fallback,
+            EvidenceInterpreterService evidenceInterpreterService
     ) {
         this.llmCallExecutor = llmCallExecutor;
         this.parser = parser;
         this.fallback = fallback;
+        this.evidenceInterpreterService = evidenceInterpreterService;
     }
 
     @Override
@@ -64,6 +69,13 @@ public class SpringAiSuggestionGenerationService implements SuggestionGeneration
         StringBuilder sb = new StringBuilder();
         sb.append("工单：").append(extract).append("\n");
 
+        EvidenceBundle evidenceBundle = evidenceInterpreterService.interpret(toolResults);
+        sb.append("结构化证据解释：").append(evidenceBundle.summary()).append("\n");
+        appendList(sb, "日志信号", evidenceBundle.logSignals());
+        appendList(sb, "指标信号", evidenceBundle.metricSignals());
+        appendList(sb, "风险信号", evidenceBundle.riskSignals());
+        appendList(sb, "证据缺口", evidenceBundle.unknowns());
+
         if (hits != null && !hits.isEmpty()) {
             sb.append("知识库：\n");
             for (KnowledgeHit hit : hits) {
@@ -85,6 +97,17 @@ public class SpringAiSuggestionGenerationService implements SuggestionGeneration
         }
 
         return sb.toString();
+    }
+
+    private void appendList(StringBuilder sb, String title, List<String> values) {
+        sb.append(title).append("：\n");
+        if (values == null || values.isEmpty()) {
+            sb.append("- 无\n");
+            return;
+        }
+        for (String value : values) {
+            sb.append("- ").append(value).append("\n");
+        }
     }
 
     private List<String> nullToEmpty(List<String> values) {

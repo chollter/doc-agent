@@ -3,6 +3,7 @@ package com.gcll.ticketagent.execution.evidence;
 import com.gcll.ticketagent.eval.EvalFaultInjection;
 import com.gcll.ticketagent.execution.tool.ToolSelection;
 import com.gcll.ticketagent.extract.TicketExtractResult;
+import com.gcll.ticketagent.metrics.AgentMetrics;
 import com.gcll.ticketagent.persistence.repository.ToolExecutionLogRepository;
 import com.gcll.ticketagent.resilience.CallResult;
 import com.gcll.ticketagent.resilience.ExternalCallGateway;
@@ -26,17 +27,20 @@ public class EvidenceCollectionService {
     private final ToolExecutionLogRepository toolExecutionLogRepository;
     private final ExternalCallGateway externalCallGateway;
     private final ToolArgMerger toolArgMerger;
+    private final AgentMetrics agentMetrics;
 
     public EvidenceCollectionService(
             ToolRegistry toolRegistry,
             ToolExecutionLogRepository toolExecutionLogRepository,
             ExternalCallGateway externalCallGateway,
-            ToolArgMerger toolArgMerger
+            ToolArgMerger toolArgMerger,
+            AgentMetrics agentMetrics
     ) {
         this.toolRegistry = toolRegistry;
         this.toolExecutionLogRepository = toolExecutionLogRepository;
         this.externalCallGateway = externalCallGateway;
         this.toolArgMerger = toolArgMerger;
+        this.agentMetrics = agentMetrics;
     }
 
     public List<ToolResult> collect(
@@ -68,6 +72,8 @@ public class EvidenceCollectionService {
                 );
                 results.add(injectedFailure);
                 toolExecutionLogRepository.save(runId, "EVIDENCE_COLLECTION", injectedFailure);
+                agentMetrics.recordToolCall(tool.toolName(), false);
+                agentMetrics.recordFallback("tool." + tool.toolName());
                 log.warn("Tool [{}] failed by eval injection", tool.toolName());
                 continue;
             }
@@ -90,9 +96,11 @@ public class EvidenceCollectionService {
             }
             results.add(result);
             toolExecutionLogRepository.save(runId, "EVIDENCE_COLLECTION", result);
+            agentMetrics.recordToolCall(tool.toolName(), result.success());
             if (result.success()) {
                 log.info("Tool [{}] executed successfully, durationMs={}", tool.toolName(), result.durationMs());
             } else {
+                agentMetrics.recordFallback("tool." + tool.toolName());
                 log.warn("Tool [{}] failed: {}", tool.toolName(), result.errorMessage());
             }
         }
