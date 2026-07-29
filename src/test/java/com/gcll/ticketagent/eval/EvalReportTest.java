@@ -22,7 +22,7 @@ class EvalReportTest {
         EvalAssertionResult assertion = new EvalAssertionResult(
                 "replyType", false, "NEED_MORE_INFO", "TICKET_ANALYSIS_RESULT", "mismatch");
         EvalAuditStepResult auditStep = new EvalAuditStepResult(
-                "TRIAGE_DECISION", "SUCCESS", false, null, 3,
+                "TRIAGE_PIPELINE", "SUCCESS", false, null, 3,
                 null, "type=NEED_MORE_INFO", null, "2026-07-21T00:00:00Z");
         EvalCaseResult caseResult = new EvalCaseResult(
                 "insufficient-info", "core-regression", "run-1", false, List.of(assertion), List.of(auditStep));
@@ -54,7 +54,7 @@ class EvalReportTest {
                     .isEqualTo("replyType");
             assertThat(result.auditSteps()).singleElement()
                     .extracting(EvalAuditStepResult::stepName)
-                    .isEqualTo("TRIAGE_DECISION");
+                    .isEqualTo("TRIAGE_PIPELINE");
         });
         assertThat(report.metricsSummary().casesByScenarioType()).containsEntry("core-regression", 1);
     }
@@ -76,7 +76,7 @@ class EvalReportTest {
                         true,
                         List.of(),
                         List.of(new EvalAuditStepResult(
-                                "INFO_GAP_ANALYSIS",
+                                "FOLLOW_UP_QUESTION_GENERATE",
                                 "SUCCESS",
                                 true,
                                 "SpringAI",
@@ -100,6 +100,6 @@ class EvalReportTest {
         assertThat(written.outputFile()).isEqualTo(output.toAbsolutePath().toString());
         assertThat(Files.readString(output)).contains("\"outputFile\"");
         assertThat(Files.readString(output)).contains("\"auditSteps\"");
-        assertThat(Files.readString(output)).contains("INFO_GAP_ANALYSIS");
+        assertThat(Files.readString(output)).contains("FOLLOW_UP_QUESTION_GENERATE");
     }
 }

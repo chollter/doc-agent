@@ -29,7 +29,6 @@ public class AgentStep {
     private final Instant createdAt;
     private final Instant startedAt;
     private Instant finishedAt;
-    private String detail;
 
     /**
      * v2 完整构造器
@@ -53,23 +52,12 @@ public class AgentStep {
         this(id, runId, null, stepName, status, null, createdAt, createdAt);
     }
 
-    /**
-     * v1 legacy 工厂方法
-     */
-    public static AgentStep legacy(String id, String runId, String name, String detail, Instant createdAt) {
-        AgentStep step = new AgentStep(id, runId, name, "SUCCESS", createdAt);
-        step.detail = detail;
-        step.outputSnapshot = detail;
-        return step;
-    }
-
     // --- getters ---
 
     public String getId() { return id; }
     public String getRunId() { return runId; }
     public String getParentStepId() { return parentStepId; }
     public String getStepName() { return stepName; }
-    public String getName() { return stepName; }
     public String getStatus() { return status; }
     public String getInputSnapshot() { return inputSnapshot; }
     public String getOutputSnapshot() { return outputSnapshot; }
@@ -81,7 +69,6 @@ public class AgentStep {
     public Instant getCreatedAt() { return createdAt; }
     public Instant getStartedAt() { return startedAt; }
     public Instant getFinishedAt() { return finishedAt; }
-    public String getDetail() { return detail; }
 
     // --- setters ---
 

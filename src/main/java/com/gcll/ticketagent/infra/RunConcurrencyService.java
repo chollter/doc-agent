@@ -1,8 +1,5 @@
 package com.gcll.ticketagent.infra;
 
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -20,8 +17,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * 幂等键仍用 StringRedisTemplate（简单 KV）；Run 锁用 Redisson RLock（看门狗自动续期）。
- * 未引入 redisson-spring-boot-starter，避免与 spring-data-redis 自动配置冲突。
+ * 幂等键 + Run 锁，统一用 StringRedisTemplate（setIfAbsent + Lua 脚本解锁）。
+ * <p>
+ * v2 移除了 Redisson 依赖：分布式锁通过 RedisTemplate + Lua 脚本实现，
+ * 不需要看门狗续期场景下足够可靠，避免引入 2.5MB+ 的 Redisson。
  */
 @Service
 public class RunConcurrencyService {
@@ -37,17 +36,12 @@ public class RunConcurrencyService {
             "end";
 
     private final StringRedisTemplate redisTemplate;
-    private final RedissonClient redissonClient;
     private final DefaultRedisScript<Long> unlockRedisScript;
     private final Map<String, String> localIdempotencyCache = new ConcurrentHashMap<>();
     private final Map<String, String> localLocks = new ConcurrentHashMap<>();
 
-    public RunConcurrencyService(
-            StringRedisTemplate redisTemplate,
-            @Autowired(required = false) RedissonClient redissonClient
-    ) {
+    public RunConcurrencyService(StringRedisTemplate redisTemplate) {
         this.redisTemplate = redisTemplate;
-        this.redissonClient = redissonClient;
         this.unlockRedisScript = new DefaultRedisScript<>(UNLOCK_SCRIPT, Long.class);
     }
 
@@ -97,30 +91,7 @@ public class RunConcurrencyService {
 
     public <T> Optional<T> withRunLock(String runId, Supplier<T> supplier) {
         String lockKey = "run-lock:" + runId;
-        if (redissonClient != null) {
-            return withRedissonLock(lockKey, supplier);
-        }
         return withRedisTemplateLock(lockKey, supplier);
-    }
-
-    private <T> Optional<T> withRedissonLock(String lockKey, Supplier<T> supplier) {
-        RLock lock = redissonClient.getLock(lockKey);
-        boolean acquired;
-        try {
-            acquired = lock.tryLock();
-        } catch (RuntimeException ex) {
-            return withRedisTemplateLock(lockKey, supplier);
-        }
-        if (!acquired) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(supplier.get());
-        } finally {
-            if (lock.isHeldByCurrentThread()) {
-                lock.unlock();
-            }
-        }
     }
 
     private <T> Optional<T> withRedisTemplateLock(String lockKey, Supplier<T> supplier) {

@@ -6,7 +6,6 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
-      - org.springframework.ai.autoconfigure.vectorstore.milvus.MilvusVectorStoreAutoConfiguration
   datasource:
     url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DATABASE:tech_support_agent}
     username: ${PG_USER:postgres}
@@ -62,7 +61,7 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: com.gcll.ticketagent.async
+        spring.json.trusted.packages: com.gcll.ticketagent.async,com.gcll.ticketagent.investigation
 
 mybatis-plus:
   configuration:
@@ -136,6 +135,11 @@ opsmind:
         qwen-plus: 32768
         qwen-max: 32768
       default-model-window: ${DEFAULT_MODEL_WINDOW:8192}
+      # 上下文截断分段配置（ContextWindowManager 使用）
+      context:
+        max-chars-per-segment: ${LLM_CONTEXT_MAX_CHARS_PER_SEGMENT:4000}
+        overlap-chars: ${LLM_CONTEXT_OVERLAP_CHARS:200}
+        max-segments: ${LLM_CONTEXT_MAX_SEGMENTS:10}
       # 工单级短期记忆：按 runId 隔离各工单对话历史，多轮追问复用上下文而非重跑。
       # 关闭时退化为单轮（现状）。出问题可一键关闭回退。
       chat-memory:

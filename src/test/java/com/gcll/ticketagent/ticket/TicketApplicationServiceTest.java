@@ -78,7 +78,7 @@ class TicketApplicationServiceTest {
                 agentRunRepository,
                 orchestrator,
                 new TransactionTemplate(new TestTransactionManager()),
-                new RunConcurrencyService(mockedRedisTemplate(), null),
+                new RunConcurrencyService(mockedRedisTemplate()),
                 new AsyncAgentRunProperties(),
                 Optional.empty(),
                 new TicketInputProcessor(8000),

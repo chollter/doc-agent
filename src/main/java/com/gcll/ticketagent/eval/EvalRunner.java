@@ -555,7 +555,8 @@ public class EvalRunner {
     private boolean stepExpectationPassed(String runId, EvalCase evalCase) {
         var steps = actualSteps(runId);
         if (evalCase.expectGapAnalysis()) {
-            if (!steps.contains("INFO_GAP_ANALYSIS") || !steps.contains("COMPLETENESS_DECISION")) {
+            // v2: 追问已改为 FOLLOW_UP_QUESTION_GENERATE + TRIAGE_PIPELINE
+            if (!steps.contains("FOLLOW_UP_QUESTION_GENERATE") || !steps.contains("TRIAGE_PIPELINE")) {
                 return false;
             }
         }

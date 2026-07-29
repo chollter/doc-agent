@@ -1,8 +1,6 @@
 package com.gcll.ticketagent.infra;
 
 import org.junit.jupiter.api.Test;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -17,7 +15,6 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,7 +29,7 @@ class RunConcurrencyServiceTest {
         when(redisTemplate.opsForValue()).thenReturn(ops);
         when(ops.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(false);
 
-        RunConcurrencyService service = new RunConcurrencyService(redisTemplate, null);
+        RunConcurrencyService service = new RunConcurrencyService(redisTemplate);
 
         Optional<String> result = service.withRunLock("run-1", () -> "should not execute");
 
@@ -48,7 +45,7 @@ class RunConcurrencyServiceTest {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any()))
                 .thenReturn(1L);
 
-        RunConcurrencyService service = new RunConcurrencyService(redisTemplate, null);
+        RunConcurrencyService service = new RunConcurrencyService(redisTemplate);
 
         Optional<String> result = service.withRunLock("run-1", () -> "executed");
 
@@ -68,27 +65,11 @@ class RunConcurrencyServiceTest {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any()))
                 .thenReturn(1L);
 
-        RunConcurrencyService service = new RunConcurrencyService(redisTemplate, null);
+        RunConcurrencyService service = new RunConcurrencyService(redisTemplate);
 
         service.withRunLock("run-1", () -> "done");
 
         verify(redisTemplate).execute(any(RedisScript.class), eq(List.of("run-lock:run-1")), any());
-    }
-
-    @Test
-    void withRunLockUsesRedissonWhenAvailable() {
-        RedissonClient redissonClient = mock(RedissonClient.class);
-        RLock lock = mock(RLock.class);
-        when(redissonClient.getLock(anyString())).thenReturn(lock);
-        when(lock.tryLock()).thenReturn(true);
-        when(lock.isHeldByCurrentThread()).thenReturn(true);
-
-        RunConcurrencyService service = new RunConcurrencyService(mock(StringRedisTemplate.class), redissonClient);
-
-        Optional<String> result = service.withRunLock("run-1", () -> "redisson-executed");
-
-        assertThat(result).isPresent();
-        assertThat(result.get()).isEqualTo("redisson-executed");
     }
 
     @Test
@@ -99,7 +80,7 @@ class RunConcurrencyServiceTest {
         when(ops.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(false);
         when(ops.get(anyString())).thenReturn("existing-run");
 
-        RunConcurrencyService service = new RunConcurrencyService(redisTemplate, null);
+        RunConcurrencyService service = new RunConcurrencyService(redisTemplate);
 
         Optional<String> existing = service.rememberRunIdIfAbsent("supplement:abc", "run-new");
 
@@ -116,7 +97,7 @@ class RunConcurrencyServiceTest {
         when(ops.setIfAbsent(anyString(), anyString(), any(Duration.class)))
                 .thenThrow(new RuntimeException("Redis down"));
 
-        RunConcurrencyService service = new RunConcurrencyService(redisTemplate, null);
+        RunConcurrencyService service = new RunConcurrencyService(redisTemplate);
 
         Optional<String> result = service.withRunLock("run-1", () -> "executed");
 
@@ -133,7 +114,7 @@ class RunConcurrencyServiceTest {
         when(redisTemplate.execute(any(RedisScript.class), anyList(), any()))
                 .thenThrow(new RuntimeException("Redis down on unlock"));
 
-        RunConcurrencyService service = new RunConcurrencyService(redisTemplate, null);
+        RunConcurrencyService service = new RunConcurrencyService(redisTemplate);
 
         Optional<String> result = service.withRunLock("run-1", () -> "executed");
 
