@@ -561,7 +561,11 @@ public class EvalRunner {
             }
         }
         if (evalCase.expectEvidence()) {
-            if (!steps.contains("AGENT_PLAN") || !steps.contains("TOOL_SELECTION")) {
+            // v2: 排查阶段策略步骤（LINEAR_INVESTIGATION / CONSULT_INVESTIGATION / REACT_INVESTIGATION）
+            // 或兼容 v1 步骤名（AGENT_PLAN + TOOL_SELECTION）
+            boolean investigationStepFound = steps.stream().anyMatch(s ->
+                    s.contains("INVESTIGATION") || s.equals("AGENT_PLAN") || s.equals("TOOL_SELECTION"));
+            if (!investigationStepFound) {
                 return false;
             }
         }

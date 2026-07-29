@@ -50,6 +50,15 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * v1 同步排查流水线——已被 v2 策略模式取代（InvestigationService + InvestigationStrategy）。
+ * <p>
+ * AgentRuntime 已切到 v2 异步排查路径（TriageCompletedEvent → InvestigationConsumer → InvestigationStrategy）。
+ * 本类保留作为同步回退参考，后续可删除。
+ *
+ * @deprecated v2 排查阶段使用 InvestigationService + 策略模式
+ */
+@Deprecated
 @Service
 public class AnalysisWorkflowService {
 
