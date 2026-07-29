@@ -161,6 +161,8 @@ opsmind:
     topic: ${OPSMIND_RUN_TOPIC:opsmind.agent-run.execute}
     stuck-scan-interval-ms: ${OPSMIND_STUCK_SCAN_INTERVAL_MS:300000}
     stuck-running-timeout-minutes: ${OPSMIND_STUCK_RUNNING_TIMEOUT_MINUTES:15}
+  investigation:
+    topic: ${OPSMIND_INVESTIGATION_TOPIC:opsmind.investigation.execute}
   input:
     max-content-length: ${OPSMIND_MAX_CONTENT_LENGTH:8000}
   rag:

@@ -14,6 +14,7 @@ import com.gcll.ticketagent.extract.TicketExtractResult;
 import com.gcll.ticketagent.governance.priority.PriorityResult;
 import com.gcll.ticketagent.governance.routing.RoutingResult;
 import com.gcll.ticketagent.suggestion.TicketSuggestion;
+import com.gcll.ticketagent.triage.TriageResult;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -59,6 +60,22 @@ public class AgentResponseAssembler {
                 null,
                 null,
                 false
+        );
+    }
+
+    /**
+     * 分诊完成——同步返回分诊结果，排查异步进行。
+     */
+    public AgentRunResponse triageResult(String runId, TriageResult triageResult, boolean aiGenerated) {
+        return new AgentRunResponse(
+                runId,
+                AgentRunStatus.INVESTIGATING,
+                ReplyType.TRIAGE_RESULT,
+                "分诊完成，工单已路由至" + (triageResult.routedTeam() != null ? triageResult.routedTeam() : "待分配团队")
+                        + "，排查正在后台进行。",
+                null,
+                null,
+                aiGenerated
         );
     }
 

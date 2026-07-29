@@ -1,12 +1,13 @@
 package com.gcll.ticketagent.agent;
 
-import com.gcll.ticketagent.agent.workflow.AnalysisWorkflowService;
 import com.gcll.ticketagent.api.dto.AgentRunResponse;
 import com.gcll.ticketagent.audit.AuditLogService;
 import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.domain.AgentRunStatus;
 import com.gcll.ticketagent.extract.TicketExtractResult;
 import com.gcll.ticketagent.extract.TicketExtractService;
+import com.gcll.ticketagent.investigation.TriageCompletedEvent;
+import com.gcll.ticketagent.investigation.TriageCompletedEventPublisher;
 import com.gcll.ticketagent.llm.StepOutcome;
 import com.gcll.ticketagent.observability.trace.TraceRecorder;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
@@ -20,6 +21,7 @@ import com.gcll.ticketagent.understanding.gap.InfoGapAnalysis;
 import com.gcll.ticketagent.understanding.gap.InfoGapAnalysisService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -34,35 +36,38 @@ public class AgentRuntime {
     private final TriagePipeline triagePipeline;
     private final InfoGapAnalysisService infoGapAnalysisService;
     private final CompletenessDecisionService completenessDecisionService;
-    private final AnalysisWorkflowService analysisWorkflowService;
+    private final TriageCompletedEventPublisher triageEventPublisher;
     private final AuditLogService auditLogService;
     private final AgentRunRepository agentRunRepository;
     private final TransactionTemplate transactionTemplate;
     private final AgentRunContextPersister contextPersister;
     private final AgentResponseAssembler responseAssembler;
+    private final String investigationTopic;
 
     public AgentRuntime(
             TicketExtractService ticketExtractService,
             TriagePipeline triagePipeline,
             InfoGapAnalysisService infoGapAnalysisService,
             CompletenessDecisionService completenessDecisionService,
-            AnalysisWorkflowService analysisWorkflowService,
+            TriageCompletedEventPublisher triageEventPublisher,
             AuditLogService auditLogService,
             AgentRunRepository agentRunRepository,
             TransactionTemplate transactionTemplate,
             AgentRunContextPersister contextPersister,
-            AgentResponseAssembler responseAssembler
+            AgentResponseAssembler responseAssembler,
+            @Value("${opsmind.investigation.topic:opsmind.investigation.execute}") String investigationTopic
     ) {
         this.ticketExtractService = ticketExtractService;
         this.triagePipeline = triagePipeline;
         this.infoGapAnalysisService = infoGapAnalysisService;
         this.completenessDecisionService = completenessDecisionService;
-        this.analysisWorkflowService = analysisWorkflowService;
+        this.triageEventPublisher = triageEventPublisher;
         this.auditLogService = auditLogService;
         this.agentRunRepository = agentRunRepository;
         this.transactionTemplate = transactionTemplate;
         this.contextPersister = contextPersister;
         this.responseAssembler = responseAssembler;
+        this.investigationTopic = investigationTopic;
     }
 
     public AgentRunResponse execute(AgentRun run, TicketDraft draft) {
@@ -141,8 +146,23 @@ public class AgentRuntime {
             return response;
         }
 
-        // === 阶段2：排查（当前仍同步，Day9-12 拆分为异步） ===
-        return analysisWorkflowService.execute(run, draft, extract, null, extractOutcome.llmUsed(), tracer);
+        // === 阶段2：排查（异步，通过 Kafka 事件触发） ===
+        // 分诊已完成优先级评估和路由，同步返回分诊结果。
+        // 排查阶段异步执行，产出证据包+参考诊断，附带给接手团队。
+        String traceId = run.getTraceId();
+        TriageCompletedEvent event = TriageCompletedEvent.of(
+                run.getId(), traceId, triageResult, extract,
+                draft.fullContent(), extractOutcome.llmUsed()
+        );
+        triageEventPublisher.publish(investigationTopic, event);
+
+        transactionTemplate.executeWithoutResult(status -> {
+            run.setStatus(AgentRunStatus.INVESTIGATING);
+            agentRunRepository.save(run);
+        });
+
+        return responseAssembler.triageResult(
+                run.getId(), triageResult, extractOutcome.llmUsed());
     }
 
     private int getFollowUpRound(AgentRun run) {
