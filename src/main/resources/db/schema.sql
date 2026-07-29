@@ -121,3 +121,20 @@ CREATE TABLE IF NOT EXISTS ops_metric_sample (
 
 CREATE INDEX IF NOT EXISTS idx_ops_metric_lookup
     ON ops_metric_sample (system_name, service_name, metric_name, environment, occurred_at);
+
+-- 语义缓存：对相似 query 复用 LLM / RAG 的历史结果，省 Token + 加速重复工单。
+CREATE TABLE IF NOT EXISTS semantic_cache (
+    id              VARCHAR(64)  PRIMARY KEY,
+    cache_type      VARCHAR(16)  NOT NULL,    -- LLM / RAG
+    call_name       VARCHAR(64),              -- LLM 缓存对应的 callName
+    query_text      TEXT         NOT NULL,    -- 原始查询文本（用于展示/调试）
+    query_hash      VARCHAR(64)  NOT NULL,    -- query 的 SHA-256（精确匹配快速路径）
+    response_text   TEXT         NOT NULL,    -- 缓存的响应内容
+    metadata_json   TEXT,                     -- 附加元数据（RAG 过滤条件 / LLM model 等）
+    hit_count       INT          NOT NULL DEFAULT 0,
+    created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at      TIMESTAMP               -- TTL 过期时间，null 表示不过期
+);
+
+CREATE INDEX IF NOT EXISTS idx_semantic_cache_type_hash ON semantic_cache (cache_type, query_hash);
+CREATE INDEX IF NOT EXISTS idx_semantic_cache_expires ON semantic_cache (expires_at) WHERE expires_at IS NOT NULL;
