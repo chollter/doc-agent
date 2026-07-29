@@ -6,9 +6,15 @@ import com.gcll.ticketagent.governance.priority.PriorityEvaluationService;
 import com.gcll.ticketagent.governance.priority.PriorityResult;
 import com.gcll.ticketagent.governance.priority.TicketPriority;
 import com.gcll.ticketagent.governance.routing.RoutingPolicyEngine;
+import com.gcll.ticketagent.governance.routing.RoutingResult;
+import com.gcll.ticketagent.governance.routing.RoutingSuggestion;
+import com.gcll.ticketagent.governance.routing.RoutingSuggestionService;
+import com.gcll.ticketagent.governance.routing.TeamRoutingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 /**
  * 分诊 Pipeline——阶段1 的核心入口。
@@ -35,15 +41,21 @@ public class TriagePipeline {
     private final RuleBasedTriageEngine ruleEngine;
     private final IntentIdentificationService intentService;
     private final PriorityEvaluationService priorityService;
+    private final TeamRoutingService teamRoutingService;
+    private final RoutingSuggestionService routingSuggestionService;
     private final RoutingPolicyEngine routingPolicyEngine;
 
     public TriagePipeline(RuleBasedTriageEngine ruleEngine,
                           IntentIdentificationService intentService,
                           PriorityEvaluationService priorityService,
+                          TeamRoutingService teamRoutingService,
+                          RoutingSuggestionService routingSuggestionService,
                           RoutingPolicyEngine routingPolicyEngine) {
         this.ruleEngine = ruleEngine;
         this.intentService = intentService;
         this.priorityService = priorityService;
+        this.teamRoutingService = teamRoutingService;
+        this.routingSuggestionService = routingSuggestionService;
         this.routingPolicyEngine = routingPolicyEngine;
     }
 
@@ -225,13 +237,22 @@ public class TriagePipeline {
     }
 
     private String resolveRoutedTeam(TicketExtractResult extract, PriorityResult priorityResult) {
-        // 简单规则路由：按 systemName 映射团队
-        // 后续由 RoutingPolicyEngine 做规则+LLM置信度分流
-        String system = extract.affectedSystem();
-        if (system != null) {
-            return system + "团队";
+        // Step 1: 规则路由（TeamRoutingService，毫秒级）
+        RoutingResult ruleResult = teamRoutingService.route(extract, List.of());
+
+        // Step 2: LLM 路由建议（RoutingSuggestionService，规则置信度低时补充）
+        RoutingSuggestion suggestion;
+        try {
+            var outcome = routingSuggestionService.suggest(null, extract, List.of(), ruleResult);
+            suggestion = outcome.value() != null ? outcome.value() : RoutingSuggestion.empty();
+        } catch (Exception e) {
+            suggestion = RoutingSuggestion.empty();
         }
-        return null;
+
+        // Step 3: RoutingPolicyEngine 合并（规则为主，LLM兜底，置信度分流）
+        RoutingResult merged = routingPolicyEngine.merge(ruleResult, suggestion);
+
+        return merged.primaryTeam();
     }
 
     private boolean isMissingCriticalFields(IssueType issueType, TicketExtractResult extract) {
