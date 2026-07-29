@@ -191,8 +191,16 @@ public class AnalysisWorkflowService {
 
         boolean aiGenerated = extractLlmUsed || rootCause.llmUsed() || routingSuggestionOutcome.llmUsed()
                 || suggestionOutcome.llmUsed();
-        boolean needConfirm = humanConfirmTrigger.needHumanConfirm(priority, routing, extract);
-        String confirmReason = humanConfirmTrigger.reason(priority, routing, extract);
+        boolean needConfirm = humanConfirmTrigger.needHumanConfirm(priority, routing, extract, draft.fullContent());
+        String confirmReason = humanConfirmTrigger.reason(priority, routing, extract, draft.fullContent());
+        auditLogService.recordStep(run, AgentStepName.HUMAN_CONFIRM_DECISION,
+                "priority=" + priority.priority()
+                        + ",issueType=" + extract.issueType()
+                        + ",env=" + extract.environment()
+                        + ",impactScope=" + extract.impactScope()
+                        + ",routingConfidence=" + routing.confidence(),
+                "needConfirm=" + needConfirm + ",reason=" + (needConfirm ? confirmReason : "not_required"),
+                false, null, 0, null);
         TicketAnalysisDto analysis = responseAssembler.buildAnalysis(
                 extract, priority, routing, rootCause, suggestion, needConfirm, confirmReason);
 
@@ -450,6 +458,7 @@ public class AnalysisWorkflowService {
      */
     private KnowledgeSearchOutcome searchKnowledgeSafely(AgentRun run, TicketDraft draft, TicketExtractResult extract) {
         if (EvalFaultInjection.shouldFailKnowledgeSearch(draft.fullContent())) {
+            agentMetrics.recordFallback("vector.knowledge-search");
             return new KnowledgeSearchOutcome(
                     Collections.emptyList(),
                     "degraded: injected knowledge search failure",
@@ -470,6 +479,7 @@ public class AnalysisWorkflowService {
                     : (result.error() != null ? result.error().getMessage() : "unknown");
             log.warn("Knowledge search degraded, runId={}, circuitOpen={}, reason={}",
                     run.getId(), result.circuitOpen(), reason);
+            agentMetrics.recordFallback("vector.knowledge-search");
             return new KnowledgeSearchOutcome(
                     Collections.emptyList(),
                     "degraded: " + reason,

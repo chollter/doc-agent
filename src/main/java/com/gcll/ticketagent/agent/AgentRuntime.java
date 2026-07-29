@@ -13,6 +13,7 @@ import com.gcll.ticketagent.extract.TicketExtractResult;
 import com.gcll.ticketagent.extract.TicketExtractService;
 import com.gcll.ticketagent.llm.StepOutcome;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
+import com.gcll.ticketagent.resilience.LlmRunContext;
 import com.gcll.ticketagent.ticket.TicketDraft;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +63,7 @@ public class AgentRuntime {
     }
 
     public AgentRunResponse execute(AgentRun run, TicketDraft draft) {
+        LlmRunContext.bind(run.getId());
         try {
             return doExecute(run, draft);
         } catch (Exception ex) {
@@ -73,6 +75,8 @@ public class AgentRuntime {
                     ex.getMessage() == null ? "(no message)" : ex.getMessage(),
                     ex);
             return failRun(run, draft, ex);
+        } finally {
+            LlmRunContext.clear();
         }
     }
 
@@ -109,6 +113,13 @@ public class AgentRuntime {
                         + ",missing=" + decision.missingSchemaFields()
                         + ",semanticGaps=" + decision.semanticGaps(),
                 false, null, System.currentTimeMillis() - start, null);
+        auditLogService.recordStep(run, AgentStepName.TRIAGE_DECISION,
+                "missing=" + decision.missingSchemaFields() + ",semanticGaps=" + decision.semanticGaps(),
+                "type=" + decision.triageType()
+                        + ",canAnalyze=" + decision.canProceed()
+                        + ",needFollowUp=" + decision.needFollowUp()
+                        + ",reason=" + decision.decisionReason(),
+                false, null, 0, null);
 
         if (decision.needFollowUp()) {
             start = System.currentTimeMillis();

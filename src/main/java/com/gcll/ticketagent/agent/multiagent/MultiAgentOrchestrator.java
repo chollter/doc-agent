@@ -1,6 +1,7 @@
 package com.gcll.ticketagent.agent.multiagent;
 
 import com.gcll.ticketagent.extract.TicketExtractResult;
+import com.gcll.ticketagent.resilience.LlmRunContext;
 import com.gcll.ticketagent.understanding.gap.InfoGapAnalysis;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,6 +68,7 @@ public class MultiAgentOrchestrator {
         List<java.util.concurrent.CompletableFuture<Void>> futures = new ArrayList<>();
         for (WorkerAgent worker : selectedWorkers) {
             futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                LlmRunContext.bind(runId);
                 try {
                     AgentFinding finding = worker.investigate(ctx);
                     ctx.addFinding(finding);
@@ -75,6 +77,8 @@ public class MultiAgentOrchestrator {
                     log.warn("Worker [{}] threw unexpectedly, skip it, runId={}: {}",
                             worker.role(), runId, ex.getMessage());
                     ctx.addFinding(AgentFinding.of(worker.role(), "子智能体异常：" + ex.getMessage(), 0.0));
+                } finally {
+                    LlmRunContext.clear();
                 }
             }));
         }
