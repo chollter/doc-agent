@@ -17,6 +17,7 @@ import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.domain.AgentRunStatus;
 import com.gcll.ticketagent.infra.RunConcurrencyService;
 import com.gcll.ticketagent.metrics.AgentMetrics;
+import com.gcll.ticketagent.observability.trace.TraceRecorder;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -202,10 +203,13 @@ public class TicketApplicationService {
     }
 
     private void recordL0Audit(AgentRun run, ProcessedInput processed) {
-        auditLogService.recordStep(run, AgentStepName.SUBMITTED, null, processed.content(),
-                false, null, 0, null);
-        auditLogService.recordStep(run, AgentStepName.PREPROCESS, processed.content(),
-                processed.preprocessSummary(), false, null, 0, null);
+        TraceRecorder tracer = auditLogService.createTracer(run);
+        String stepId = tracer.begin(AgentStepName.SUBMITTED.name());
+        tracer.end(stepId, TraceRecorder.fingerprint("content", processed.content()), null);
+
+        String preprocessStepId = tracer.begin(AgentStepName.PREPROCESS.name());
+        tracer.recordInput(preprocessStepId, TraceRecorder.fingerprint("raw", processed.content()));
+        tracer.end(preprocessStepId, processed.preprocessSummary(), null);
     }
 
     private AgentRunResponse idempotentResponse(AgentRun run, String message) {

@@ -13,7 +13,6 @@ import com.gcll.ticketagent.analysis.RootCauseAnalysisService;
 import com.gcll.ticketagent.analysis.RootCauseResult;
 import com.gcll.ticketagent.api.dto.AgentRunResponse;
 import com.gcll.ticketagent.api.dto.TicketAnalysisDto;
-import com.gcll.ticketagent.audit.AuditLogService;
 import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.domain.AgentRunStatus;
 import com.gcll.ticketagent.eval.EvalFaultInjection;
@@ -34,6 +33,7 @@ import com.gcll.ticketagent.knowledge.KnowledgeHit;
 import com.gcll.ticketagent.knowledge.KnowledgeSearchService;
 import com.gcll.ticketagent.llm.StepOutcome;
 import com.gcll.ticketagent.metrics.AgentMetrics;
+import com.gcll.ticketagent.observability.trace.TraceRecorder;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
 import com.gcll.ticketagent.resilience.CallResult;
 import com.gcll.ticketagent.resilience.ExternalCallGateway;
@@ -67,7 +67,6 @@ public class AnalysisWorkflowService {
     private final SuggestionGenerationService suggestionGenerationService;
     private final HumanConfirmTrigger humanConfirmTrigger;
     private final HumanConfirmService humanConfirmService;
-    private final AuditLogService auditLogService;
     private final AgentRunRepository agentRunRepository;
     private final AgentMetrics agentMetrics;
     private final ExternalCallGateway externalCallGateway;
@@ -93,7 +92,6 @@ public class AnalysisWorkflowService {
             SuggestionGenerationService suggestionGenerationService,
             HumanConfirmTrigger humanConfirmTrigger,
             HumanConfirmService humanConfirmService,
-            AuditLogService auditLogService,
             AgentRunRepository agentRunRepository,
             AgentMetrics agentMetrics,
             ExternalCallGateway externalCallGateway,
@@ -116,7 +114,6 @@ public class AnalysisWorkflowService {
         this.suggestionGenerationService = suggestionGenerationService;
         this.humanConfirmTrigger = humanConfirmTrigger;
         this.humanConfirmService = humanConfirmService;
-        this.auditLogService = auditLogService;
         this.agentRunRepository = agentRunRepository;
         this.agentMetrics = agentMetrics;
         this.externalCallGateway = externalCallGateway;
@@ -130,17 +127,21 @@ public class AnalysisWorkflowService {
         this.planExecutePlanner = java.util.Optional.ofNullable(planExecutePlannerProvider.getIfAvailable());
     }
 
+    /**
+     * 排查阶段执行入口。
+     *
+     * @param tracer 由调用方（AgentRuntime）创建的 TraceRecorder，保持全链路 Trace 一致
+     */
     public AgentRunResponse execute(
             AgentRun run,
             TicketDraft draft,
             TicketExtractResult extract,
             InfoGapAnalysis gap,
-            boolean extractLlmUsed
+            boolean extractLlmUsed,
+            TraceRecorder tracer
     ) {
-        long start = System.currentTimeMillis();
-
         // 计划驱动 vs 固定顺序：plan-execute 模式时，证据收集由计划驱动
-        AgentPlan plan = resolvePlan(run, draft, extract);
+        AgentPlan plan = resolvePlan(run, draft, extract, tracer);
 
         // 尝试加载持久化的 ExecutionPlan（plan-execute 模式才会生成）
         ExecutionPlan execPlan = contextPersister.loadExecutionPlan(run);
@@ -149,63 +150,64 @@ public class AnalysisWorkflowService {
         StepExecutionContext ctx;
         if (planExecutePlanner.isPresent() && execPlan != null && !execPlan.getSteps().isEmpty()) {
             // ★ 计划驱动：按 ExecutionPlan 的 action 顺序逐个执行，标记状态，断点续跑
-            ctx = executeEvidenceByPlan(run, draft, extract, execPlan);
+            ctx = executeEvidenceByPlan(run, draft, extract, execPlan, tracer);
         } else {
             // 固定顺序（原逻辑，或 plan-execute 回退后）
-            ctx = executeEvidenceFixedOrder(run, draft, extract, plan);
+            ctx = executeEvidenceFixedOrder(run, draft, extract, plan, tracer);
         }
 
-        // ===== 以下后处理保持原样（rootcause/priority/routing/suggestion）=====
-        RootCauseResult rootCause = resolveRootCause(run, draft, extract, ctx.hits(), ctx.evidenceSummary(), ctx.toolResults());
+        // ===== 以下后处理 =====
 
-        start = System.currentTimeMillis();
+        // 根因分析
+        String extractStepId = tracer.begin(AgentStepName.ROOT_CAUSE_ANALYSIS.name());
+        RootCauseResult rootCause = resolveRootCauseInternal(run, draft, extract, ctx.hits(), ctx.evidenceSummary(), ctx.toolResults(), tracer);
+        tracer.end(extractStepId,
+                TraceRecorder.fingerprint("hypothesis", rootCause.hypothesis()),
+                null);
+
+        // 优先级评估
+        String priorityStepId = tracer.begin(AgentStepName.PRIORITY_EVALUATION.name());
         PriorityResult priority = priorityEvaluationService.evaluate(extract);
         run.setPriority(priority.priority().name());
-        auditLogService.recordStep(run, AgentStepName.PRIORITY_EVALUATION, summaryFormatter.summarizeExtract(extract),
-                priority.toString(), false, null, System.currentTimeMillis() - start, null);
+        tracer.end(priorityStepId, priority.toString(), null);
 
-        start = System.currentTimeMillis();
+        // 路由
+        String routingStepId = tracer.begin(AgentStepName.TEAM_ROUTING.name());
         RoutingResult ruleRouting = teamRoutingService.route(extract, ctx.hits());
         StepOutcome<RoutingSuggestion> routingSuggestionOutcome = routingSuggestionService.suggest(
                 draft.fullContent(), extract, ctx.hits(), ruleRouting);
         RoutingResult routing = routingPolicyEngine.merge(ruleRouting, routingSuggestionOutcome.value());
-        long routingCostMs = routingSuggestionOutcome.costMs() > 0
-                ? routingSuggestionOutcome.costMs()
-                : System.currentTimeMillis() - start;
-        auditLogService.recordStep(run, AgentStepName.TEAM_ROUTING,
-                "rule=" + ruleRouting + ",suggestion=" + routingSuggestionOutcome.value(),
-                routing.toString(),
-                routingSuggestionOutcome.llmUsed(),
-                routingSuggestionOutcome.llmUsed() ? "SpringAI" : null,
-                routingCostMs, null);
+        tracer.recordMeta(routingStepId, routingSuggestionOutcome.llmUsed(),
+                routingSuggestionOutcome.llmUsed() ? "SpringAI" : null);
+        tracer.end(routingStepId,
+                "rule=" + ruleRouting + ",suggestion=" + routingSuggestionOutcome.value()
+                        + ",merged=" + routing,
+                null);
 
-        start = System.currentTimeMillis();
+        // 建议
+        String suggestionStepId = tracer.begin(AgentStepName.SUGGESTION_GENERATION.name());
         StepOutcome<TicketSuggestion> suggestionOutcome = suggestionGenerationService.generate(extract, ctx.hits(), ctx.toolResults(), rootCause);
         TicketSuggestion suggestion = suggestionOutcome.value();
         run.setCurrentSummary(suggestion.summary());
-        long suggestionCostMs = suggestionOutcome.costMs() > 0
-                ? suggestionOutcome.costMs()
-                : System.currentTimeMillis() - start;
-        auditLogService.recordStep(run, AgentStepName.SUGGESTION_GENERATION, ctx.hits().toString(), suggestion.toString(),
-                suggestionOutcome.llmUsed(), suggestionOutcome.llmUsed() ? "SpringAI" : null, suggestionCostMs, null);
+        tracer.recordMeta(suggestionStepId, suggestionOutcome.llmUsed(),
+                suggestionOutcome.llmUsed() ? "SpringAI" : null);
+        tracer.end(suggestionStepId, suggestion.toString(), null);
 
+        // 人工确认决策
+        String confirmStepId = tracer.begin(AgentStepName.HUMAN_CONFIRM_DECISION.name());
         boolean aiGenerated = extractLlmUsed || rootCause.llmUsed() || routingSuggestionOutcome.llmUsed()
                 || suggestionOutcome.llmUsed();
         boolean needConfirm = humanConfirmTrigger.needHumanConfirm(priority, routing, extract, draft.fullContent());
         String confirmReason = humanConfirmTrigger.reason(priority, routing, extract, draft.fullContent());
-        auditLogService.recordStep(run, AgentStepName.HUMAN_CONFIRM_DECISION,
-                "priority=" + priority.priority()
-                        + ",issueType=" + extract.issueType()
-                        + ",env=" + extract.environment()
-                        + ",impactScope=" + extract.impactScope()
-                        + ",routingConfidence=" + routing.confidence(),
+        tracer.end(confirmStepId,
                 "needConfirm=" + needConfirm + ",reason=" + (needConfirm ? confirmReason : "not_required"),
-                false, null, 0, null);
+                null);
+
         TicketAnalysisDto analysis = responseAssembler.buildAnalysis(
                 extract, priority, routing, rootCause, suggestion, needConfirm, confirmReason);
 
         AgentRunResponse response = responseAssembler.analysisResult(run.getId(), analysis, needConfirm, aiGenerated);
-        completeRun(run, gap, plan, new ToolSelection(List.of(), java.util.Map.of(), "plan-driven", false), analysis, needConfirm, confirmReason, routing);
+        completeRun(run, gap, plan, new ToolSelection(List.of(), java.util.Map.of(), "plan-driven", false), analysis, needConfirm, confirmReason, routing, tracer);
         return response;
     }
 
@@ -213,45 +215,37 @@ public class AnalysisWorkflowService {
      * 固定顺序执行证据收集（原逻辑，提取出来）：knowledge → toolSelect → evidence。
      */
     private StepExecutionContext executeEvidenceFixedOrder(
-            AgentRun run, TicketDraft draft, TicketExtractResult extract, AgentPlan plan) {
+            AgentRun run, TicketDraft draft, TicketExtractResult extract, AgentPlan plan, TraceRecorder tracer) {
         StepExecutionContext ctx = new StepExecutionContext();
 
-        List<KnowledgeHit> hits = searchKnowledgeIfNeeded(run, draft, extract, plan);
+        List<KnowledgeHit> hits = searchKnowledgeIfNeeded(run, draft, extract, plan, tracer);
         ctx.addHits(hits);
 
-        long start = System.currentTimeMillis();
+        String selectionStepId = tracer.begin(AgentStepName.TOOL_SELECTION.name());
         StepOutcome<ToolSelection> selectionOutcome = toolSelector.select(draft.fullContent(), extract, plan);
         ToolSelection selection = selectionOutcome.value();
-        long selectionCostMs = selectionOutcome.costMs() > 0 ? selectionOutcome.costMs() : System.currentTimeMillis() - start;
-        auditLogService.recordStep(run, AgentStepName.TOOL_SELECTION, plan.auditSummary(), selection.auditSummary(),
-                selectionOutcome.llmUsed(), selectionOutcome.llmUsed() ? "SpringAI" : null, selectionCostMs, null);
+        tracer.recordMeta(selectionStepId, selectionOutcome.llmUsed(),
+                selectionOutcome.llmUsed() ? "SpringAI" : null);
+        tracer.end(selectionStepId, selection.auditSummary(), null);
 
-        start = System.currentTimeMillis();
+        String evidenceStepId = tracer.begin(AgentStepName.EVIDENCE_COLLECTION.name());
         List<ToolResult> toolResults = collectEvidenceSafely(run, extract, draft, selection);
         ctx.addToolResults(toolResults);
         ctx.setEvidenceSummary(summaryFormatter.summarizeToolResults(toolResults));
-        auditLogService.recordStep(run, AgentStepName.EVIDENCE_COLLECTION, summaryFormatter.summarizeExtract(extract),
-                ctx.evidenceSummary(), false, null, System.currentTimeMillis() - start, null);
+        tracer.end(evidenceStepId,
+                TraceRecorder.fingerprint("evidence", ctx.evidenceSummary()), null);
         return ctx;
     }
 
     /**
      * ★ 计划驱动执行证据收集（Plan-Execute 重构核心）。
-     *
-     * <p>遍历 {@link ExecutionPlan} 的有序步骤，按 {@link AgentAction} 类型分派执行，
-     * 每步执行后标记 DONE 并持久化（断点续跑用）。证据写入 {@link StepExecutionContext}。
-     *
-     * <p>这让计划真正驱动执行——不再是无脑固定顺序，而是按 LLM 规划的顺序逐个执行证据收集，
-     * 支持断点续跑（从第一个 PENDING 继续，跳过已 DONE 的）。
-     *
-     * @param execPlan 持久化的执行计划（可能含已完成的步骤，断点续跑场景）
      */
     private StepExecutionContext executeEvidenceByPlan(
-            AgentRun run, TicketDraft draft, TicketExtractResult extract, ExecutionPlan execPlan) {
+            AgentRun run, TicketDraft draft, TicketExtractResult extract, ExecutionPlan execPlan, TraceRecorder tracer) {
         StepExecutionContext ctx = new StepExecutionContext();
         if (execPlan == null || execPlan.getSteps() == null || execPlan.getSteps().isEmpty()) {
             log.warn("executeEvidenceByPlan got empty plan, runId={}, fallback to fixed order", run.getId());
-            return executeEvidenceFixedOrder(run, draft, extract, execPlan == null ? null : execPlan.toAgentPlan());
+            return executeEvidenceFixedOrder(run, draft, extract, execPlan == null ? null : execPlan.toAgentPlan(), tracer);
         }
 
         log.info("Plan-driven execution, runId={}, totalSteps={}, resuming={}",
@@ -265,9 +259,8 @@ public class AnalysisWorkflowService {
                 log.info("Step [{}] already {}, skip (resume), runId={}", step.stepId(), step.status(), run.getId());
                 continue;
             }
-            long start = System.currentTimeMillis();
             try {
-                executePlanStep(run, draft, extract, step, ctx);
+                executePlanStep(run, draft, extract, step, ctx, tracer);
                 execPlan.markStep(step.stepId(), ExecutionPlan.StepStatus.DONE);
             } catch (Exception ex) {
                 log.warn("Plan step [{}] failed, mark FAILED and continue, runId={}: {}",
@@ -286,38 +279,36 @@ public class AnalysisWorkflowService {
      * 按 action 类型分派执行单个计划步骤，结果写入 ctx。
      */
     private void executePlanStep(AgentRun run, TicketDraft draft, TicketExtractResult extract,
-                                 ExecutionPlan.PlanStep step, StepExecutionContext ctx) {
-        long start = System.currentTimeMillis();
+                                 ExecutionPlan.PlanStep step, StepExecutionContext ctx, TraceRecorder tracer) {
         switch (step.action()) {
             case KNOWLEDGE_SEARCH, SIMILAR_CASE_SEARCH -> {
-                // 知识检索（KNOWLEDGE_SEARCH 和 SIMILAR_CASE_SEARCH 走同一个知识检索链路）
+                // 知识检索
+                String stepId = tracer.begin(AgentStepName.KNOWLEDGE_SEARCH.name());
+                tracer.recordInput(stepId, "plan-step:" + step.stepId() + " goal=" + step.goal());
                 KnowledgeSearchOutcome outcome = searchKnowledgeSafely(run, draft, extract);
                 ctx.addHits(outcome.hits());
                 if (!outcome.hits().isEmpty()) {
                     agentMetrics.recordRagHit();
                 }
-                auditLogService.recordStep(run, AgentStepName.KNOWLEDGE_SEARCH,
-                        "plan-step:" + step.stepId() + " goal=" + step.goal(),
-                        outcome.auditOutput(), false, null,
-                        System.currentTimeMillis() - start, outcome.errorMessage());
+                tracer.end(stepId, outcome.auditOutput(), outcome.errorMessage());
             }
             case QUERY_LOGS -> {
                 // 查日志工具
+                String stepId = tracer.begin(AgentStepName.EVIDENCE_COLLECTION.name());
+                tracer.recordInput(stepId, "plan-step:" + step.stepId() + " goal=" + step.goal());
                 List<ToolResult> logs = collectSingleTool(run, extract, draft, "query_logs");
                 ctx.addToolResults(logs);
-                auditLogService.recordStep(run, AgentStepName.EVIDENCE_COLLECTION,
-                        "plan-step:" + step.stepId() + " goal=" + step.goal(),
-                        summaryFormatter.summarizeToolResults(logs), false, null,
-                        System.currentTimeMillis() - start, null);
+                tracer.end(stepId,
+                        TraceRecorder.fingerprint("evidence", summaryFormatter.summarizeToolResults(logs)), null);
             }
             case QUERY_METRIC -> {
                 // 查指标工具
+                String stepId = tracer.begin(AgentStepName.EVIDENCE_COLLECTION.name());
+                tracer.recordInput(stepId, "plan-step:" + step.stepId() + " goal=" + step.goal());
                 List<ToolResult> metrics = collectSingleTool(run, extract, draft, "query_metric");
                 ctx.addToolResults(metrics);
-                auditLogService.recordStep(run, AgentStepName.EVIDENCE_COLLECTION,
-                        "plan-step:" + step.stepId() + " goal=" + step.goal(),
-                        summaryFormatter.summarizeToolResults(metrics), false, null,
-                        System.currentTimeMillis() - start, null);
+                tracer.end(stepId,
+                        TraceRecorder.fingerprint("evidence", summaryFormatter.summarizeToolResults(metrics)), null);
             }
         }
     }
@@ -337,37 +328,19 @@ public class AnalysisWorkflowService {
         }
     }
 
-    /**
-     * 阶段2：根因解析，支持 ReAct 策略（LLM 自主调工具）与线性（原单次推理）两种。
-     *
-     * <p>react 模式（配置开启时 RootCauseStrategy bean 存在）：调策略拿根因，ReAct 循环内
-     * LLM 自主调工具迭代推理；失败回退线性根因（兜底）。
-     * <p>linear 模式（默认，无策略 bean）：原逻辑 rootCauseAnalysisService.analyze。
-     *
-     * <p>无论哪条路径，都返回 {@link RootCauseResult}（统一类型），后半段 priority/routing/suggestion
-     * 完全无感知根因来源——这是最小侵入式接入。
-     */
-    /**
-     * 阶段3：规划解析，支持 Plan-Execute（有序步骤）与原 planner（无序动作集合）。
-     *
-     * <p>plan-execute 模式（配置开启时 PlanExecutePlanner bean 存在）：调规划器出有序
-     * ExecutionPlan，序列化持久化（断点续跑），再转成 AgentPlan 喂后续（knowledge/tool 仍用
-     * AgentPlan.includes 判断，最小侵入）。失败回退原 planner。
-     * <p>default 模式：原 SpringAiAgentPlanner，行为不变。
-     */
-    private AgentPlan resolvePlan(AgentRun run, TicketDraft draft, TicketExtractResult extract) {
-        long start = System.currentTimeMillis();
+    private AgentPlan resolvePlan(AgentRun run, TicketDraft draft, TicketExtractResult extract, TraceRecorder tracer) {
         if (planExecutePlanner.isEmpty()) {
             // 默认：原 planner
+            String stepId = tracer.begin(AgentStepName.AGENT_PLAN.name());
             StepOutcome<AgentPlan> outcome = agentPlanner.plan(draft.fullContent(), extract);
             AgentPlan plan = outcome.value();
-            long costMs = outcome.costMs() > 0 ? outcome.costMs() : System.currentTimeMillis() - start;
-            auditLogService.recordStep(run, AgentStepName.AGENT_PLAN, summaryFormatter.summarizeExtract(extract),
-                    plan.auditSummary(), outcome.llmUsed(), outcome.llmUsed() ? "SpringAI" : null, costMs, null);
+            tracer.recordMeta(stepId, outcome.llmUsed(), outcome.llmUsed() ? "SpringAI" : null);
+            tracer.end(stepId, plan.auditSummary(), null);
             return plan;
         }
         // Plan-Execute 路径
         PlanExecutePlanner planner = planExecutePlanner.get();
+        String stepId = tracer.begin(AgentStepName.AGENT_PLAN.name());
         try {
             ExecutionPlan execPlan = planner.plan(run.getId(), draft.fullContent(), extract);
             // 持久化有序计划（断点续跑用）
@@ -375,9 +348,8 @@ public class AnalysisWorkflowService {
             AgentPlan plan = execPlan.toAgentPlan();
             String auditOut = "plan-execute steps=" + execPlan.getSteps().size()
                     + ", rationale=" + execPlan.getRationale();
-            auditLogService.recordStep(run, AgentStepName.AGENT_PLAN, summaryFormatter.summarizeExtract(extract),
-                    auditOut, execPlan.isLlmPlanned(), execPlan.isLlmPlanned() ? "PlanExecute" : null,
-                    System.currentTimeMillis() - start, null);
+            tracer.recordMeta(stepId, execPlan.isLlmPlanned(), execPlan.isLlmPlanned() ? "PlanExecute" : null);
+            tracer.end(stepId, auditOut, null);
             return plan;
         } catch (Exception ex) {
             // 回退原 planner
@@ -385,48 +357,35 @@ public class AnalysisWorkflowService {
                     run.getId(), ex.getMessage());
             StepOutcome<AgentPlan> outcome = agentPlanner.plan(draft.fullContent(), extract);
             AgentPlan plan = outcome.value();
-            auditLogService.recordStep(run, AgentStepName.AGENT_PLAN,
-                    summaryFormatter.summarizeExtract(extract) + "(fallback-from-plan-execute)",
-                    plan.auditSummary(), outcome.llmUsed(), outcome.llmUsed() ? "SpringAI" : null,
-                    System.currentTimeMillis() - start, null);
+            tracer.recordMeta(stepId, outcome.llmUsed(), outcome.llmUsed() ? "SpringAI" : null);
+            tracer.end(stepId, plan.auditSummary() + "(fallback-from-plan-execute)", null);
             return plan;
         }
     }
 
-    private RootCauseResult resolveRootCause(
+    /**
+     * 根因解析内部逻辑：ReAct 路径或线性路径。
+     * 注意：begin/end 由调用方负责，这里只做 recordMeta/end。
+     */
+    private RootCauseResult resolveRootCauseInternal(
             AgentRun run, TicketDraft draft, TicketExtractResult extract,
-            List<KnowledgeHit> hits, String evidenceSummary, List<ToolResult> toolResults) {
+            List<KnowledgeHit> hits, String evidenceSummary, List<ToolResult> toolResults, TraceRecorder tracer) {
         if (rootCauseStrategy.isEmpty()) {
             // 默认线性路径
-            long start = System.currentTimeMillis();
             RootCauseResult rc = rootCauseAnalysisService.analyze(extract, hits, toolResults);
-            auditLogService.recordStep(run, AgentStepName.ROOT_CAUSE_ANALYSIS, evidenceSummary,
-                    rc.hypothesis(), rc.llmUsed(), rc.llmUsed() ? "SpringAI" : null,
-                    System.currentTimeMillis() - start, null);
             return rc;
         }
         // ReAct 路径：调策略，失败回退线性
         RootCauseStrategy strategy = rootCauseStrategy.get();
         try {
-            long start = System.currentTimeMillis();
             RootCauseStrategy.RootCauseOutcome outcome = strategy.analyze(
                     run.getId(), extract, draft.fullContent());
-            auditLogService.recordStep(run, AgentStepName.ROOT_CAUSE_ANALYSIS,
-                    strategy.strategyName() + "-strategy", outcome.hypothesis(),
-                    outcome.llmUsed(), outcome.llmUsed() ? strategy.strategyName() : null,
-                    outcome.durationMs(), null);
             return new RootCauseResult(outcome.hypothesis(), outcome.evidence(),
                     outcome.unknowns(), outcome.confidence(), outcome.llmUsed());
         } catch (Exception ex) {
             log.warn("Root cause strategy [{}] failed, fallback to linear, runId={}: {}",
                     strategy.strategyName(), run.getId(), ex.getMessage());
-            long start = System.currentTimeMillis();
-            RootCauseResult rc = rootCauseAnalysisService.analyze(extract, hits, toolResults);
-            auditLogService.recordStep(run, AgentStepName.ROOT_CAUSE_ANALYSIS,
-                    evidenceSummary + "(fallback-from-" + strategy.strategyName() + ")",
-                    rc.hypothesis(), rc.llmUsed(), rc.llmUsed() ? "SpringAI" : null,
-                    System.currentTimeMillis() - start, null);
-            return rc;
+            return rootCauseAnalysisService.analyze(extract, hits, toolResults);
         }
     }
 
@@ -434,22 +393,22 @@ public class AnalysisWorkflowService {
             AgentRun run,
             TicketDraft draft,
             TicketExtractResult extract,
-            AgentPlan plan
+            AgentPlan plan,
+            TraceRecorder tracer
     ) {
         if (!plan.includes(AgentAction.KNOWLEDGE_SEARCH)) {
-            auditLogService.recordStep(run, AgentStepName.KNOWLEDGE_SEARCH, draft.fullContent(),
-                    "skipped_by_plan:" + plan.skipped(), false, null, 0, null);
+            String stepId = tracer.begin(AgentStepName.KNOWLEDGE_SEARCH.name());
+            tracer.end(stepId, "skipped_by_plan:" + plan.skipped(), null);
             return List.of();
         }
 
-        long start = System.currentTimeMillis();
+        String stepId = tracer.begin(AgentStepName.KNOWLEDGE_SEARCH.name());
         KnowledgeSearchOutcome searchOutcome = searchKnowledgeSafely(run, draft, extract);
         List<KnowledgeHit> hits = searchOutcome.hits();
         if (!hits.isEmpty()) {
             agentMetrics.recordRagHit();
         }
-        auditLogService.recordStep(run, AgentStepName.KNOWLEDGE_SEARCH, draft.fullContent(), searchOutcome.auditOutput(),
-                false, null, System.currentTimeMillis() - start, searchOutcome.errorMessage());
+        tracer.end(stepId, searchOutcome.auditOutput(), searchOutcome.errorMessage());
         return hits;
     }
 
@@ -512,12 +471,13 @@ public class AnalysisWorkflowService {
             TicketAnalysisDto analysis,
             boolean needConfirm,
             String confirmReason,
-            RoutingResult routing
+            RoutingResult routing,
+            TraceRecorder tracer
     ) {
         if (needConfirm) {
             transactionTemplate.executeWithoutResult(status -> {
-                auditLogService.recordStep(run, AgentStepName.WAIT_HUMAN_CONFIRM, analysis.toString(), confirmReason,
-                        false, null, 0, null);
+                String stepId = tracer.begin(AgentStepName.WAIT_HUMAN_CONFIRM.name());
+                tracer.end(stepId, "reason=" + confirmReason, null);
                 humanConfirmService.createDispatchAction(run, analysis.toString(), confirmReason, routing.primaryTeam());
                 contextPersister.persist(run, gap, plan, selection);
                 run.setStatus(AgentRunStatus.WAIT_HUMAN_CONFIRM);
@@ -527,7 +487,8 @@ public class AnalysisWorkflowService {
         }
 
         transactionTemplate.executeWithoutResult(status -> {
-            auditLogService.recordStep(run, AgentStepName.FINAL, analysis.toString(), "completed", false, null, 0, null);
+            String stepId = tracer.begin(AgentStepName.FINAL.name());
+            tracer.end(stepId, "completed", null);
             contextPersister.persist(run, gap, plan, selection);
             run.setStatus(AgentRunStatus.FINAL);
             agentRunRepository.save(run);

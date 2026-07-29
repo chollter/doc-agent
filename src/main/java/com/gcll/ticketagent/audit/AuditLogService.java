@@ -1,85 +1,71 @@
 package com.gcll.ticketagent.audit;
 
-import com.gcll.ticketagent.agent.AgentStepEventPublisher;
 import com.gcll.ticketagent.agent.AgentStepName;
 import com.gcll.ticketagent.domain.AgentRun;
-import com.gcll.ticketagent.domain.AgentStep;
 import com.gcll.ticketagent.observability.trace.TraceRecorder;
-import com.gcll.ticketagent.persistence.repository.AgentStepRepository;
+import com.gcll.ticketagent.observability.trace.TraceRecorderFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.Instant;
-import java.util.UUID;
 
 /**
- * 审计日志服务。
+ * 审计日志服务——统一入口。
  * <p>
- * v2 保留 v1 的 recordStep 方法以兼容旧调用方，
- * 但新代码应优先使用 {@link TraceRecorder} 的 begin/end 模式。
+ * v2 统一到 TraceRecorder（树形结构 + parentStepId + spanId）。
+ * 所有业务层通过本服务创建 TraceRecorder 并调用 begin/end，
+ * 不再直接操作 AgentStepRepository。
  * <p>
- * 重要：inputSnapshot 参数必须传指纹化摘要，不传工单原文。
- * 使用 {@link TraceRecorder#fingerprint(String, String)} 格式化。
+ * 使用方式：
+ * <pre>
+ *   TraceRecorder tracer = auditLogService.createTracer(run);
+ *   String stepId = tracer.begin("TICKET_EXTRACT");
+ *   // ... do work ...
+ *   tracer.end(stepId, summary, null);
+ * </pre>
  */
 @Service
 public class AuditLogService {
 
     private static final Logger log = LoggerFactory.getLogger(AuditLogService.class);
 
-    private final AgentStepRepository agentStepRepository;
-    private final AgentStepEventPublisher stepEventPublisher;
+    private final TraceRecorderFactory traceRecorderFactory;
 
-    public AuditLogService(AgentStepRepository agentStepRepository, AgentStepEventPublisher stepEventPublisher) {
-        this.agentStepRepository = agentStepRepository;
-        this.stepEventPublisher = stepEventPublisher;
+    public AuditLogService(TraceRecorderFactory traceRecorderFactory) {
+        this.traceRecorderFactory = traceRecorderFactory;
     }
 
     /**
-     * v1 兼容方法：一步记录（无 parentStepId）。
-     * <p>
-     * 旧调用方继续使用此方法，inputSnapshot 必须传摘要，不传原文。
+     * 为一个工单创建独立的 TraceRecorder。
+     * 每个工单有独立的 span 序号 + parentStepId 隔离。
      */
-    @Transactional
-    public void recordStep(
-            AgentRun run,
-            AgentStepName stepName,
-            String inputSnapshot,
-            String outputSnapshot,
-            boolean llmUsed,
-            String toolUsed,
-            long costMs,
-            String errorMessage
-    ) {
-        // 校验：inputSnapshot 不允许传工单原文（启发式：超过2000字符视为原文）
-        if (inputSnapshot != null && inputSnapshot.length() > 2000) {
-            log.warn("inputSnapshot for step {} exceeds 2000 chars ({} chars), likely raw content. " +
-                     "Use TraceRecorder.fingerprint() to generate summary.",
-                     stepName.name(), inputSnapshot.length());
-            inputSnapshot = inputSnapshot.substring(0, 500) + "...(truncated, " + inputSnapshot.length() + " chars)";
-        }
+    public TraceRecorder createTracer(AgentRun run) {
+        return traceRecorderFactory.create(run);
+    }
 
-        AgentStep step = new AgentStep(
-                UUID.randomUUID().toString(),
-                run.getId(),
-                null,  // v1 兼容：无 parentStepId
-                stepName.name(),
-                errorMessage == null ? "SUCCESS" : "FAILED",
-                null,  // v1 兼容：无 spanId
-                Instant.now(),
-                Instant.now()
-        );
-        step.setInputSnapshot(inputSnapshot);
-        step.setOutputSnapshot(outputSnapshot);
-        step.setLlmUsed(llmUsed);
-        step.setToolUsed(toolUsed);
-        step.setCostMs(costMs);
-        step.setErrorMessage(errorMessage);
-        step.setFinishedAt(Instant.now());
+    /**
+     * v1 兼容：一步式记录（平铺，无 parentStepId）。
+     * <p>
+     * 仅用于尚未迁移到 begin/end 模式的旧调用方。
+     * 新代码必须用 createTracer + begin/end。
+     *
+     * @deprecated 使用 createTracer + begin/end 替代
+     */
+    @Deprecated
+    public void recordStep(AgentRun run, AgentStepName stepName,
+                           String inputSnapshot, String outputSnapshot,
+                           boolean llmUsed, String toolUsed,
+                           long costMs, String errorMessage) {
+        TraceRecorder tracer = traceRecorderFactory.create(run);
+        String stepId = tracer.begin(stepName.name());
+        tracer.recordInput(stepId, truncate(inputSnapshot));
+        tracer.recordMeta(stepId, llmUsed, toolUsed);
+        tracer.end(stepId, truncate(outputSnapshot), errorMessage);
+    }
 
-        run.getSteps().add(step);
-        agentStepRepository.save(step);
-        stepEventPublisher.publish(run.getId(), stepName.name(), step.getStatus(), outputSnapshot);
+    private String truncate(String text) {
+        if (text == null) return null;
+        if (text.length() <= 2000) return text;
+        log.warn("Snapshot exceeds 2000 chars ({} chars), truncating", text.length());
+        return text.substring(0, 500) + "...(truncated, " + text.length() + " chars)";
     }
 }

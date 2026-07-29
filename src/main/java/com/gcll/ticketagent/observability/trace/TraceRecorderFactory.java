@@ -19,15 +19,15 @@ import org.springframework.stereotype.Component;
 public class TraceRecorderFactory {
 
     private final AgentStepRepository stepRepository;
-    private final StepEventPublisherBridge eventPublisherBridge;
+    private final AgentStepEventPublisher eventPublisher;
 
     public TraceRecorderFactory(AgentStepRepository stepRepository,
-                                StepEventPublisherBridge eventPublisherBridge) {
+                                AgentStepEventPublisher eventPublisher) {
         this.stepRepository = stepRepository;
-        this.eventPublisherBridge = eventPublisherBridge;
+        this.eventPublisher = eventPublisher;
     }
 
     public TraceRecorder create(AgentRun run) {
-        return new TraceRecorder(run, stepRepository, eventPublisherBridge);
+        return new TraceRecorder(run, stepRepository, eventPublisher);
     }
 }

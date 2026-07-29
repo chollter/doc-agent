@@ -1,5 +1,6 @@
 package com.gcll.ticketagent.observability.trace;
 
+import com.gcll.ticketagent.agent.AgentStepEventPublisher;
 import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.domain.AgentStep;
 import com.gcll.ticketagent.persistence.repository.AgentStepRepository;
@@ -49,8 +50,8 @@ public class TraceRecorder {
     private final ThreadLocal<String> currentParentStepId = new ThreadLocal<>();
 
     public TraceRecorder(AgentRun run,
-                         AgentStepRepository stepRepository,
-                         AgentStepEventPublisher eventPublisher) {
+                          AgentStepRepository stepRepository,
+                          AgentStepEventPublisher eventPublisher) {
         this.run = run;
         this.stepRepository = stepRepository;
         this.eventPublisher = eventPublisher;
@@ -165,12 +166,5 @@ public class TraceRecorder {
                 .filter(s -> s.getId().equals(stepId))
                 .findFirst()
                 .orElse(null);
-    }
-
-    /**
-     * 发布步骤事件的接口（由外部实现，保持解耦）
-     */
-    public interface AgentStepEventPublisher {
-        void publish(String runId, String stepName, String status, String message);
     }
 }

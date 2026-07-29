@@ -12,6 +12,7 @@ import com.gcll.ticketagent.governance.notification.NotificationService;
 import com.gcll.ticketagent.human.PendingAction;
 import com.gcll.ticketagent.human.PendingActionStatus;
 import com.gcll.ticketagent.human.PendingActionType;
+import com.gcll.ticketagent.observability.trace.TraceRecorder;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
 import com.gcll.ticketagent.persistence.repository.PendingActionRepository;
 import org.springframework.stereotype.Service;
@@ -69,6 +70,9 @@ public class HumanConfirmService {
         run.setStatus(AgentRunStatus.FINAL);
         agentRunRepository.save(run);
 
+        TraceRecorder tracer = auditLogService.createTracer(run);
+        String stepId = tracer.begin(AgentStepName.FINAL.name());
+
         String auditOutput;
         String errorMessage = null;
         if (action.getActionType() == PendingActionType.DISPATCH) {
@@ -91,8 +95,7 @@ public class HumanConfirmService {
         } else {
             auditOutput = "confirmed by " + confirmedBy;
         }
-        auditLogService.recordStep(run, AgentStepName.FINAL, action.getPayload(), auditOutput,
-                false, null, 0, errorMessage);
+        tracer.end(stepId, auditOutput, errorMessage);
         return run;
     }
 
@@ -111,8 +114,9 @@ public class HumanConfirmService {
         run.setStatus(AgentRunStatus.ESCALATED);
         agentRunRepository.save(run);
 
-        auditLogService.recordStep(run, AgentStepName.FINAL, action.getPayload(),
-                "rejected by " + confirmedBy + ", escalated", false, null, 0, null);
+        TraceRecorder tracer = auditLogService.createTracer(run);
+        String stepId = tracer.begin(AgentStepName.FINAL.name());
+        tracer.end(stepId, "rejected by " + confirmedBy + ", escalated", null);
         return run;
     }
 }
