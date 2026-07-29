@@ -22,7 +22,14 @@ public class RelationalKnowledgeSearchService implements KnowledgeSearchService 
 
     @Override
     public List<KnowledgeHit> search(String query, String systemName, String moduleName, String issueType) {
-        List<KnowledgeDocumentEntity> documents = knowledgeDocumentRepository.findAll();
+        // SQL 层预过滤：按 systemName/moduleName 缩小结果集（替代 findAll 全表扫描）
+        // 后续 Java 层打分负责中英文别名模糊匹配和 query token 匹配
+        List<KnowledgeDocumentEntity> documents;
+        if (systemName != null || moduleName != null) {
+            documents = knowledgeDocumentRepository.findBySystemNameOrModuleName(systemName, moduleName);
+        } else {
+            documents = knowledgeDocumentRepository.findAll();
+        }
         List<KnowledgeHit> hits = new ArrayList<>();
         String lowerQuery = query == null ? "" : query.toLowerCase(Locale.ROOT);
         Set<String> queryTokens = tokenize(lowerQuery);

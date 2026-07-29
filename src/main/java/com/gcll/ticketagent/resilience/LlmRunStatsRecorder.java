@@ -14,6 +14,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class LlmRunStatsRecorder {
 
+    /** 最大持有的 runId 数量，超出时淘汰最旧的。防止长运行内存泄漏。 */
+    private static final int MAX_RUN_ENTRIES = 500;
+
     private final Map<String, List<LlmRunStatsDto.LlmCallBrief>> callsByRunId = new ConcurrentHashMap<>();
 
     public void record(String runId, String callName, CallResult<LlmResponse> result) {
@@ -36,6 +39,32 @@ public class LlmRunStatsRecorder {
         );
         callsByRunId.computeIfAbsent(runId, ignored -> java.util.Collections.synchronizedList(new ArrayList<>()))
                 .add(call);
+        evictIfNeeded();
+    }
+
+    /**
+     * 工单结束后调用，释放该 runId 的统计数据。
+     */
+    public void remove(String runId) {
+        if (runId != null) {
+            callsByRunId.remove(runId);
+        }
+    }
+
+    /**
+     * 超出 MAX_RUN_ENTRIES 时淘汰最旧的条目（按列表首条时间粗略判断）。
+     */
+    private void evictIfNeeded() {
+        if (callsByRunId.size() <= MAX_RUN_ENTRIES) {
+            return;
+        }
+        // 简单策略：移除最早插入的 1/4 条目
+        int toRemove = MAX_RUN_ENTRIES / 4;
+        var iterator = callsByRunId.keySet().iterator();
+        for (int i = 0; i < toRemove && iterator.hasNext(); i++) {
+            iterator.next();
+            iterator.remove();
+        }
     }
 
     public LlmRunStatsDto snapshot(String runId) {
