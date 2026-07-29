@@ -201,6 +201,24 @@ resilience4j:
       vector-default: { timeoutDuration: 5s }
       rerank-default: { timeoutDuration: 5s }
       tool-default: { timeoutDuration: 10s }
+  ratelimiter:
+    instances:
+      llm-default:
+        limitForPeriod: 10
+        limitRefreshPeriod: 1s
+        timeoutDuration: 5s
+      vector-default:
+        limitForPeriod: 20
+        limitRefreshPeriod: 1s
+        timeoutDuration: 3s
+      tool-default:
+        limitForPeriod: 5
+        limitRefreshPeriod: 1s
+        timeoutDuration: 5s
+      rerank-default:
+        limitForPeriod: 10
+        limitRefreshPeriod: 1s
+        timeoutDuration: 3s
   circuitbreaker:
     instances:
       llm-default:

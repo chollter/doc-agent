@@ -1,6 +1,7 @@
 package com.gcll.ticketagent.resilience;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.github.resilience4j.retry.RetryRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -43,18 +44,19 @@ public class CallRegistry {
      * </ul>
      */
     private static final Map<String, CallMapping> BUILTIN_DEFAULTS = Map.of(
-            "llm.*", mapping("llm-default", "llm-default", "llm-default"),
-            "vector.*", mapping("vector-default", "vector-default", "vector-default"),
-            "tool.*", mapping("tool-default", "tool-default", null),
-            "rerank.*", mapping("rerank-default", "rerank-default", "rerank-default")
+            "llm.*", mapping("llm-default", "llm-default", "llm-default", "llm-default"),
+            "vector.*", mapping("vector-default", "vector-default", "vector-default", "vector-default"),
+            "tool.*", mapping("tool-default", "tool-default", null, "tool-default"),
+            "rerank.*", mapping("rerank-default", "rerank-default", "rerank-default", "rerank-default")
     );
 
     /** 快速构造 CallMapping（静态工厂）。 */
-    private static CallMapping mapping(String retry, String tl, String cb) {
+    private static CallMapping mapping(String retry, String tl, String cb, String rl) {
         CallMapping m = new CallMapping();
         m.retry = retry;
         m.timelimiter = tl;
         m.circuitbreaker = cb;
+        m.rateLimiter = rl;
         return m;
     }
 
@@ -67,13 +69,16 @@ public class CallRegistry {
     private final RetryRegistry retryRegistry;
     private final TimeLimiterRegistry timeLimiterRegistry;
     private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final RateLimiterRegistry rateLimiterRegistry;
 
     public CallRegistry(RetryRegistry retryRegistry,
                         TimeLimiterRegistry timeLimiterRegistry,
-                        CircuitBreakerRegistry circuitBreakerRegistry) {
+                        CircuitBreakerRegistry circuitBreakerRegistry,
+                        RateLimiterRegistry rateLimiterRegistry) {
         this.retryRegistry = retryRegistry;
         this.timeLimiterRegistry = timeLimiterRegistry;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
+        this.rateLimiterRegistry = rateLimiterRegistry;
     }
 
     public Map<String, CallMapping> getCallMappings() {
@@ -120,6 +125,7 @@ public class CallRegistry {
 
     private CallDecorators decorate(CallMapping m) {
         return new CallDecorators(
+                m.rateLimiter != null ? rateLimiterRegistry.rateLimiter(m.rateLimiter) : null,
                 m.retry != null ? retryRegistry.retry(m.retry) : null,
                 m.timelimiter != null ? timeLimiterRegistry.timeLimiter(m.timelimiter) : null,
                 m.circuitbreaker != null ? circuitBreakerRegistry.circuitBreaker(m.circuitbreaker) : null
@@ -149,6 +155,7 @@ public class CallRegistry {
         private String retry;
         private String timelimiter;
         private String circuitbreaker;
+        private String rateLimiter;
 
         public String getRetry() {
             return retry;
@@ -172,6 +179,14 @@ public class CallRegistry {
 
         public void setCircuitbreaker(String circuitbreaker) {
             this.circuitbreaker = circuitbreaker;
+        }
+
+        public String getRateLimiter() {
+            return rateLimiter;
+        }
+
+        public void setRateLimiter(String rateLimiter) {
+            this.rateLimiter = rateLimiter;
         }
     }
 }

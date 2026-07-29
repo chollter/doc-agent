@@ -5,5 +5,6 @@ public enum PendingActionType {
     ESCALATE,
     DE_ESCALATE,
     SUPPLEMENT,
-    REJECT_SUGGESTION
+    REJECT_SUGGESTION,
+    DANGER_TOOL_CONFIRM
 }
