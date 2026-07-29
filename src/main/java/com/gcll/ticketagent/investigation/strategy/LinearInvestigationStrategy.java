@@ -5,6 +5,8 @@ import com.gcll.ticketagent.agent.AgentStepName;
 import com.gcll.ticketagent.agent.planner.AgentAction;
 import com.gcll.ticketagent.agent.planner.AgentPlan;
 import com.gcll.ticketagent.agent.planner.AgentPlanner;
+import com.gcll.ticketagent.a2a.A2ACoordinator;
+import com.gcll.ticketagent.a2a.A2ACoordinator.A2aCoordinationResult;
 import com.gcll.ticketagent.analysis.RootCauseAnalysisService;
 import com.gcll.ticketagent.analysis.RootCauseResult;
 import com.gcll.ticketagent.domain.AgentRun;
@@ -62,6 +64,7 @@ public class LinearInvestigationStrategy implements InvestigationStrategy {
     private final ExternalCallGateway externalCallGateway;
     private final TransactionTemplate transactionTemplate;
     private final AgentAuditSummaryFormatter summaryFormatter;
+    private final A2ACoordinator a2aCoordinator;
 
     public LinearInvestigationStrategy(
             AgentPlanner agentPlanner,
@@ -76,7 +79,8 @@ public class LinearInvestigationStrategy implements InvestigationStrategy {
             AgentMetrics agentMetrics,
             ExternalCallGateway externalCallGateway,
             TransactionTemplate transactionTemplate,
-            AgentAuditSummaryFormatter summaryFormatter
+            AgentAuditSummaryFormatter summaryFormatter,
+            A2ACoordinator a2aCoordinator
     ) {
         this.agentPlanner = agentPlanner;
         this.toolSelector = toolSelector;
@@ -91,6 +95,7 @@ public class LinearInvestigationStrategy implements InvestigationStrategy {
         this.externalCallGateway = externalCallGateway;
         this.transactionTemplate = transactionTemplate;
         this.summaryFormatter = summaryFormatter;
+        this.a2aCoordinator = a2aCoordinator;
     }
 
     @Override
@@ -123,6 +128,12 @@ public class LinearInvestigationStrategy implements InvestigationStrategy {
             List<ToolResult> toolResults = collectEvidence(run, extract, draftContent, selection);
             String evidenceSummary = summaryFormatter.summarizeToolResults(toolResults);
             tracer.end(evidenceStepId, TraceRecorder.fingerprint("evidence", evidenceSummary), null);
+
+            // 3.5 A2A 团队 Agent 协助排查（路由到特定团队时请求额外证据）
+            String a2aEvidence = requestTeamAgentEvidence(run, triageResult, extract, tracer, parentStepId);
+            if (a2aEvidence != null && !a2aEvidence.isBlank()) {
+                evidenceSummary = evidenceSummary + "\n[团队Agent补充证据]\n" + a2aEvidence;
+            }
 
             // 4. 根因分析
             String rootCauseStepId = tracer.begin(AgentStepName.ROOT_CAUSE_ANALYSIS.name(), parentStepId);
@@ -254,5 +265,68 @@ public class LinearInvestigationStrategy implements InvestigationStrategy {
     private RoutingResult toRoutingResult(TriageResult triageResult) {
         String team = triageResult.routedTeam() != null ? triageResult.routedTeam() : "unassigned";
         return new RoutingResult(team, List.of(), triageResult.issueType().name(), triageResult.confidence());
+    }
+
+    /**
+     * A2A 团队 Agent 协助排查——请求路由目标团队提供额外证据。
+     *
+     * <p>当分诊结果中有明确的路由团队时，通过 A2A 请求团队 Agent 协助排查，
+     * 获取该团队特有的排查证据（如数据库团队的慢查询、连接池信息）。
+     *
+     * <p>A2A 调用不阻塞主流程——团队 Agent 不可用时静默跳过，
+     * 不影响主排查流程的正常执行。
+     *
+     * @return 团队 Agent 返回的证据摘要；null 表示未调用
+     */
+    private String requestTeamAgentEvidence(
+            AgentRun run, TriageResult triageResult, TicketExtractResult extract,
+            TraceRecorder tracer, String parentStepId) {
+
+        String routedTeam = triageResult.routedTeam();
+        if (routedTeam == null || routedTeam.isBlank() || "unassigned".equals(routedTeam)) {
+            return null;
+        }
+
+        // 将路由团队名映射为 Agent ID（约定：团队名 → {team}-agent）
+        String teamAgentId = mapTeamToAgentId(routedTeam);
+        if (!a2aCoordinator.isAgentAvailable(teamAgentId)) {
+            log.debug("A2A团队Agent不可用, teamAgentId={}, runId={}, 跳过A2A调用", teamAgentId, run.getId());
+            return null;
+        }
+
+        String a2aStepId = tracer.begin("A2A_TEAM_AGENT", parentStepId);
+        try {
+            A2aCoordinationResult result = a2aCoordinator.requestInvestigation(
+                    teamAgentId, run.getId(), triageResult, extract);
+
+            if (result.success()) {
+                tracer.end(a2aStepId,
+                        "agent=" + result.agentId() + ",status=success", null);
+                log.info("A2A团队Agent返回证据, agent={}, runId={}", result.agentId(), run.getId());
+                return result.evidenceSummary();
+            } else {
+                tracer.end(a2aStepId, "status=failed,error=" + result.error(), null);
+                log.warn("A2A团队Agent排查失败, agent={}, runId={}, error={}",
+                        teamAgentId, run.getId(), result.error());
+                return null;
+            }
+        } catch (Exception ex) {
+            tracer.end(a2aStepId, "status=error", ex.getMessage());
+            log.warn("A2A团队Agent调用异常, agent={}, runId={}", teamAgentId, run.getId(), ex);
+            return null;
+        }
+    }
+
+    /**
+     * 将路由团队名映射为 A2A Agent ID。
+     * 约定：团队名中含 "db"/"database" → db-team-agent，其余暂不支持。
+     */
+    private String mapTeamToAgentId(String routedTeam) {
+        String lower = routedTeam.toLowerCase();
+        if (lower.contains("db") || lower.contains("database") || lower.contains("数据")) {
+            return "db-team-agent";
+        }
+        // 未来可扩展：infra-team-agent, middleware-team-agent 等
+        return routedTeam + "-agent";
     }
 }
