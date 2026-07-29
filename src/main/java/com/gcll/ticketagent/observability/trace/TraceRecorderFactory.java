@@ -3,6 +3,7 @@ package com.gcll.ticketagent.observability.trace;
 import com.gcll.ticketagent.agent.AgentStepEventPublisher;
 import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.persistence.repository.AgentStepRepository;
+import io.micrometer.tracing.Tracer;
 import org.springframework.stereotype.Component;
 
 /**
@@ -20,14 +21,17 @@ public class TraceRecorderFactory {
 
     private final AgentStepRepository stepRepository;
     private final AgentStepEventPublisher eventPublisher;
+    private final Tracer otelTracer;
 
     public TraceRecorderFactory(AgentStepRepository stepRepository,
-                                AgentStepEventPublisher eventPublisher) {
+                                AgentStepEventPublisher eventPublisher,
+                                Tracer otelTracer) {
         this.stepRepository = stepRepository;
         this.eventPublisher = eventPublisher;
+        this.otelTracer = otelTracer;
     }
 
     public TraceRecorder create(AgentRun run) {
-        return new TraceRecorder(run, stepRepository, eventPublisher);
+        return new TraceRecorder(run, stepRepository, eventPublisher, otelTracer);
     }
 }

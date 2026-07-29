@@ -20,14 +20,18 @@ spring:
   ai:
     dashscope:
       api-key: ${LLM_API_KEY:}
-      # HTTP 层读响应超时（秒）——治线程泄漏之本。
-      # DashScopeAutoConfiguration 的 restClientCustomizer 消费本字段设置 socket readTimeout，
-      # 保证单次 LLM 调用最坏 60s 释放线程（Resilience4j TimeLimiter 的 cancel 对阻塞 IO 无效，
-      # HTTP 层 timeout 是最终保证）。等于业务层 llm-default TimeLimiter 上限。
       read-timeout: ${LLM_READ_TIMEOUT_SEC:60}
       chat:
         options:
           model: ${LLM_MODEL:qwen-plus}
+    chat:
+      client:
+        observations:
+          log-prompt: ${AI_OBS_LOG_PROMPT:true}
+          log-completion: ${AI_OBS_LOG_COMPLETION:true}
+    tool:
+      observations:
+        include-content: ${AI_OBS_TOOL_CONTENT:true}
     mcp:
       client:
         # 默认关闭：测试/无 PG 环境下不拉起 server 子进程；生产/演示时设 MCP_ENABLED=true
@@ -75,6 +79,25 @@ management:
     web:
       exposure:
         include: health,info,metrics,prometheus
+  tracing:
+    sampling:
+      probability: ${OTEL_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
+      transport: grpc
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId:-}] %logger{50} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId:-}] %logger{50} - %msg%n"
+  file:
+    name: logs/tech-support-agent.log
+    max-size: 100MB
+    max-history: 30
+    total-size-cap: 1GB
+    clean-history-on-start: true
 
 
 knowledge:

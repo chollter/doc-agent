@@ -4,22 +4,24 @@ import com.gcll.ticketagent.agent.AgentStepEventPublisher;
 import com.gcll.ticketagent.domain.AgentRun;
 import com.gcll.ticketagent.domain.AgentStep;
 import com.gcll.ticketagent.persistence.repository.AgentStepRepository;
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.Tracer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Trace 记录器——树形 Trace 的核心。
+ * Trace 记录器——树形 Trace 的核心，同时桥接 OTel 分布式追踪。
  * <p>
- * 职责：
+ * 双写机制：
  * <ul>
- *   <li>维护当前 Trace 的 span 序号，生成 spanId</li>
- *   <li>记录步骤到 agent_step 表（含 parentStepId，表达树形结构）</li>
- *   <li>强制存指纹不存原文：inputSnapshot/outputSnapshot 必须经过摘要格式化</li>
- *   <li>记录 startedAt/finishedAt，精确计算 span 耗时</li>
+ *   <li>应用层：写入 agent_step 表（parentStepId 树形结构），供业务查询</li>
+ *   <li>OTel 层：创建 Micrometer Tracing Span，与 Spring AI 自动生成的 LLM Span 串在同一个 traceId 下，
+ *       导出到 Jaeger/Zipkin/SkyWalking 等后端</li>
  * </ul>
  *
  * <p>使用方式：
@@ -41,7 +43,11 @@ public class TraceRecorder {
     private final AgentRun run;
     private final AgentStepRepository stepRepository;
     private final AgentStepEventPublisher eventPublisher;
+    private final Tracer otelTracer;
     private final AtomicInteger spanSequence = new AtomicInteger(0);
+
+    /** stepId → OTel Span，用于 end 时关闭对应的 Span */
+    private final ConcurrentHashMap<String, io.micrometer.tracing.Span> otelSpans = new ConcurrentHashMap<>();
 
     /**
      * 当前线程的 parentStepId，支持嵌套 begin/end。
@@ -51,10 +57,12 @@ public class TraceRecorder {
 
     public TraceRecorder(AgentRun run,
                           AgentStepRepository stepRepository,
-                          AgentStepEventPublisher eventPublisher) {
+                          AgentStepEventPublisher eventPublisher,
+                          Tracer otelTracer) {
         this.run = run;
         this.stepRepository = stepRepository;
         this.eventPublisher = eventPublisher;
+        this.otelTracer = otelTracer;
     }
 
     /**
@@ -76,9 +84,10 @@ public class TraceRecorder {
      */
     public String begin(String stepName, String parentStepId) {
         String stepId = UUID.randomUUID().toString();
-        String spanId = Span.generateSpanId(run.getTraceId(), spanSequence.incrementAndGet());
+        String spanId = com.gcll.ticketagent.observability.trace.Span.generateSpanId(run.getTraceId(), spanSequence.incrementAndGet());
         Instant startedAt = Instant.now();
 
+        // --- 应用层：写入 agent_step 表 ---
         AgentStep step = new AgentStep(
                 stepId,
                 run.getId(),
@@ -93,6 +102,24 @@ public class TraceRecorder {
         run.getSteps().add(step);
         stepRepository.save(step);
         currentParentStepId.set(stepId);
+
+        // --- OTel 层：创建分布式追踪 Span ---
+        io.micrometer.tracing.Span otelSpan = null;
+        try {
+            otelSpan = otelTracer.nextSpan()
+                    .name("agent." + stepName.toLowerCase())
+                    .tag("agent.runId", run.getId())
+                    .tag("agent.stepName", stepName)
+                    .tag("agent.spanId", spanId);
+            if (parentStepId != null) {
+                otelSpan.tag("agent.parentStepId", parentStepId);
+            }
+            otelSpan.start();
+            otelSpans.put(stepId, otelSpan);
+        } catch (Exception ex) {
+            // OTel 不是关键路径，失败不影响业务
+            log.debug("OTel span creation failed for step={}, ignoring: {}", stepName, ex.getMessage());
+        }
 
         eventPublisher.publish(run.getId(), stepName, "RUNNING", null);
         return stepId;
@@ -122,6 +149,24 @@ public class TraceRecorder {
         step.setFinishedAt(finishedAt);
 
         stepRepository.save(step);
+
+        // OTel 层：关闭 Span ---
+        io.micrometer.tracing.Span otelSpan = otelSpans.remove(stepId);
+        if (otelSpan != null) {
+            try {
+                if (errorMessage != null) {
+                    otelSpan.tag("error", errorMessage);
+                }
+                if (outputSnapshot != null) {
+                    otelSpan.tag("agent.output", truncateForTag(outputSnapshot));
+                }
+                otelSpan.tag("agent.costMs", String.valueOf(costMs));
+                otelSpan.end();
+            } catch (Exception ex) {
+                log.debug("OTel span end failed for stepId={}, ignoring: {}", stepId, ex.getMessage());
+            }
+        }
+
         eventPublisher.publish(run.getId(), step.getStepName(), step.getStatus(), outputSnapshot);
     }
 
@@ -134,6 +179,16 @@ public class TraceRecorder {
         if (step != null) {
             step.setInputSnapshot(inputSnapshot);
             stepRepository.save(step);
+
+            // OTel 层补充 tag
+            io.micrometer.tracing.Span otelSpan = otelSpans.get(stepId);
+            if (otelSpan != null && inputSnapshot != null) {
+                try {
+                    otelSpan.tag("agent.input", truncateForTag(inputSnapshot));
+                } catch (Exception ex) {
+                    log.debug("OTel tag failed, ignoring: {}", ex.getMessage());
+                }
+            }
         }
     }
 
@@ -146,6 +201,19 @@ public class TraceRecorder {
             step.setLlmUsed(llmUsed);
             step.setToolUsed(toolUsed);
             stepRepository.save(step);
+
+            // OTel 层补充 tag
+            io.micrometer.tracing.Span otelSpan = otelSpans.get(stepId);
+            if (otelSpan != null) {
+                try {
+                    otelSpan.tag("agent.llmUsed", String.valueOf(llmUsed));
+                    if (toolUsed != null) {
+                        otelSpan.tag("agent.toolUsed", toolUsed);
+                    }
+                } catch (Exception ex) {
+                    log.debug("OTel tag failed, ignoring: {}", ex.getMessage());
+                }
+            }
         }
     }
 
@@ -166,5 +234,11 @@ public class TraceRecorder {
                 .filter(s -> s.getId().equals(stepId))
                 .findFirst()
                 .orElse(null);
+    }
+
+    /** OTel tag 值有长度限制，截断到 200 字符 */
+    private static String truncateForTag(String value) {
+        if (value == null) return null;
+        return value.length() <= 200 ? value : value.substring(0, 200) + "...";
     }
 }
