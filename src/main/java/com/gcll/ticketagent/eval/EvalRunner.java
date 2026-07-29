@@ -10,6 +10,7 @@ import com.gcll.ticketagent.eval.adversarial.AdversarialCaseStore;
 import com.gcll.ticketagent.eval.judge.EvalJudgeService;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
 import com.gcll.ticketagent.persistence.repository.ToolExecutionLogRepository;
+import com.gcll.ticketagent.resilience.LlmRunStatsRecorder;
 import com.gcll.ticketagent.ticket.TicketApplicationService;
 import com.gcll.ticketagent.tool.ToolResult;
 import org.springframework.core.io.ClassPathResource;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +28,39 @@ import java.util.UUID;
 public class EvalRunner {
 
     static final String DEFAULT_SUITE = "eval/eval-cases.json";
+    private static final String SUITE_SMOKE = "smoke";
+    private static final String SUITE_CORE = "core";
+    private static final String SUITE_FULL = "full";
+
+    private static final List<String> SMOKE_CASE_IDS = List.of(
+            "insufficient-info",
+            "payment-callback-500",
+            "mfa-consult",
+            "log-tool-failure-continue",
+            "payment-rule-routing"
+    );
+    private static final List<String> CORE_CASE_IDS = List.of(
+            "insufficient-info",
+            "payment-callback-500",
+            "oom-killed",
+            "db-connection-timeout",
+            "mfa-permission",
+            "data-consistency",
+            "test-env-low-priority",
+            "knowledge-no-hit",
+            "mq-backlog",
+            "cache-timeout",
+            "batch-semantic-followup",
+            "intermittent-slow-followup",
+            "mfa-consult",
+            "colloquial-payment-status",
+            "consult-non-incident",
+            "requirement-not-incident",
+            "log-tool-failure-continue",
+            "knowledge-degraded-continue",
+            "gateway-504",
+            "payment-rule-routing"
+    );
 
     private static final List<String> NO_PLAN = List.of();
     private static final List<String> NO_KEYWORDS = List.of();
@@ -37,6 +72,7 @@ public class EvalRunner {
     private final ObjectMapper objectMapper;
     private final EvalJudgeService evalJudgeService;
     private final AdversarialCaseStore adversarialCaseStore;
+    private final LlmRunStatsRecorder llmRunStatsRecorder;
 
     public EvalRunner(
             TicketApplicationService ticketApplicationService,
@@ -44,7 +80,8 @@ public class EvalRunner {
             ToolExecutionLogRepository toolExecutionLogRepository,
             ObjectMapper objectMapper,
             EvalJudgeService evalJudgeService,
-            AdversarialCaseStore adversarialCaseStore
+            AdversarialCaseStore adversarialCaseStore,
+            LlmRunStatsRecorder llmRunStatsRecorder
     ) {
         this.ticketApplicationService = ticketApplicationService;
         this.agentRunRepository = agentRunRepository;
@@ -52,6 +89,7 @@ public class EvalRunner {
         this.objectMapper = objectMapper;
         this.evalJudgeService = evalJudgeService;
         this.adversarialCaseStore = adversarialCaseStore;
+        this.llmRunStatsRecorder = llmRunStatsRecorder;
     }
 
     /**
@@ -61,21 +99,48 @@ public class EvalRunner {
         return run(false);
     }
 
+    public EvalReport run(String suiteName) {
+        return run(suiteName, false);
+    }
+
+    public EvalReport runCase(String caseId) {
+        if (caseId == null || caseId.isBlank()) {
+            throw new IllegalArgumentException("caseId must not be blank");
+        }
+        List<EvalCase> cases = loadCases(DEFAULT_SUITE).stream()
+                .filter(evalCase -> caseId.equals(evalCase.id()))
+                .toList();
+        if (cases.isEmpty()) {
+            throw new IllegalArgumentException("Unsupported eval caseId: " + caseId);
+        }
+        return runCases(DEFAULT_SUITE + "#case:" + caseId, cases);
+    }
+
     /**
      * 运行 Eval。{@code includeAdversarial=true} 时在 golden 套件后追加
      * {@link AdversarialCaseStore#load()} 的对抗 case（无文件时返回空，行为等价默认）。
      * 其余断言逻辑零改动。
      */
     public EvalReport run(boolean includeAdversarial) {
-        List<EvalCase> cases = new ArrayList<>(loadCases(DEFAULT_SUITE));
+        return run(SUITE_FULL, includeAdversarial);
+    }
+
+    public EvalReport run(String suiteName, boolean includeAdversarial) {
+        String normalizedSuite = normalizeSuite(suiteName);
+        List<EvalCase> cases = new ArrayList<>(selectCases(loadCases(DEFAULT_SUITE), normalizedSuite));
         if (includeAdversarial) {
             cases.addAll(adversarialCaseStore.load());
         }
+        return runCases(DEFAULT_SUITE + "#" + normalizedSuite, cases);
+    }
 
+    private EvalReport runCases(String suiteName, List<EvalCase> cases) {
         int passed = 0;
         List<String> failures = new ArrayList<>();
         List<EvalCaseResult> caseResults = new ArrayList<>();
+        Map<String, Integer> failureByAssertion = new LinkedHashMap<>();
         Map<String, GroupCounter> groups = new LinkedHashMap<>();
+        List<CaseMetric> caseMetrics = new ArrayList<>();
         // judge 探活：不可用则完全跳过质量评测（不影响现有流程断言）
         boolean judgeActive = evalJudgeService.available();
         // 收集有根因输出的 case（用于 judge 评分）：caseId + 根因文本
@@ -103,12 +168,21 @@ public class EvalRunner {
             }
             List<EvalAssertionResult> assertions = evaluateAssertions(response, evalCase);
             boolean casePassed = assertions.stream().allMatch(EvalAssertionResult::passed);
-            caseResults.add(new EvalCaseResult(evalCase.id(), groupName(evalCase), casePassed, assertions));
+            caseResults.add(new EvalCaseResult(
+                    evalCase.id(),
+                    groupName(evalCase),
+                    response.runId(),
+                    casePassed,
+                    assertions,
+                    auditSteps(response.runId())
+            ));
+            caseMetrics.add(buildCaseMetric(response.runId(), evalCase, casePassed));
             if (casePassed) {
                 passed++;
                 counter.passed++;
             } else {
                 failures.add(formatFailure(evalCase, response, assertions));
+                collectFailedAssertions(assertions, failureByAssertion);
             }
         }
 
@@ -120,8 +194,178 @@ public class EvalRunner {
                         entry.getValue().total - entry.getValue().passed
                 ))
                 .toList();
-        return new EvalReport(DEFAULT_SUITE, cases.size(), passed, cases.size() - passed,
-                groupReports, failures, caseResults, buildQualitySummary(cases, rootCauseTexts));
+        return new EvalReport(suiteName, cases.size(), passed, cases.size() - passed,
+                groupReports, failures, failureByAssertion, caseResults, buildQualitySummary(cases, rootCauseTexts),
+                buildMetricsSummary(caseMetrics), null);
+    }
+
+    private String normalizeSuite(String suiteName) {
+        if (suiteName == null || suiteName.isBlank()) {
+            return SUITE_FULL;
+        }
+        String normalized = suiteName.trim().toLowerCase();
+        if (List.of(SUITE_SMOKE, SUITE_CORE, SUITE_FULL).contains(normalized)) {
+            return normalized;
+        }
+        throw new IllegalArgumentException("Unsupported eval suite: " + suiteName);
+    }
+
+    private List<EvalCase> selectCases(List<EvalCase> allCases, String suiteName) {
+        return switch (suiteName) {
+            case SUITE_SMOKE -> selectByIds(allCases, SMOKE_CASE_IDS);
+            case SUITE_CORE -> selectByIds(allCases, CORE_CASE_IDS);
+            case SUITE_FULL -> allCases;
+            default -> throw new IllegalArgumentException("Unsupported eval suite: " + suiteName);
+        };
+    }
+
+    private List<EvalCase> selectByIds(List<EvalCase> allCases, List<String> ids) {
+        Map<String, EvalCase> byId = allCases.stream()
+                .collect(java.util.stream.Collectors.toMap(EvalCase::id, c -> c, (a, b) -> a, LinkedHashMap::new));
+        return ids.stream()
+                .map(id -> {
+                    EvalCase evalCase = byId.get(id);
+                    if (evalCase == null) {
+                        throw new IllegalStateException("Eval case not found: " + id);
+                    }
+                    return evalCase;
+                })
+                .toList();
+    }
+
+    private CaseMetric buildCaseMetric(String runId, EvalCase evalCase, boolean passed) {
+        var run = agentRunRepository.findById(runId).orElseThrow();
+        List<AgentStep> steps = run.getSteps();
+        List<ToolResult> tools = toolExecutionLogRepository.findByRunId(runId);
+        var llmStats = llmRunStatsRecorder.snapshot(runId);
+        long runCostMs = steps.stream().mapToLong(AgentStep::getCostMs).sum();
+        boolean ragSearch = steps.stream().anyMatch(step -> "KNOWLEDGE_SEARCH".equals(step.getStepName()));
+        boolean ragDegraded = steps.stream()
+                .filter(step -> "KNOWLEDGE_SEARCH".equals(step.getStepName()))
+                .map(AgentStep::getOutputSnapshot)
+                .anyMatch(output -> output != null && output.contains("degraded:"));
+        int promptTokens = llmStats.calls().stream().mapToInt(call -> call.promptTokens()).sum();
+        int completionTokens = llmStats.calls().stream().mapToInt(call -> call.completionTokens()).sum();
+        return new CaseMetric(
+                groupName(evalCase),
+                passed,
+                run.getStatus() == AgentRunStatus.FINAL || run.getStatus() == AgentRunStatus.WAIT_HUMAN_CONFIRM,
+                run.getStatus() == AgentRunStatus.WAIT_USER_INPUT,
+                run.getStatus() == AgentRunStatus.WAIT_HUMAN_CONFIRM,
+                ragSearch,
+                ragDegraded,
+                !tools.isEmpty(),
+                tools.size(),
+                (int) tools.stream().filter(ToolResult::success).count(),
+                (int) tools.stream().filter(result -> !result.success()).count(),
+                runCostMs,
+                llmStats.totalCalls(),
+                llmStats.successCalls(),
+                llmStats.failedCalls(),
+                llmStats.totalDurationMs(),
+                promptTokens,
+                completionTokens
+        );
+    }
+
+    private List<EvalAuditStepResult> auditSteps(String runId) {
+        return agentRunRepository.findById(runId).orElseThrow().getSteps().stream()
+                .map(step -> new EvalAuditStepResult(
+                        step.getStepName(),
+                        step.getStatus(),
+                        step.isLlmUsed(),
+                        step.getToolUsed(),
+                        step.getCostMs(),
+                        step.getInputSnapshot(),
+                        step.getOutputSnapshot(),
+                        step.getErrorMessage(),
+                        step.getCreatedAt() == null ? null : step.getCreatedAt().toString()
+                ))
+                .toList();
+    }
+
+    private EvalMetricsSummary buildMetricsSummary(List<CaseMetric> metrics) {
+        if (metrics.isEmpty()) {
+            return EvalMetricsSummary.empty();
+        }
+        int totalCases = metrics.size();
+        int passedCases = (int) metrics.stream().filter(CaseMetric::passed).count();
+        int totalToolCalls = metrics.stream().mapToInt(CaseMetric::totalToolCalls).sum();
+        int successfulToolCalls = metrics.stream().mapToInt(CaseMetric::successfulToolCalls).sum();
+        List<Long> runCosts = metrics.stream().map(CaseMetric::runCostMs).sorted().toList();
+        Map<String, Integer> casesByScenarioType = new LinkedHashMap<>();
+        metrics.forEach(metric -> casesByScenarioType.merge(metric.scenarioType(), 1, Integer::sum));
+        return new EvalMetricsSummary(
+                totalCases,
+                passedCases,
+                rate(passedCases, totalCases),
+                (int) metrics.stream().filter(CaseMetric::analyzed).count(),
+                (int) metrics.stream().filter(CaseMetric::followUp).count(),
+                (int) metrics.stream().filter(CaseMetric::humanConfirm).count(),
+                (int) metrics.stream().filter(CaseMetric::ragSearch).count(),
+                (int) metrics.stream().filter(CaseMetric::ragDegraded).count(),
+                (int) metrics.stream().filter(CaseMetric::toolCall).count(),
+                totalToolCalls,
+                successfulToolCalls,
+                metrics.stream().mapToInt(CaseMetric::failedToolCalls).sum(),
+                rate(successfulToolCalls, totalToolCalls),
+                Math.round(metrics.stream().mapToLong(CaseMetric::runCostMs).average().orElse(0.0)),
+                percentile95(runCosts),
+                metrics.stream().mapToInt(CaseMetric::totalLlmCalls).sum(),
+                metrics.stream().mapToInt(CaseMetric::successfulLlmCalls).sum(),
+                metrics.stream().mapToInt(CaseMetric::failedLlmCalls).sum(),
+                metrics.stream().mapToLong(CaseMetric::totalLlmDurationMs).sum(),
+                metrics.stream().mapToInt(CaseMetric::promptTokens).sum(),
+                metrics.stream().mapToInt(CaseMetric::completionTokens).sum(),
+                Collections.unmodifiableMap(casesByScenarioType)
+        );
+    }
+
+    private double rate(int numerator, int denominator) {
+        if (denominator == 0) {
+            return 0.0;
+        }
+        return Math.round((numerator * 10000.0 / denominator)) / 100.0;
+    }
+
+    private long percentile95(List<Long> sortedValues) {
+        if (sortedValues.isEmpty()) {
+            return 0;
+        }
+        int index = (int) Math.ceil(sortedValues.size() * 0.95) - 1;
+        return sortedValues.get(Math.max(0, Math.min(index, sortedValues.size() - 1)));
+    }
+
+    private record CaseMetric(
+            String scenarioType,
+            boolean passed,
+            boolean analyzed,
+            boolean followUp,
+            boolean humanConfirm,
+            boolean ragSearch,
+            boolean ragDegraded,
+            boolean toolCall,
+            int totalToolCalls,
+            int successfulToolCalls,
+            int failedToolCalls,
+            long runCostMs,
+            int totalLlmCalls,
+            int successfulLlmCalls,
+            int failedLlmCalls,
+            long totalLlmDurationMs,
+            int promptTokens,
+            int completionTokens
+    ) {
+    }
+
+    private void collectFailedAssertions(
+            List<EvalAssertionResult> assertions,
+            Map<String, Integer> failureByAssertion
+    ) {
+        assertions.stream()
+                .filter(assertion -> !assertion.passed())
+                .map(EvalAssertionResult::name)
+                .forEach(name -> failureByAssertion.merge(name, 1, Integer::sum));
     }
 
     private List<EvalAssertionResult> evaluateAssertions(
