@@ -60,15 +60,6 @@ public class ReActToolAdapter {
         return delegate("query_logs", toolContext, argsMap(system, module));
     }
 
-    @Tool(name = "query_metric", description = "查询受影响系统的运行指标（CPU/内存/QPS/延迟等），判断是否有资源瓶颈或异常波动。传入 system 缩小范围；不传则用已抽取字段。")
-    public String queryMetric(
-            ToolContext toolContext,
-            @ToolParam(description = "受影响的系统名。若工单未明确可从上下文推断。", required = false) String system,
-            @ToolParam(description = "关注的指标类型，如 memory/cpu/qps。", required = false) String metric) {
-        // query_metric 的 metric 参数当前底层不直接用（底层查全部指标），只合并 system
-        return delegate("query_metric", toolContext, argsMap(system, null));
-    }
-
     @Tool(name = "searchSimilarCases", description = "从历史案件知识库检索相似案例，提供可参考的根因与处置经验。检索不到不阻塞。")
     public String searchSimilarCases(
             ToolContext toolContext,
@@ -76,6 +67,25 @@ public class ReActToolAdapter {
             @ToolParam(description = "问题类型（INCIDENT/CONSULT/REQUEST），用于过滤。", required = false) String issueType) {
         // 语义检索工具用 originalContent，不依赖 extract 字段，无需合并参数
         return delegate("searchSimilarCases", toolContext, Map.of());
+    }
+
+    @Tool(name = "notifyOncall", description = "发送邮件通知值班人员，用于排查中需要人工介入时报警。传入 recipient 指定收件人，subject 和 body 描述通知内容。")
+    public String notifyOncall(
+            ToolContext toolContext,
+            @ToolParam(description = "值班人邮箱地址，不传则用默认值班邮箱。", required = false) String recipient,
+            @ToolParam(description = "邮件主题。", required = false) String subject,
+            @ToolParam(description = "邮件正文。", required = false) String body) {
+        // 通知工具用 extract 字段构建邮件，LLM 参数暂不合并（未来可扩展）
+        return delegate("notifyOncall", toolContext, Map.of());
+    }
+
+    @Tool(name = "executeRemediation", description = "执行处置操作（如重启服务/清缓存/回滚版本）。高危操作，调用后会被拦截等待人工确认。传入 action 描述具体处置动作，target 指定目标系统。")
+    public String executeRemediation(
+            ToolContext toolContext,
+            @ToolParam(description = "具体处置动作，如 restart-service/clear-cache/rollback。", required = false) String action,
+            @ToolParam(description = "目标系统或服务名。", required = false) String target) {
+        // 处置工具用 extract 字段构建 payload，LLM 参数暂不合并（未来可扩展）
+        return delegate("executeRemediation", toolContext, Map.of());
     }
 
     /**

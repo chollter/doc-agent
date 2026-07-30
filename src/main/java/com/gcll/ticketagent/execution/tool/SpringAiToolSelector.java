@@ -23,7 +23,7 @@ import java.util.Set;
 public class SpringAiToolSelector implements ToolSelector {
 
     private static final Set<String> ALLOWED_TOOLS = Set.of(
-            "searchSimilarCases", "query_logs", "query_metric"
+            "searchSimilarCases", "query_logs", "notifyOncall", "executeRemediation"
     );
 
     private final LlmCallExecutor llmCallExecutor;

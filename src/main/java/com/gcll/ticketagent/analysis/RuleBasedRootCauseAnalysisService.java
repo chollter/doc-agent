@@ -55,8 +55,8 @@ public class RuleBasedRootCauseAnalysisService implements RootCauseAnalysisServi
                 if ("query_logs".equals(result.toolName())) {
                     evidence.add("日志证据: " + truncate(result.output(), 200));
                 }
-                if ("query_metric".equals(result.toolName())) {
-                    evidence.add("指标证据: " + truncate(result.output(), 200));
+                if ("notifyOncall".equals(result.toolName())) {
+                    evidence.add("已通知值班人: " + truncate(result.output(), 200));
                 }
             }
         }
@@ -81,8 +81,8 @@ public class RuleBasedRootCauseAnalysisService implements RootCauseAnalysisServi
                 if ("query_logs".equals(result.toolName())) {
                     evidence.add("日志证据: " + truncate(result.output(), 200));
                 }
-                if ("query_metric".equals(result.toolName())) {
-                    evidence.add("指标证据: " + truncate(result.output(), 200));
+                if ("notifyOncall".equals(result.toolName())) {
+                    evidence.add("已通知值班人: " + truncate(result.output(), 200));
                 }
             }
         }
@@ -155,7 +155,7 @@ public class RuleBasedRootCauseAnalysisService implements RootCauseAnalysisServi
         }
 
         return new RootCauseResult(
-                "根因待确认，需结合更多日志和指标进行排查",
+                "根因待确认，需结合更多日志进行排查",
                 evidence,
                 List.of("需确认具体的错误堆栈和触发条件"),
                 0.3,

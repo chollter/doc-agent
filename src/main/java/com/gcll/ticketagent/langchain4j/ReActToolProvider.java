@@ -2,6 +2,7 @@ package com.gcll.ticketagent.langchain4j;
 
 import com.gcll.ticketagent.extract.TicketExtractResult;
 import com.gcll.ticketagent.observability.trace.TraceRecorder;
+import com.gcll.ticketagent.tool.ToolExecutionHolder;
 import com.gcll.ticketagent.tool.ToolRegistry;
 import com.gcll.ticketagent.tool.ToolResult;
 import com.gcll.ticketagent.tool.ToolType;
@@ -60,10 +61,12 @@ public class ReActToolProvider {
      * @param originalContent 工单原文
      * @param tracer          Trace 记录器（用于步级 Trace）
      * @param parentStepId    父步骤 ID（REACT_LOOP 的 stepId）
+     * @param runId           当前工单 runId（用于 DANGER 工具的 ToolConfirmGate）
      */
     public static void setContext(TicketExtractResult extract, String originalContent,
-                                  TraceRecorder tracer, String parentStepId) {
+                                  TraceRecorder tracer, String parentStepId, String runId) {
         CONTEXT.set(new ToolContext(extract, originalContent, tracer, parentStepId));
+        ToolExecutionHolder.setRunId(runId);
     }
 
     /**
@@ -71,6 +74,7 @@ public class ReActToolProvider {
      */
     public static void clearContext() {
         CONTEXT.remove();
+        ToolExecutionHolder.clear();
     }
 
     // --- LangChain4j @Tool 方法 ---
@@ -83,19 +87,28 @@ public class ReActToolProvider {
         return delegate("query_logs", argsMap(system, module));
     }
 
-    @Tool("查询受影响系统的运行指标（CPU/内存/QPS/延迟等），判断是否有资源瓶颈或异常波动。")
-    public String queryMetric(
-            @dev.langchain4j.agent.tool.P("受影响的系统名") String system,
-            @dev.langchain4j.agent.tool.P("关注的指标类型，如 memory/cpu/qps") String metric
-    ) {
-        return delegate("query_metric", argsMap(system, null));
-    }
-
     @Tool("从历史案件知识库检索相似案例，提供可参考的根因与处置经验。")
     public String searchSimilarCases(
             @dev.langchain4j.agent.tool.P("工单原文关键词，用于语义检索") String query
     ) {
         return delegate("searchSimilarCases", Map.of());
+    }
+
+    @Tool("发送邮件通知值班人员，用于排查中需要人工介入时报警。传入 recipient 指定收件人，subject 和 body 描述通知内容。")
+    public String notifyOncall(
+            @dev.langchain4j.agent.tool.P("值班人邮箱地址，不传则用默认值班邮箱") String recipient,
+            @dev.langchain4j.agent.tool.P("邮件主题") String subject,
+            @dev.langchain4j.agent.tool.P("邮件正文") String body
+    ) {
+        return delegate("notifyOncall", Map.of());
+    }
+
+    @Tool("执行处置操作（如重启服务/清缓存/回滚版本）。高危操作，调用后会被拦截等待人工确认。传入 action 描述具体处置动作，target 指定目标系统。")
+    public String executeRemediation(
+            @dev.langchain4j.agent.tool.P("具体处置动作，如 restart-service/clear-cache/rollback") String action,
+            @dev.langchain4j.agent.tool.P("目标系统或服务名") String target
+    ) {
+        return delegate("executeRemediation", Map.of());
     }
 
     // --- 内部方法 ---

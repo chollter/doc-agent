@@ -112,8 +112,9 @@ public class EvidenceCollectionService {
     private String mapCallName(String toolName) {
         return switch (toolName) {
             case "query_logs" -> "tool.query-logs";
-            case "query_metric" -> "tool.query-metric";
             case "searchSimilarCases" -> "tool.similar-cases";
+            case "notifyOncall" -> "tool.notify-oncall";
+            case "executeRemediation" -> "tool.execute-remediation";
             default -> "tool.default";
         };
     }

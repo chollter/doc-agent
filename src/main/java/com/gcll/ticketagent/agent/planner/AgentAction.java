@@ -4,7 +4,8 @@ public enum AgentAction {
     KNOWLEDGE_SEARCH,
     SIMILAR_CASE_SEARCH,
     QUERY_LOGS,
-    QUERY_METRIC;
+    NOTIFY_ONCALL,
+    EXECUTE_REMEDIATION;
 
     public static AgentAction fromName(String name) {
         if (name == null || name.isBlank()) {

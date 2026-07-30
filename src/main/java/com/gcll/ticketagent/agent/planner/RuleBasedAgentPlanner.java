@@ -18,7 +18,7 @@ public class RuleBasedAgentPlanner {
                     List.of(
                             AgentAction.SIMILAR_CASE_SEARCH,
                             AgentAction.QUERY_LOGS,
-                            AgentAction.QUERY_METRIC
+                            AgentAction.NOTIFY_ONCALL
                     ),
                     "咨询类工单简化调查路径，仅检索知识库",
                     false
@@ -26,15 +26,15 @@ public class RuleBasedAgentPlanner {
         }
         if (hasOomSignal(userContent, extract)) {
             return StepOutcome.ruleBased(new AgentPlan(
-                    List.of(AgentAction.KNOWLEDGE_SEARCH, AgentAction.QUERY_METRIC, AgentAction.QUERY_LOGS),
+                    List.of(AgentAction.KNOWLEDGE_SEARCH, AgentAction.QUERY_LOGS),
                     List.of(AgentAction.SIMILAR_CASE_SEARCH),
-                    "OOM/内存类故障优先查 metric 和 logs",
+                    "OOM/内存类故障优先查 logs",
                     false
             ));
         }
         if (hasConnectionPoolSignal(userContent, extract)) {
             return StepOutcome.ruleBased(new AgentPlan(
-                    List.of(AgentAction.KNOWLEDGE_SEARCH, AgentAction.QUERY_LOGS, AgentAction.QUERY_METRIC),
+                    List.of(AgentAction.KNOWLEDGE_SEARCH, AgentAction.QUERY_LOGS),
                     List.of(AgentAction.SIMILAR_CASE_SEARCH),
                     "连接池/超时类故障优先查 logs",
                     false
@@ -44,8 +44,7 @@ public class RuleBasedAgentPlanner {
                 List.of(
                         AgentAction.KNOWLEDGE_SEARCH,
                         AgentAction.SIMILAR_CASE_SEARCH,
-                        AgentAction.QUERY_LOGS,
-                        AgentAction.QUERY_METRIC
+                        AgentAction.QUERY_LOGS
                 ),
                 List.of(),
                 "默认全量调查步骤",

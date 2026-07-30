@@ -171,8 +171,8 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
             ReActContextHolder.setSystemPrompt(systemPrompt);
 
             // 2. 设置工具上下文（ReActToolProvider 的 @Tool 方法会读取）
-            //    同时传递 TraceRecorder + loopStepId，用于步级 Trace 记录
-            ReActToolProvider.setContext(extract, draftContent, tracer, loopStepId);
+            //    同时传递 TraceRecorder + loopStepId + runId，用于步级 Trace 记录和 DANGER 工具门控
+            ReActToolProvider.setContext(extract, draftContent, tracer, loopStepId, run.getId());
 
             // 3. 设置 Trace 上下文（AiService Listener 会读取）
             //    Listener（ToolExecutedEventListener / ResponseReceivedListener）
@@ -248,8 +248,14 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
 
                 ## 可用工具
                 - query_logs：查询运维日志，定位错误位置（可传 system/module 参数缩小范围）
-                - query_metric：查询系统运行指标（CPU/内存/QPS/延迟），判断资源瓶颈
                 - searchSimilarCases：从历史案件库检索相似案例，参考根因与处置经验
+                - notifyOncall：发邮件通知值班人员，用于排查中需要人工介入时报警
+                - executeRemediation：执行处置操作（如重启服务/清缓存），高危操作会被拦截等待人工确认
+
+                ## 工具使用原则
+                - query_logs 和 searchSimilarCases 是安全工具，可自由调用
+                - notifyOncall 是写入操作，仅在证据充分且需要人工介入时才调
+                - executeRemediation 是高危操作，仅在确认根因且需要处置时才调，调用后会被拦截等待人工确认
 
                 ## 输出格式
                 排查完成后，请输出结构化结论：

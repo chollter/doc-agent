@@ -32,7 +32,7 @@ class RuleBasedAgentPlannerTest {
 
         AgentPlan plan = planner.plan(content, extract).value();
 
-        assertThat(plan.actions()).contains(AgentAction.QUERY_METRIC, AgentAction.QUERY_LOGS);
+        assertThat(plan.actions()).contains(AgentAction.QUERY_LOGS);
         assertThat(plan.skipped()).contains(AgentAction.SIMILAR_CASE_SEARCH);
     }
 
@@ -58,8 +58,7 @@ class RuleBasedAgentPlannerTest {
         assertThat(plan.actions()).contains(
                 AgentAction.KNOWLEDGE_SEARCH,
                 AgentAction.SIMILAR_CASE_SEARCH,
-                AgentAction.QUERY_LOGS,
-                AgentAction.QUERY_METRIC
+                AgentAction.QUERY_LOGS
         );
         assertThat(plan.skipped()).isEmpty();
     }

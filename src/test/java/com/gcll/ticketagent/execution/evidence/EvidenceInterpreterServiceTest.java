@@ -30,20 +30,18 @@ class EvidenceInterpreterServiceTest {
     }
 
     @Test
-    void interpretsMetricLatencyAndErrorRateSignals() {
-        ToolResult metrics = ToolResult.success(
-                ToolType.MCP,
-                "query_metric",
-                "payment-service",
-                "p95 latency high, error rate 5xx increased, cpu usage normal",
+    void interpretsNotificationSignals() {
+        ToolResult notification = ToolResult.success(
+                ToolType.WRITE_FUNCTION,
+                "notifyOncall",
+                "oncall@example.com",
+                "邮件已发送给值班人 oncall@example.com",
                 95
         );
 
-        EvidenceBundle bundle = service.interpret(List.of(metrics));
+        EvidenceBundle bundle = service.interpret(List.of(notification));
 
-        assertThat(bundle.metricSignals()).anyMatch(signal -> signal.contains("延迟异常"));
-        assertThat(bundle.metricSignals()).anyMatch(signal -> signal.contains("错误率异常"));
-        assertThat(bundle.riskSignals()).contains("METRIC_LATENCY_SPIKE", "METRIC_ERROR_RATE_SPIKE");
+        assertThat(bundle.riskSignals()).contains("NOTIFY_SENT");
     }
 
     @Test

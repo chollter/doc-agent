@@ -10,9 +10,9 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 指标分析子智能体：查运行指标（CPU/内存/QPS）→ 推理资源瓶颈。
+ * 指标分析子智能体：查运维日志 → 推理资源瓶颈。
  *
- * <p>角色："你是指标分析专家"。复用 {@link EvidenceCollectionService} 调 query_metric，
+ * <p>角色："你是指标分析专家"。复用 {@link EvidenceCollectionService} 调 query_logs，
  * 再用自己的 LLM 会话推理"是否有资源瓶颈、异常波动"。
  */
 @Component
@@ -36,9 +36,9 @@ public class MetricAnalyst extends AbstractWorkerAgent {
 
     @Override
     protected String gatherRawEvidence(AgentRunContext ctx) {
-        // 复用现有证据收集：调 query_metric
+        // 复用现有证据收集：调 query_logs
         TicketExtractResult extract = ctx.extract();
-        ToolSelection selection = new ToolSelection(List.of("query_metric"), java.util.Map.of(), "metric-analyst", false);
+        ToolSelection selection = new ToolSelection(List.of("query_logs"), java.util.Map.of(), "metric-analyst", false);
         List<ToolResult> results = evidenceCollectionService.collect(ctx.runId(), extract, ctx.originalContent(), selection);
         StringBuilder sb = new StringBuilder();
         for (ToolResult r : results) {

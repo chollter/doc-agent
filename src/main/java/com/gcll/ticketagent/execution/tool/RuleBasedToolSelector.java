@@ -37,7 +37,8 @@ public class RuleBasedToolSelector {
         return switch (action) {
             case SIMILAR_CASE_SEARCH -> "searchSimilarCases";
             case QUERY_LOGS -> "query_logs";
-            case QUERY_METRIC -> "query_metric";
+            case NOTIFY_ONCALL -> "notifyOncall";
+            case EXECUTE_REMEDIATION -> "executeRemediation";
             case KNOWLEDGE_SEARCH -> null;
         };
     }

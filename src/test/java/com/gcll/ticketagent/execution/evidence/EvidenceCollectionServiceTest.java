@@ -83,9 +83,9 @@ class EvidenceCollectionServiceTest {
     void degradesGracefullyOnToolFailure() {
         ToolGateway failingTool = mock(ToolGateway.class);
         when(failingTool.toolType()).thenReturn(ToolType.MCP);
-        when(failingTool.toolName()).thenReturn("query_metric");
+        when(failingTool.toolName()).thenReturn("query_logs");
         when(failingTool.execute(any(), anyString())).thenReturn(
-                ToolResult.failure(ToolType.MCP, "query_metric", "input", "connection refused", 10)
+                ToolResult.failure(ToolType.MCP, "query_logs", "input", "connection refused", 10)
         );
 
         ToolRegistry registry = new ToolRegistry(List.of(failingTool));
@@ -96,7 +96,7 @@ class EvidenceCollectionServiceTest {
                 "run-002",
                 sampleExtract(),
                 "timeout issue",
-                new ToolSelection(List.of("query_metric"), java.util.Map.of(), "test", false)
+                new ToolSelection(List.of("query_logs"), java.util.Map.of(), "test", false)
         );
 
         assertThat(results).hasSize(1);

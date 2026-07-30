@@ -39,8 +39,10 @@ public class EvidenceInterpreterService {
             String normalized = output.toLowerCase(Locale.ROOT);
             if ("query_logs".equals(result.toolName())) {
                 interpretLogs(output, normalized, logSignals, riskSignals);
-            } else if ("query_metric".equals(result.toolName())) {
-                interpretMetrics(output, normalized, metricSignals, riskSignals);
+            } else if ("notifyOncall".equals(result.toolName())) {
+                interpretNotification(output, normalized, riskSignals);
+            } else if ("executeRemediation".equals(result.toolName())) {
+                interpretRemediation(output, normalized, riskSignals);
             }
         }
 
@@ -76,30 +78,24 @@ public class EvidenceInterpreterService {
         }
     }
 
-    private void interpretMetrics(String output, String normalized, List<String> metricSignals, List<String> riskSignals) {
-        if (containsAny(normalized, "latency high", "p95", "p99", "响应变慢", "延迟")) {
-            metricSignals.add("指标显示延迟异常: " + sample(output));
-            riskSignals.add("METRIC_LATENCY_SPIKE");
+    private void interpretNotification(String output, String normalized, List<String> riskSignals) {
+        if (containsAny(normalized, "sent", "已发送", "通知成功")) {
+            riskSignals.add("NOTIFY_SENT");
         }
-        if (containsAny(normalized, "error rate", "5xx", "错误率", "失败率")) {
-            metricSignals.add("指标显示错误率异常: " + sample(output));
-            riskSignals.add("METRIC_ERROR_RATE_SPIKE");
+        if (containsAny(normalized, "failed", "发送失败")) {
+            riskSignals.add("NOTIFY_FAILED");
         }
-        if (containsAny(normalized, "cpu high", "cpu>", "cpu 使用率", "cpu usage")) {
-            metricSignals.add("指标显示 CPU 压力异常: " + sample(output));
-            riskSignals.add("METRIC_CPU_HIGH");
+    }
+
+    private void interpretRemediation(String output, String normalized, List<String> riskSignals) {
+        if (containsAny(normalized, "blocked", "等待确认", "pending")) {
+            riskSignals.add("REMEDIATION_BLOCKED");
         }
-        if (containsAny(normalized, "memory high", "内存", "heap", "oom")) {
-            metricSignals.add("指标显示内存压力异常: " + sample(output));
-            riskSignals.add("METRIC_MEMORY_HIGH");
+        if (containsAny(normalized, "confirmed", "已确认", "执行成功")) {
+            riskSignals.add("REMEDIATION_EXECUTED");
         }
-        if (containsAny(normalized, "connection pool", "hikari", "active connections", "连接池")) {
-            metricSignals.add("指标显示连接池压力异常: " + sample(output));
-            riskSignals.add("METRIC_CONNECTION_POOL");
-        }
-        if (containsAny(normalized, "consumer lag", "lag high", "积压")) {
-            metricSignals.add("指标显示 MQ 积压异常: " + sample(output));
-            riskSignals.add("METRIC_MQ_BACKLOG");
+        if (containsAny(normalized, "rejected", "已拒绝")) {
+            riskSignals.add("REMEDIATION_REJECTED");
         }
     }
 
