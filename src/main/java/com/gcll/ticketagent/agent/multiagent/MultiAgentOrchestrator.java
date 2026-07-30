@@ -27,7 +27,7 @@ import java.util.List;
  * 这是多 Agent 协作的本质——多个独立 agent 往共享状态区读写。
  *
  * <p>本类只编排，不产出最终根因文本（那是 Critic 的职责）。返回的 CriticVerdict 由
- * {@link MultiAgentRootCauseStrategy} 转成根因结果。
+ * 调用方转换使用。
  */
 @Component
 public class MultiAgentOrchestrator {

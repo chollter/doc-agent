@@ -20,8 +20,8 @@ import java.util.List;
  * 再执行"的工程化主线。
  *
  * <p><b>状态机</b>：每个 step 有 PENDING/RUNNING/DONE/SKIPPED/FAILED 状态，支持断点续跑
- * （从第一个 PENDING 步继续，不重跑已 DONE 的）。AnalysisWorkflowService.executeEvidenceByPlan
- * 遍历步骤、按 action 分派执行、每步完成后 markStep(DONE) 并持久化。
+ * （从第一个 PENDING 步继续，不重跑已 DONE 的）。LinearInvestigationStrategy 遍历步骤、
+ * 按 action 分派执行、每步完成后 markStep(DONE) 并持久化。
  */
 public class ExecutionPlan {
 

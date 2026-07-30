@@ -33,7 +33,7 @@ import java.util.Map;
  * <h3>降级策略（对齐项目"不丢召回"理念）</h3>
  * <ul>
  *   <li>向量路异常/空 → 返回关键词路结果（反之类推）。</li>
- *   <li>两路都空 → 返回空（下游 {@code AnalysisWorkflowService} 已有"无命中"降级）。</li>
+ *   <li>两路都空 → 返回空（下游 LinearInvestigationStrategy 已有"无命中"降级）。</li>
  * </ul>
  *
  * <p>对调用方完全透明：实现 {@link KnowledgeSearchService}，作为 {@code @Primary} 替换

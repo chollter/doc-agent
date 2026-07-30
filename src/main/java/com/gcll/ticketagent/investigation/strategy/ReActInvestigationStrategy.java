@@ -95,7 +95,8 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
                 return InvestigationResult.success(
                         run.getId(), "ReAct降级到Linear排查完成", "Linear排查证据",
                         "ReAct降级，Linear排查结论", "ReAct降级，Linear排查建议",
-                        false, null
+                        triageResult.needHumanConfirm(),
+                        triageResult.needHumanConfirm() ? "P0降级排查，需人工确认" : null
                 );
             }
 

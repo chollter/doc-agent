@@ -24,8 +24,7 @@ import java.util.UUID;
  * Plan-and-Execute 规划器（阶段3）：LLM 先规划有序步骤序列，按计划顺序执行证据收集。
  *
  * <p>激活条件：{@code opsmind.agent.planner-strategy=plan-execute}（默认走 SpringAiAgentPlanner）。
- * 与 {@link SpringAiAgentPlanner}（@Primary）共存：本类不是 Primary，通过配置开关显式启用时，
- * 由调用方（AnalysisWorkflowService）优先选择本规划器。
+ * 与 {@link SpringAiAgentPlanner}（@Primary）共存：本类不是 Primary，通过配置开关显式启用。
  *
  * <p><b>与现有 planner 的关系</b>：
  * <ul>
@@ -33,16 +32,8 @@ import java.util.UUID;
  *   <li>本类：输出有序步骤 + 每步目标（{@link ExecutionPlan}），"按什么顺序做、为什么"</li>
  * </ul>
  *
- * <p><b>计划如何驱动执行（重构后）</b>：
- * AnalysisWorkflowService.executeEvidenceByPlan 遍历计划步骤，按 action 类型分派执行
- * （KNOWLEDGE_SEARCH→知识检索，QUERY_LOGS→查日志，QUERY_METRIC→查指标），
- * 每步执行后标记 DONE 并持久化——支持断点续跑（从第一个 PENDING 继续，跳过已 DONE 的）。
- *
  * <p><b>降级</b>：LLM 规划失败/输出非法 → 回退到 {@link SpringAiAgentPlanner}（把它输出的
  * AgentPlan 转成单步 ExecutionPlan），保证 plan-execute 出问题不致命。
- *
- * <p><b>与 ReAct（阶段2）的关系</b>：两者是不同范式。Plan-and-Execute = 先全局规划再执行
- * （可控，linear 模式用），ReAct = 边走边看（LLM 自主，react 模式用）。同一时间只走一种。
  */
 @Service
 @ConditionalOnProperty(prefix = "opsmind.agent", name = "planner-strategy", havingValue = "plan-execute")

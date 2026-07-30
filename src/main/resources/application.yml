@@ -105,12 +105,8 @@ knowledge:
 
 opsmind:
   agent:
-    # 阶段2：根因分析策略。linear=原线性流水线(默认)，react=LLM 自主调工具迭代推理。
-    # react 模式下 ReactRootCauseStrategy bean 激活，失败自动回退 linear（见 AnalysisWorkflowService.resolveRootCause）。
-    root-cause-strategy: ${ROOT_CAUSE_STRATEGY:multi}
-    # 阶段3：规划策略。default=现有 SpringAiAgentPlanner(无序动作集合)，plan-execute=有序步骤+每步目标。
+    # 规划策略。default=SpringAiAgentPlanner(无序动作集合)，plan-execute=有序步骤+每步目标。
     # plan-execute 模式下 PlanExecutePlanner bean 激活，失败回退 SpringAiAgentPlanner。
-    # 与 react(根因)互不冲突：plan-execute 管"怎么规划调查步骤"，react 管"根因怎么推理"。
     planner-strategy: ${PLANNER_STRATEGY:default}
   llm:
     routing:
