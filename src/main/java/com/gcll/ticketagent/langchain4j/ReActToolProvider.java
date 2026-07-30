@@ -1,6 +1,7 @@
 package com.gcll.ticketagent.langchain4j;
 
 import com.gcll.ticketagent.extract.TicketExtractResult;
+import com.gcll.ticketagent.observability.trace.TraceRecorder;
 import com.gcll.ticketagent.tool.ToolRegistry;
 import com.gcll.ticketagent.tool.ToolResult;
 import com.gcll.ticketagent.tool.ToolType;
@@ -23,8 +24,18 @@ import java.util.Map;
  *
  * <h3>ToolContext 替代方案：ThreadLocal</h3>
  * LangChain4j 的 @Tool 方法不支持 ToolContext 注入，用 ThreadLocal 携带
- * extract + originalContent（由 ReActInvestigationStrategy 在调用前 set、调用后 remove）。
- * 这比构造器注入更灵活——同一 Bean 实例在不同工单间切换上下文。
+ * extract + originalContent + TraceRecorder + parentStepId（由 ReActInvestigationStrategy
+ * 在调用前 set、调用后 remove）。这比构造器注入更灵活——同一 Bean 实例在不同工单间切换上下文。
+ *
+ * <h3>步级 Trace</h3>
+ * 每次 @Tool 方法被 LangChain4j AiService 调用时，在 delegate() 中记录一个子 Span：
+ * <pre>
+ *   REACT_TOOL_CALL: query_logs
+ *     input:  system=payment-service, module=/pay/callback
+ *     output: 证据摘要（指纹化，不存原文）
+ *     costMs: 120ms
+ * </pre>
+ * TraceRecorder + parentStepId 也通过 ThreadLocal 传递（与 ToolContext 同生命周期）。
  */
 @Component
 public class ReActToolProvider {
@@ -34,7 +45,7 @@ public class ReActToolProvider {
     private final ToolRegistry toolRegistry;
     private final ToolArgMerger argMerger;
 
-    /** ThreadLocal：携带当前工单的 extract + originalContent */
+    /** ThreadLocal：携带当前工单的 extract + originalContent + TraceRecorder + parentStepId */
     private static final ThreadLocal<ToolContext> CONTEXT = new ThreadLocal<>();
 
     public ReActToolProvider(ToolRegistry toolRegistry, ToolArgMerger argMerger) {
@@ -43,14 +54,20 @@ public class ReActToolProvider {
     }
 
     /**
-     * 设置当前线程的工具上下文（调用 ReActAssistant.investigate 之前 set）
+     * 设置当前线程的工具上下文（调用 ReActAssistant.investigate 之前 set）。
+     *
+     * @param extract         结构化抽取结果
+     * @param originalContent 工单原文
+     * @param tracer          Trace 记录器（用于步级 Trace）
+     * @param parentStepId    父步骤 ID（REACT_LOOP 的 stepId）
      */
-    public static void setContext(TicketExtractResult extract, String originalContent) {
-        CONTEXT.set(new ToolContext(extract, originalContent));
+    public static void setContext(TicketExtractResult extract, String originalContent,
+                                  TraceRecorder tracer, String parentStepId) {
+        CONTEXT.set(new ToolContext(extract, originalContent, tracer, parentStepId));
     }
 
     /**
-     * 清除当前线程的工具上下文（调用 ReActAssistant.investigate 之后 remove）
+     * 清除当前线程的工具上下文（调用 ReActAssistant.investigate 之后 remove）。
      */
     public static void clearContext() {
         CONTEXT.remove();
@@ -96,23 +113,45 @@ public class ReActToolProvider {
             return "工具 " + toolName + " 未注册，无法执行。";
         }
 
+        // 步级 Trace：记录 Action（工具名 + 参数）
+        TraceRecorder tracer = ctx.tracer;
+        String parentStepId = ctx.parentStepId;
+        String toolStepId = null;
+        if (tracer != null && parentStepId != null) {
+            toolStepId = tracer.begin("REACT_TOOL_CALL: " + toolName, parentStepId);
+            tracer.recordMeta(toolStepId, false, toolName);
+            tracer.recordInput(toolStepId, TraceRecorder.fingerprint("args", llmArgs.toString()));
+        }
+
         try {
             TicketExtractResult mergedExtract = argMerger.merge(ctx.extract, llmArgs);
             long start = System.currentTimeMillis();
             ToolResult result = toolOpt.get().execute(mergedExtract, ctx.originalContent);
             long durationMs = System.currentTimeMillis() - start;
 
+            String observation;
             if (result.success()) {
-                return "【工具执行成功·" + durationMs + "ms】\n" + (result.output() == null ? "(无输出)" : result.output());
+                observation = "【工具执行成功·" + durationMs + "ms】\n" + (result.output() == null ? "(无输出)" : result.output());
             } else {
                 String err = result.errorMessage() == null ? "unknown error" : result.errorMessage();
-                return "【工具执行失败·非工单证据】工具 " + toolName + " 调用失败：" + err
+                observation = "【工具执行失败·非工单证据】工具 " + toolName + " 调用失败：" + err
                         + "。此结果不可作为根因依据。";
             }
+
+            // 步级 Trace：记录 Observation（指纹化摘要）
+            if (toolStepId != null) {
+                tracer.end(toolStepId, TraceRecorder.fingerprint("observation", observation), null);
+            }
+
+            return observation;
         } catch (Exception ex) {
             log.warn("LangChain4j tool [{}] delegate failed: {}", toolName, ex.getMessage());
-            return "【工具执行异常·非工单证据】" + ex.getClass().getSimpleName() + ": " + ex.getMessage()
+            String errorResult = "【工具执行异常·非工单证据】" + ex.getClass().getSimpleName() + ": " + ex.getMessage()
                     + "。此结果不可作为根因依据。";
+            if (toolStepId != null) {
+                tracer.end(toolStepId, "exception", ex.getMessage());
+            }
+            return errorResult;
         }
     }
 
@@ -129,5 +168,18 @@ public class ReActToolProvider {
 
     // --- 内部类型 ---
 
-    record ToolContext(TicketExtractResult extract, String originalContent) {}
+    /**
+     * 工具上下文——通过 ThreadLocal 传递，包含工单信息和 Trace 记录器。
+     *
+     * @param extract         结构化抽取结果
+     * @param originalContent 工单原文
+     * @param tracer          Trace 记录器（用于步级 Trace，nullable——测试时可不传）
+     * @param parentStepId    父步骤 ID（REACT_LOOP 的 stepId，nullable——测试时可不传）
+     */
+    record ToolContext(
+            TicketExtractResult extract,
+            String originalContent,
+            TraceRecorder tracer,
+            String parentStepId
+    ) {}
 }

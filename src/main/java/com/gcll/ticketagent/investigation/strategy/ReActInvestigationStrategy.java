@@ -12,6 +12,7 @@ import com.gcll.ticketagent.investigation.InvestigationResult;
 import com.gcll.ticketagent.langchain4j.ReActAssistant;
 import com.gcll.ticketagent.langchain4j.ReActContextHolder;
 import com.gcll.ticketagent.langchain4j.ReActToolProvider;
+import com.gcll.ticketagent.langchain4j.ReActTraceHolder;
 import com.gcll.ticketagent.observability.trace.TraceRecorder;
 import com.gcll.ticketagent.persistence.repository.AgentRunRepository;
 import com.gcll.ticketagent.triage.TriageResult;
@@ -35,7 +36,7 @@ import java.util.List;
  *   <li>@Tool 方法通过 {@link ReActToolProvider} 适配现有 {@link com.gcll.ticketagent.tool.ToolGateway}</li>
  *   <li>步数限制由 AiServices.builder().maxToolCallingRoundTrips() 控制（{@code MAX_TOOL_CALLING_ROUNDS=8}）</li>
  *   <li>每步记录 Trace（可观测性）</li>
- *   <li>失败自动降级到分诊摘要</li>
+ *   <li>失败自动降级到 Linear 策略（真正调用 LinearInvestigationStrategy.execute()）</li>
  * </ul>
  * <p>
  * LangChain4j 与 Spring AI Alibaba 共存：
@@ -55,19 +56,23 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
     private final HumanConfirmService humanConfirmService;
     private final AgentRunRepository agentRunRepository;
     private final TransactionTemplate transactionTemplate;
+    /** 降级策略——ReAct 失败时调用 Linear 策略重新排查 */
+    private final LinearInvestigationStrategy linearStrategy;
 
     public ReActInvestigationStrategy(
             ReActAssistant reActAssistant,
             HumanConfirmTrigger humanConfirmTrigger,
             HumanConfirmService humanConfirmService,
             AgentRunRepository agentRunRepository,
-            TransactionTemplate transactionTemplate
+            TransactionTemplate transactionTemplate,
+            LinearInvestigationStrategy linearStrategy
     ) {
         this.reActAssistant = reActAssistant;
         this.humanConfirmTrigger = humanConfirmTrigger;
         this.humanConfirmService = humanConfirmService;
         this.agentRunRepository = agentRunRepository;
         this.transactionTemplate = transactionTemplate;
+        this.linearStrategy = linearStrategy;
     }
 
     @Override
@@ -80,7 +85,19 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
 
         try {
             // ReAct 推理循环（LangChain4j AiService 驱动）
+            // 返回 null 表示已降级到 Linear（Linear 自己做了完整 execute，含人工确认+状态更新）
             String conclusion = executeReActLoop(run, triageResult, extract, draftContent, tracer, parentStepId);
+
+            // 降级到 Linear——executeReActLoop 已调用 linearStrategy.execute() 并返回 null
+            if (conclusion == null) {
+                tracer.end(parentStepId, "strategy=react→linear_degraded", null);
+                // 返回一个降级标记结果（run 状态已由 Linear 更新）
+                return InvestigationResult.success(
+                        run.getId(), "ReAct降级到Linear排查完成", "Linear排查证据",
+                        "ReAct降级，Linear排查结论", "ReAct降级，Linear排查建议",
+                        false, null
+                );
+            }
 
             // 人工确认决策
             PriorityResult priorityResult = toPriorityResult(triageResult);
@@ -137,6 +154,8 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
      * <p>
      * AiService 内部已处理步数限制（maxToolCallingRoundTrips=8）和超时，
      * 此处额外做：Trace 记录 + 失败降级。
+     *
+     * @return ReAct 结论；null 表示已降级到 Linear（Linear 已完成完整 execute）
      */
     private String executeReActLoop(
             AgentRun run, TriageResult triageResult,
@@ -151,9 +170,15 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
             ReActContextHolder.setSystemPrompt(systemPrompt);
 
             // 2. 设置工具上下文（ReActToolProvider 的 @Tool 方法会读取）
-            ReActToolProvider.setContext(extract, draftContent);
+            //    同时传递 TraceRecorder + loopStepId，用于步级 Trace 记录
+            ReActToolProvider.setContext(extract, draftContent, tracer, loopStepId);
 
-            // 3. 调用 AiService（LangChain4j 自动执行 ReAct 循环）
+            // 3. 设置 Trace 上下文（AiService Listener 会读取）
+            //    Listener（ToolExecutedEventListener / ResponseReceivedListener）
+            //    通过 ReActTraceHolder 获取 tracer + parentStepId，记录子 Span
+            ReActTraceHolder.set(tracer, loopStepId);
+
+            // 4. 调用 AiService（LangChain4j 自动执行 ReAct 循环）
             String loopTraceStepId = tracer.begin("REACT_LLM_INVOKE", loopStepId);
             tracer.recordMeta(loopTraceStepId, true, "LangChain4j");
 
@@ -172,18 +197,24 @@ public class ReActInvestigationStrategy implements InvestigationStrategy {
             tracer.end(loopStepId, "failed", ex.getMessage());
             log.error("ReAct循环异常, runId={}, error={}", run.getId(), ex.getMessage());
 
-            // 降级：返回分诊摘要 + 异常信息
-            String fallback = "P0紧急工单，ReAct推理循环执行异常（已降级）。"
-                    + "issueType=" + triageResult.issueType()
-                    + ", priority=" + triageResult.priority()
-                    + ", routedTeam=" + triageResult.routedTeam()
-                    + ", error=" + ex.getMessage();
-            log.warn("ReAct降级到分诊摘要, runId={}", run.getId());
-            return fallback;
+            // 降级到 Linear 策略——真正调用 LinearInvestigationStrategy.execute()
+            // Linear 策略会走完整证据收集+根因分析+建议生成+人工确认流程，
+            // 产出有工程价值的排查结果，而不是一个无证据的错误摘要。
+            String degradeStepId = tracer.begin("REACT_DEGRADE_TO_LINEAR", parentStepId);
+            tracer.recordMeta(degradeStepId, false, "LinearInvestigationStrategy");
+            tracer.end(degradeStepId, "reason=" + ex.getMessage(), null);
+            log.warn("ReAct降级到Linear策略, runId={}", run.getId());
+
+            // 调用 Linear 策略的完整 execute()——它会处理人工确认和 run 状态更新
+            linearStrategy.execute(run, triageResult, extract, draftContent, false, tracer);
+
+            // 返回 null 表示已降级，execute() 检测到 null 后跳过 ReAct 自己的人工确认逻辑
+            return null;
         } finally {
-            // 4. 清除 ThreadLocal（防止内存泄漏）
+            // 清除所有 ThreadLocal（防止内存泄漏）
             ReActContextHolder.clear();
             ReActToolProvider.clearContext();
+            ReActTraceHolder.clear();
         }
     }
 
