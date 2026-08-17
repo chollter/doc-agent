@@ -22,9 +22,15 @@ OpsMind Agent 是一个面向技术支持工单的 AI 分诊与故障排查样�
 - `docs/demo-guide.md`：本地演示顺序和讲解口径。
 - `docs/project-design-tradeoffs.md`：架构设计、取舍和边界。
 - `docs/demo-cases.md`：固定演示用例。
-- `docs/interview-deep-dive-playbook.md`：面试连续追问准备。
+- `docs/KNOWN-ISSUES.md`：已知限制与设计权衡（工程深度体现）。
+- `docs/architecture-evolution-notes.md`：状态门控与 Eval 驱动的架构演进记录。
+- `docs/interview-answer-template-ai-app.md`：AI 应用岗面试答题模板。
 
 ## 快速启动
+
+### 求职演示最短路径
+
+如果目标是快速展示项目能力，先看 [`docs/job-demo-runbook.md`](docs/job-demo-runbook.md)。它固定了 3 到 5 分钟演示顺序：信息不足追问、支付故障取证、人工确认、审计回放和 Eval。完整接口说明与启动边界见下文；不要把历史 Eval 报告当成当前环境刚刚生成的结果。
 
 > 默认向量后端为 **PgVector**（复用主库 PostgreSQL，无需额外容器）。如需切换 Milvus，
 > 见下文「向量后端切换」。

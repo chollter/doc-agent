@@ -8,16 +8,37 @@
 </head>
 <body>
   <header class="app-header">
-    <div>
-      <h1>OpsMind Agent</h1>
-      <p>研发运维工单分析工作台</p>
+    <div class="brand-lockup">
+      <div class="brand-mark" aria-hidden="true">O</div>
+      <div>
+        <div class="brand-kicker">OPS INTELLIGENCE / CONTROL ROOM</div>
+        <h1>OpsMind <span>Agent</span></h1>
+        <p>技术支持工单的受控分析与证据工作台</p>
+      </div>
     </div>
     <div class="header-status">
       <span class="status-dot"></span>
-      <span>Agent Service</span>
-      <strong>Online</strong>
+      <div>
+        <span class="status-label-top">RUNTIME STATUS</span>
+        <strong>Online</strong>
+      </div>
+      <span class="header-divider"></span>
+      <div class="header-meta"><span>Spring Boot</span><span>PGVector</span></div>
     </div>
   </header>
+
+  <section class="workspace-intro" aria-label="工作区概览">
+    <div>
+      <span class="eyebrow">CONTROLLED AI WORKFLOW</span>
+      <h2>让每一次故障判断都能被看见、验证和追溯</h2>
+      <p>LLM 负责理解与局部决策，后端负责工具边界、风险门控和运行状态。</p>
+    </div>
+    <div class="intro-signals">
+      <span><i class="signal-mark signal-blue"></i>结构化理解</span>
+      <span><i class="signal-mark signal-cyan"></i>证据检索</span>
+      <span><i class="signal-mark signal-amber"></i>人工确认</span>
+    </div>
+  </section>
 
   <nav class="tabs" aria-label="工作区">
     <button type="button" class="tab active" data-tab="tickets">工单分析</button>

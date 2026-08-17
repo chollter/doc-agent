@@ -13,6 +13,8 @@
   --success: #16a34a;
   --info: #0e7490;
   --shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  --header: #0f1b2d;
+  --header-muted: #9fb0c4;
 }
 
 * {
@@ -30,39 +32,75 @@ body {
 }
 
 .app-header {
-  height: 64px;
+  min-height: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
-  background: #111827;
+  gap: 24px;
+  padding: 0 28px;
+  background: var(--header);
   color: #fff;
-  border-bottom: 1px solid #0f172a;
+  border-bottom: 1px solid #20324b;
 }
 
-.app-header h1 {
-  font-size: 1.05rem;
-  font-weight: 650;
-}
-
-.app-header p {
-  margin-top: 2px;
-  color: #aeb8c6;
-  font-size: 0.78rem;
-}
-
-.header-status {
+.brand-lockup,
+.header-status,
+.header-meta {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  color: #cbd5e1;
-  font-size: 0.78rem;
 }
 
-.header-status strong {
-  color: #86efac;
-  font-weight: 600;
+.brand-lockup { gap: 11px; }
+.brand-mark {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid #4a9bd8;
+  border-radius: 8px;
+  color: #8bd5ff;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 1.05rem;
+  font-weight: 800;
 }
+
+.brand-kicker,
+.status-label-top,
+.eyebrow {
+  color: var(--header-muted);
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+}
+
+.app-header h1 { font-size: 1.05rem; font-weight: 700; letter-spacing: 0.01em; }
+.app-header h1 span { color: #8bd5ff; }
+.app-header p { margin-top: 2px; color: var(--header-muted); font-size: 0.74rem; }
+
+.header-status { gap: 9px; color: #dbe7f3; font-size: 0.74rem; }
+.header-status strong { display: block; color: #86efac; font-weight: 700; }
+.status-label-top { display: block; color: var(--header-muted); font-size: 0.58rem; }
+.header-divider { width: 1px; height: 25px; margin: 0 8px; background: #2a405d; }
+.header-meta { gap: 6px; color: var(--header-muted); font-family: "Cascadia Code", "Consolas", monospace; font-size: 0.62rem; }
+.header-meta span { padding: 3px 6px; border: 1px solid #2a405d; border-radius: 4px; }
+
+.workspace-intro {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 28px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.workspace-intro h2 { margin-top: 5px; font-size: 1.18rem; letter-spacing: -0.01em; }
+.workspace-intro p { margin-top: 5px; color: var(--text-muted); font-size: 0.8rem; }
+.intro-signals { display: flex; flex-wrap: wrap; gap: 14px; color: var(--text-muted); font-size: 0.72rem; }
+.intro-signals span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.signal-mark { width: 7px; height: 7px; border-radius: 50%; }
+.signal-blue { background: var(--primary); }
+.signal-cyan { background: var(--info); }
+.signal-amber { background: var(--warning); }
 
 .status-dot {
   width: 8px;
@@ -75,7 +113,7 @@ body {
 .tabs {
   display: flex;
   gap: 2px;
-  padding: 0 24px;
+  padding: 0 28px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
@@ -98,7 +136,9 @@ body {
 }
 
 .workspace {
-  padding: 18px 24px 28px;
+  max-width: 1720px;
+  margin: 0 auto;
+  padding: 18px 28px 32px;
 }
 
 .tab-page {
@@ -117,6 +157,14 @@ body {
 
 #tab-tickets.active {
   display: grid;
+}
+
+#tab-tickets > .analysis-workbench {
+  border-top: 3px solid var(--primary);
+}
+
+#tab-tickets > .ticket-queue {
+  border-top: 3px solid #8aa4bd;
 }
 
 .panel {
@@ -1084,6 +1132,26 @@ body {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@media (max-width: 1180px) {
+  #tab-tickets { grid-template-columns: 220px minmax(300px, 1fr); }
+  #tab-tickets > .analysis-workbench { grid-column: 1 / -1; }
+}
+
+@media (max-width: 720px) {
+  .app-header { align-items: flex-start; padding: 14px 16px; }
+  .header-meta, .header-divider { display: none; }
+  .workspace-intro { display: block; padding: 18px 16px 15px; }
+  .workspace-intro h2 { font-size: 1rem; }
+  .intro-signals { margin-top: 14px; gap: 10px; }
+  .tabs { padding: 0 12px; overflow-x: auto; }
+  .workspace { padding: 12px; }
+  #tab-tickets.active { display: flex; flex-direction: column; }
+  .ticket-queue { position: static; }
+  .ticket-meta-grid, .field-grid { grid-template-columns: 1fr; }
+  .runtime-header, .runtime-grid, .runtime-grid-bottom { grid-template-columns: 1fr; }
+  .orchestration-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .knowledge-form {
