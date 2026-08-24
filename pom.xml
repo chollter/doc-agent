@@ -104,6 +104,18 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- 文档解析：PDF（PDFBox）与 DOCX（POI） -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.5</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.3.0</version>
+        </dependency>
+
         <!-- LangChain4j：ReAct 推理循环的核心框架。
              与 Spring AI Alibaba（dashscope）共存：
              Spring AI 管分诊/抽取/建议等流程调用，LangChain4j 管 ReAct 自主推理+工具迭代。
