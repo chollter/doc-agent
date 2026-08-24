@@ -1,0 +1,7 @@
+# Spring profile: PostgreSQL（团队/生产环境）
+spring:
+  datasource:
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DATABASE:doc_agent}
+    username: ${PG_USER:postgres}
+    password: ${PG_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver

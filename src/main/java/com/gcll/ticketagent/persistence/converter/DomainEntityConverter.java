@@ -24,11 +24,6 @@ public final class DomainEntityConverter {
         entity.setStatus(run.getStatus().name());
         entity.setOriginalContent(run.getOriginalContent());
         entity.setCurrentSummary(run.getCurrentSummary());
-        entity.setIssueType(run.getIssueType());
-        entity.setPriority(run.getPriority());
-        entity.setGapAnalysisJson(run.getGapAnalysisJson());
-        entity.setAgentPlanJson(run.getAgentPlanJson());
-        entity.setToolSelectionJson(run.getToolSelectionJson());
         entity.setIdempotencyKey(run.getIdempotencyKey());
         entity.setRequestId(run.getRequestId());
         entity.setVersion(run.getVersion());
@@ -47,11 +42,6 @@ public final class DomainEntityConverter {
         );
         run.setStatus(AgentRunStatus.valueOf(entity.getStatus()));
         run.setCurrentSummary(entity.getCurrentSummary());
-        run.setIssueType(entity.getIssueType());
-        run.setPriority(entity.getPriority());
-        run.setGapAnalysisJson(entity.getGapAnalysisJson());
-        run.setAgentPlanJson(entity.getAgentPlanJson());
-        run.setToolSelectionJson(entity.getToolSelectionJson());
         run.setIdempotencyKey(entity.getIdempotencyKey());
         run.setRequestId(entity.getRequestId());
         if (entity.getVersion() != null) {

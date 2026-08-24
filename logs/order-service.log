@@ -1,4 +1,0 @@
-2026-06-28 13:00:00.001 INFO  [http-nio-8080-exec-1] c.gcll.order.OrderService - 订单服务正常运行
-2026-06-28 14:30:00.001 INFO  [http-nio-8080-exec-2] c.gcll.order.OrderService - 收到支付回调确认 orderId=CB20260628130012 status=FAILED 重试
-2026-06-28 14:30:00.002 WARN  [http-nio-8080-exec-2] c.gcll.order.OrderService - 支付回调失败，订单状态未更新 orderId=CB20260628130012
-2026-06-28 14:30:00.003 WARN  [http-nio-8080-exec-3] c.gcll.order.OrderService - 约 200 笔订单回调失败，进入补偿队列

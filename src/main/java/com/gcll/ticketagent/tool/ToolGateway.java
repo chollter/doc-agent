@@ -1,9 +1,9 @@
 package com.gcll.ticketagent.tool;
 
-import com.gcll.ticketagent.extract.TicketExtractResult;
-
-import java.util.List;
-
+/**
+ * 工具 SPI——所有 Agent 工具实现此接口并注册为 Spring Bean，
+ * 由 {@link ToolRegistry} 自动发现。
+ */
 public interface ToolGateway {
 
     ToolType toolType();
@@ -18,7 +18,7 @@ public interface ToolGateway {
         return toolType().riskLevel();
     }
 
-    ToolResult execute(TicketExtractResult extract, String originalContent);
+    ToolResult execute(ToolInvocation invocation);
 
     default ToolDescriptor descriptor() {
         return new ToolDescriptor(toolName(), toolType(), toolName(), riskLevel());

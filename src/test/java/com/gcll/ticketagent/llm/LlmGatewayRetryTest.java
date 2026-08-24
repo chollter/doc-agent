@@ -53,7 +53,7 @@ class LlmGatewayRetryTest {
 
         // invoke 把未分类的 RuntimeException 翻译为 RetryableCallException（默认可重试），
         // 由 ExternalCallGateway 的 retry 策略决定是否真正重试。
-        assertThatThrownBy(() -> llmGateway.invoke("ticket-extract.txt", "test"))
+        assertThatThrownBy(() -> llmGateway.invoke("document-summary.txt", "test"))
                 .isInstanceOf(RetryableCallException.class);
     }
 }

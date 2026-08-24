@@ -4,6 +4,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Agent 运行聚合根——一次文档分析的完整生命周期。
+ */
 public class AgentRun {
     private final String id;
     private final String traceId;
@@ -12,11 +15,7 @@ public class AgentRun {
     private AgentRunStatus status;
     private String originalContent;
     private String currentSummary;
-    private String issueType;
-    private String priority;
-    private String gapAnalysisJson;
-    private String agentPlanJson;
-    private String toolSelectionJson;
+    private String lastError;
     private String idempotencyKey;
     private String requestId;
     private long version;
@@ -35,129 +34,52 @@ public class AgentRun {
         this.updatedAt = this.createdAt;
     }
 
-    public String getId() {
-        return id;
-    }
+    public String getId() { return id; }
+    public String getTraceId() { return traceId; }
+    public String getSessionId() { return sessionId; }
+    public String getUserId() { return userId; }
 
-    public String getTraceId() {
-        return traceId;
-    }
-
-    public String getSessionId() {
-        return sessionId;
-    }
-
-    public String getUserId() {
-        return userId;
-    }
-
-    public AgentRunStatus getStatus() {
-        return status;
-    }
-
+    public AgentRunStatus getStatus() { return status; }
     public void setStatus(AgentRunStatus status) {
         this.status = status;
         this.updatedAt = Instant.now();
     }
 
-    public String getOriginalContent() {
-        return originalContent;
-    }
-
+    public String getOriginalContent() { return originalContent; }
     public void setOriginalContent(String originalContent) {
         this.originalContent = originalContent;
         this.updatedAt = Instant.now();
     }
 
-    public String getCurrentSummary() {
-        return currentSummary;
-    }
-
+    public String getCurrentSummary() { return currentSummary; }
     public void setCurrentSummary(String currentSummary) {
         this.currentSummary = currentSummary;
         this.updatedAt = Instant.now();
     }
 
-    public String getIssueType() {
-        return issueType;
-    }
-
-    public void setIssueType(String issueType) {
-        this.issueType = issueType;
+    public String getLastError() { return lastError; }
+    public void setLastError(String lastError) {
+        this.lastError = lastError;
         this.updatedAt = Instant.now();
     }
 
-    public String getPriority() {
-        return priority;
-    }
-
-    public void setPriority(String priority) {
-        this.priority = priority;
-        this.updatedAt = Instant.now();
-    }
-
-    public String getGapAnalysisJson() {
-        return gapAnalysisJson;
-    }
-
-    public void setGapAnalysisJson(String gapAnalysisJson) {
-        this.gapAnalysisJson = gapAnalysisJson;
-        this.updatedAt = Instant.now();
-    }
-
-    public String getAgentPlanJson() {
-        return agentPlanJson;
-    }
-
-    public void setAgentPlanJson(String agentPlanJson) {
-        this.agentPlanJson = agentPlanJson;
-        this.updatedAt = Instant.now();
-    }
-
-    public String getToolSelectionJson() {
-        return toolSelectionJson;
-    }
-
-    public void setToolSelectionJson(String toolSelectionJson) {
-        this.toolSelectionJson = toolSelectionJson;
-        this.updatedAt = Instant.now();
-    }
-
-    public String getIdempotencyKey() {
-        return idempotencyKey;
-    }
-
+    public String getIdempotencyKey() { return idempotencyKey; }
     public void setIdempotencyKey(String idempotencyKey) {
         this.idempotencyKey = idempotencyKey;
         this.updatedAt = Instant.now();
     }
 
-    public String getRequestId() {
-        return requestId;
-    }
-
+    public String getRequestId() { return requestId; }
     public void setRequestId(String requestId) {
         this.requestId = requestId;
         this.updatedAt = Instant.now();
     }
 
-    public long getVersion() {
-        return version;
-    }
+    public long getVersion() { return version; }
+    public void setVersion(long version) { this.version = version; }
 
-    public void setVersion(long version) {
-        this.version = version;
-    }
+    public Instant getCreatedAt() { return createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
 
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
-    public Instant getUpdatedAt() {
-        return updatedAt;
-    }
-
-    public List<AgentStep> getSteps() {
-        return steps;
-    }
+    public List<AgentStep> getSteps() { return steps; }
 }

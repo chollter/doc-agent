@@ -1,22 +1,31 @@
 spring:
   application:
-    name: tech-support-agent
+    name: doc-agent
   profiles:
+    # 本地覆盖配置（含密钥）放 application-local.yml（已 gitignore）
     default: local
-  autoconfigure:
-    exclude:
-      - org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
-      - org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
+  # spring-ai-alibaba-starter 会连带拉起 Nacos 配置/注册客户端，本项目不需要，显式关闭
+  cloud:
+    nacos:
+      config:
+        enabled: false
+      discovery:
+        enabled: false
+        register-enabled: false
   datasource:
-    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DATABASE:tech_support_agent}
-    username: ${PG_USER:postgres}
-    password: ${PG_PASSWORD:postgres}
-    driver-class-name: org.postgresql.Driver
+    # 默认内嵌 H2 文件库：零外部依赖，克隆即跑。团队/生产环境用 --spring.profiles.active=pg 切 PostgreSQL。
+    url: jdbc:h2:file:./data/docagent;MODE=PostgreSQL;AUTO_SERVER=TRUE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
   sql:
     init:
       mode: always
       schema-locations: classpath:db/schema.sql
-      data-locations: classpath:db/data-knowledge.sql
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
   ai:
     dashscope:
       api-key: ${LLM_API_KEY:}
@@ -29,43 +38,11 @@ spring:
         observations:
           log-prompt: ${AI_OBS_LOG_PROMPT:true}
           log-completion: ${AI_OBS_LOG_COMPLETION:true}
-    tool:
-      observations:
-        include-content: ${AI_OBS_TOOL_CONTENT:true}
-    mcp:
-      client:
-        # 默认关闭：测试/无 PG 环境下不拉起 server 子进程；生产/演示时设 MCP_ENABLED=true
-        enabled: ${MCP_ENABLED:false}
-        name: tech-support-mcp-client
-        version: 1.0.0
-        type: SYNC
-        stdio:
-          connections:
-            ops-mcp-server:
-              # stdio 子进程：应用拉起 ops-mcp-server jar，经 stdin/stdout 通信
-              # 注意：默认路径相对于「主应用运行目录」（仓库根），ops-mcp-server 是仓库内的独立模块
-              # （根 pom 不含 <modules>，根目录 mvn package 不会自动打包它，需单独构建，见 README）
-              command: ${MCP_SERVER_JAVA:java}
-              args:
-                - "-jar"
-                - ${MCP_SERVER_JAR:ops-mcp-server/target/ops-mcp-server-1.0.0-SNAPSHOT.jar}
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-  kafka:
-    # 文档总结为同步链路，默认不启动 Kafka consumers；需要旧异步/A2A 能力时显式开启。
-    listener:
-      auto-startup: ${KAFKA_LISTENER_AUTO_STARTUP:false}
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-    consumer:
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
-      properties:
-        spring.json.trusted.packages: com.gcll.ticketagent.async,com.gcll.ticketagent.investigation,com.gcll.ticketagent.a2a
+      # ChatMemory 表 DDL 由 db/schema.sql 统一管理（Spring AI 1.0.0 缺 H2 schema 变体）
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: never
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
@@ -81,6 +58,13 @@ management:
     web:
       exposure:
         include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      # Nacos 健康检查：本项目不依赖 Nacos 服务端，关闭该指示器
+  health:
+    nacos-config:
+      enabled: false
   tracing:
     sampling:
       # 求职 Demo 默认不依赖本地 OTLP Collector。
@@ -96,115 +80,40 @@ logging:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId:-}] %logger{50} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId:-}] %logger{50} - %msg%n"
   file:
-    name: logs/tech-support-agent.log
+    name: logs/doc-agent.log
     max-size: 100MB
     max-history: 30
     total-size-cap: 1GB
-    clean-history-on-start: true
-
-
-knowledge:
-  search:
-    timeout-ms: ${KNOWLEDGE_SEARCH_TIMEOUT_MS:5000}
+    clean-history-on-startup: true
 
 opsmind:
-  agent:
-    # 规划策略。default=SpringAiAgentPlanner(无序动作集合)，plan-execute=有序步骤+每步目标。
-    # plan-execute 模式下 PlanExecutePlanner bean 激活，失败回退 SpringAiAgentPlanner。
-    planner-strategy: ${PLANNER_STRATEGY:default}
-  notify:
-    # NotifyOncallTool 默认收件人（LLM 未指定时用此地址）
-    oncall-default-recipient: ${ONCALL_RECIPIENT:oncall@company.com}
   llm:
     routing:
-      # 兜底模型：callName 未命中时用。默认 qwen-plus（复杂任务默认用强模型保效果）。
+      # 兜底模型：callName 未命中时用。文档分析是核心链路，默认 qwen-plus 保效果。
       default-model: ${LLM_DEFAULT_MODEL:qwen-plus}
       # 简单任务用的快模型（省成本）。
       simple-model: ${LLM_SIMPLE_MODEL:qwen-turbo}
-      # 走 simple-model 的 callName（简单任务：抽取/缺口/工具选择/追问/摘要）。
-      # 这些是结构化任务，用快模型省成本、效果不损。其余走 default-model。
+      # 走 simple-model 的 callName（简单结构化任务，用快模型省成本、效果不损）。
       simple-calls:
-        - llm.ticket-extract
-        - llm.info-gap
-        - llm.tool-select
-        - llm.follow-up
         - llm.context-summarize
-      # mappings 留空——模型路由由 default-model + simple-model + simple-calls 三项决定。
-      # 仅当某个 callName 需要单独指定模型时才在此覆盖（精确匹配优先级最高）。
-      # mappings: {}
       # 模型 → 上下文窗口（token）。供 truncate 按目标模型窗口动态截断 userContent。
       model-windows:
         qwen-turbo: 8192
         qwen-plus: 32768
         qwen-max: 32768
       default-model-window: ${DEFAULT_MODEL_WINDOW:8192}
-      # 上下文截断分段配置（ContextWindowManager 使用）
       context:
         max-chars-per-segment: ${LLM_CONTEXT_MAX_CHARS_PER_SEGMENT:4000}
         overlap-chars: ${LLM_CONTEXT_OVERLAP_CHARS:200}
         max-segments: ${LLM_CONTEXT_MAX_SEGMENTS:10}
-      # 工单级短期记忆：按 runId 隔离各工单对话历史，多轮追问复用上下文而非重跑。
-      # 关闭时退化为单轮（现状）。出问题可一键关闭回退。
+      # run 级短期记忆：按 runId 隔离对话历史（文档多轮分析复用上下文）。
       chat-memory:
         enabled: ${CHAT_MEMORY_ENABLED:true}
-        # 每个工单保留最近 N 条消息（防 context 膨胀）。
         history-size: ${CHAT_MEMORY_HISTORY_SIZE:10}
-        # 阶段 A：摘要式长上下文管理。开启时用 SummarizingChatMemoryAdvisor，
-        # 历史 token 超阈值则 LLM 摘要旧消息（保留最近 keep-recent 条原文），而非简单裁剪。
-        # 关闭 summarize 则退化为按条数裁剪（原 MessageChatMemoryAdvisor 行为）。
         summarize: ${CHAT_MEMORY_SUMMARIZE:true}
-        # 目标模型上下文窗口（token）。qwen-plus 窗口 32k，默认 28000 留 12% 安全垫。
         context-window-tokens: ${CHAT_MEMORY_CONTEXT_WINDOW_TOKENS:28000}
-        # 触发摘要的阈值比例。默认 0.65，留 35% 余量吸收 jtokkit 对 qwen 的 10-20% 误差。
         summarize-threshold-ratio: ${CHAT_MEMORY_SUMMARIZE_THRESHOLD:0.65}
-        # 摘要时保留最近多少条原文（不摘要），兼顾近期精度与历史连续性。
         keep-recent-messages: ${CHAT_MEMORY_KEEP_RECENT:6}
-  async:
-    enabled: ${OPSMIND_ASYNC_ENABLED:false}
-    topic: ${OPSMIND_RUN_TOPIC:opsmind.agent-run.execute}
-    stuck-scan-interval-ms: ${OPSMIND_STUCK_SCAN_INTERVAL_MS:300000}
-    stuck-running-timeout-minutes: ${OPSMIND_STUCK_RUNNING_TIMEOUT_MINUTES:15}
-  investigation:
-    topic: ${OPSMIND_INVESTIGATION_TOPIC:opsmind.investigation.execute}
-  input:
-    max-content-length: ${OPSMIND_MAX_CONTENT_LENGTH:8000}
-  rag:
-    rerank:
-      # 默认关闭：无 LLM_API_KEY 或不需要精排时走 NoopRerankService（保持向量召回顺序）
-      enabled: ${RERANK_ENABLED:false}
-      model: ${RERANK_MODEL:gte-rerank-v2}
-      endpoint: ${RERANK_ENDPOINT:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/}
-    fusion:
-      # 混合检索（RRF 融合向量+关键词）：默认开启，关闭时回退到纯向量检索。
-      # RRF 只依赖每路排名不依赖绝对分，绕开向量(cosine)与关键词(加权分)量纲不同的问题。
-      enabled: ${RAG_FUSION_ENABLED:true}
-      k: ${RRF_K:60}
-      topK: ${RRF_TOPK:5}
-  eval:
-    judge:
-      # LLM-as-judge 质量评测：默认关闭，开启后 EvalRunner 对根因输出打 1-5 分。
-      # 关闭时 EvalReport.qualitySummary.skipped=true，不影响现有流程断言。
-      enabled: ${EVAL_JUDGE_ENABLED:false}
-    adversarial:
-      # 红队闭环：POST /api/evals/adversarial/generate 生成对抗工单 → 跑进 Agent →
-      # LLM 裁判判定 → 把 fail 的输入沉淀进 output-path（独立于 golden 套件）。
-      # POST /api/evals/run?includeAdversarial=true 才会合并对抗 case 进主回归。
-      output-path: ${ADVERSARIAL_CASES_PATH:data/eval/adversarial-cases.json}
-      default-count: ${ADVERSARIAL_DEFAULT_COUNT:8}
-      strategies: OMIT_FIELD,CONTRADICTION,CROSS_DOMAIN,COLLOQUIAL,NON_INCIDENT,NOISE
-  resilience:
-    # call-mappings 已内置到 CallRegistry 代码（BUILTIN_DEFAULTS）：
-    # llm.*（可重试+超时+熔断）/ vector.*（可重试+熔断）/ tool.*（不重试）/ rerank.*（可重试+熔断）。
-    # 治理策略按调用类型语义决定，极少变化，无需配置。需要覆盖时在此配 call-mappings。
-    # call-mappings: {}
-  cache:
-    semantic:
-      # 语义缓存：相似 query 复用 LLM/RAG 历史结果，省 Token + 加速重复工单。
-      # 默认关闭，生产环境建议开启（特别是工单量大的场景）。
-      enabled: ${SEMANTIC_CACHE_ENABLED:false}
-      ttl-seconds: ${SEMANTIC_CACHE_TTL:3600}
-      similarity-threshold: 0.95
-      eviction-interval-ms: ${SEMANTIC_CACHE_EVICTION_MS:300000}
 
 resilience4j:
   retry:
@@ -219,27 +128,11 @@ resilience4j:
           - com.gcll.ticketagent.resilience.RetryableCallException
         ignoreExceptions:
           - com.gcll.ticketagent.resilience.NonRetryableCallException
-      vector-default:
-        maxAttempts: 2
-        waitDuration: 500ms
-        retryExceptions:
-          - com.gcll.ticketagent.resilience.RetryableCallException
-        ignoreExceptions:
-          - com.gcll.ticketagent.resilience.NonRetryableCallException
-      rerank-default:
-        maxAttempts: 2
-        waitDuration: 500ms
-        retryExceptions:
-          - com.gcll.ticketagent.resilience.RetryableCallException
-        ignoreExceptions:
-          - com.gcll.ticketagent.resilience.NonRetryableCallException
       tool-default:
         maxAttempts: 1
   timelimiter:
     instances:
-      llm-default: { timeoutDuration: 60s }
-      vector-default: { timeoutDuration: 5s }
-      rerank-default: { timeoutDuration: 5s }
+      llm-default: { timeoutDuration: 90s }
       tool-default: { timeoutDuration: 10s }
   ratelimiter:
     instances:
@@ -247,18 +140,10 @@ resilience4j:
         limitForPeriod: 10
         limitRefreshPeriod: 1s
         timeoutDuration: 5s
-      vector-default:
+      tool-default:
         limitForPeriod: 20
         limitRefreshPeriod: 1s
-        timeoutDuration: 3s
-      tool-default:
-        limitForPeriod: 5
-        limitRefreshPeriod: 1s
         timeoutDuration: 5s
-      rerank-default:
-        limitForPeriod: 10
-        limitRefreshPeriod: 1s
-        timeoutDuration: 3s
   circuitbreaker:
     instances:
       llm-default:
@@ -268,12 +153,3 @@ resilience4j:
         waitDurationInOpenState: 30s
         slidingWindowSize: 10
         minimumNumberOfCalls: 5
-      vector-default:
-        failureRateThreshold: 60
-        waitDurationInOpenState: 15s
-        slidingWindowSize: 10
-      rerank-default:
-        # rerank 失败可降级回原始向量排序，熔断打开时直接降级
-        failureRateThreshold: 60
-        waitDurationInOpenState: 15s
-        slidingWindowSize: 10

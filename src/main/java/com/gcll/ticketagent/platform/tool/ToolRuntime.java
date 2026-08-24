@@ -1,13 +1,11 @@
 package com.gcll.ticketagent.platform.tool;
 
-import com.gcll.ticketagent.eval.EvalFaultInjection;
-import com.gcll.ticketagent.extract.TicketExtractResult;
 import com.gcll.ticketagent.metrics.AgentMetrics;
 import com.gcll.ticketagent.persistence.repository.ToolExecutionLogRepository;
 import com.gcll.ticketagent.tool.ToolGateway;
+import com.gcll.ticketagent.tool.ToolInvocation;
 import com.gcll.ticketagent.tool.ToolRegistry;
 import com.gcll.ticketagent.tool.ToolResult;
-import com.gcll.ticketagent.tool.react.ToolArgMerger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -15,6 +13,11 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 工具运行时——批量工具调用的统一编排：
+ * 注册表查找 → 组装 {@link ToolInvocation} → 经 {@link ToolExecutor}（治理包裹）执行
+ * → 落 tool_execution_log 审计 + AgentMetrics 打点。
+ */
 @Component
 public class ToolRuntime {
 
@@ -22,20 +25,17 @@ public class ToolRuntime {
 
     private final ToolRegistry toolRegistry;
     private final ToolExecutor toolExecutor;
-    private final ToolArgMerger toolArgMerger;
     private final ToolExecutionLogRepository toolExecutionLogRepository;
     private final AgentMetrics agentMetrics;
 
     public ToolRuntime(
             ToolRegistry toolRegistry,
             ToolExecutor toolExecutor,
-            ToolArgMerger toolArgMerger,
             ToolExecutionLogRepository toolExecutionLogRepository,
             AgentMetrics agentMetrics
     ) {
         this.toolRegistry = toolRegistry;
         this.toolExecutor = toolExecutor;
-        this.toolArgMerger = toolArgMerger;
         this.toolExecutionLogRepository = toolExecutionLogRepository;
         this.agentMetrics = agentMetrics;
     }
@@ -47,7 +47,6 @@ public class ToolRuntime {
             return results;
         }
 
-        String sanitizedContent = EvalFaultInjection.sanitize(context.originalContent());
         for (ToolCallRequest request : requests) {
             ToolGateway tool = toolRegistry.find(request.toolName()).orElse(null);
             if (tool == null) {
@@ -55,32 +54,16 @@ public class ToolRuntime {
                 continue;
             }
 
-            ToolResult result = executeOne(context, sanitizedContent, request, tool);
+            ToolInvocation invocation = new ToolInvocation(
+                    context.runId(),
+                    request.parameters() == null ? java.util.Map.of() : request.parameters(),
+                    context.attributes()
+            );
+            ToolResult result = toolExecutor.execute(tool, invocation);
             results.add(result);
             recordResult(context, result);
         }
         return results;
-    }
-
-    private ToolResult executeOne(
-            ToolExecutionContext context,
-            String sanitizedContent,
-            ToolCallRequest request,
-            ToolGateway tool
-    ) {
-        if (EvalFaultInjection.shouldFail(context.originalContent(), tool.toolName())) {
-            log.warn("Tool [{}] failed by eval injection", tool.toolName());
-            return ToolResult.failure(
-                    tool.toolType(),
-                    tool.toolName(),
-                    sanitizedContent,
-                    "injected failure for eval",
-                    0
-            );
-        }
-
-        TicketExtractResult mergedExtract = toolArgMerger.merge(context.extract(), request.parameters());
-        return toolExecutor.execute(tool, mergedExtract, sanitizedContent, context.runId());
     }
 
     private void recordResult(ToolExecutionContext context, ToolResult result) {

@@ -17,11 +17,6 @@ public class AgentRunEntity {
     private String status;
     private String originalContent;
     private String currentSummary;
-    private String issueType;
-    private String priority;
-    private String gapAnalysisJson;
-    private String agentPlanJson;
-    private String toolSelectionJson;
     private String idempotencyKey;
     private String requestId;
     @Version
@@ -83,46 +78,6 @@ public class AgentRunEntity {
 
     public void setCurrentSummary(String currentSummary) {
         this.currentSummary = currentSummary;
-    }
-
-    public String getIssueType() {
-        return issueType;
-    }
-
-    public void setIssueType(String issueType) {
-        this.issueType = issueType;
-    }
-
-    public String getPriority() {
-        return priority;
-    }
-
-    public void setPriority(String priority) {
-        this.priority = priority;
-    }
-
-    public String getGapAnalysisJson() {
-        return gapAnalysisJson;
-    }
-
-    public void setGapAnalysisJson(String gapAnalysisJson) {
-        this.gapAnalysisJson = gapAnalysisJson;
-    }
-
-    public String getAgentPlanJson() {
-        return agentPlanJson;
-    }
-
-    public void setAgentPlanJson(String agentPlanJson) {
-        this.agentPlanJson = agentPlanJson;
-    }
-
-    public String getToolSelectionJson() {
-        return toolSelectionJson;
-    }
-
-    public void setToolSelectionJson(String toolSelectionJson) {
-        this.toolSelectionJson = toolSelectionJson;
     }
 
     public String getIdempotencyKey() {

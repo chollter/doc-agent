@@ -2,10 +2,8 @@ package com.gcll.ticketagent.domain;
 
 public enum AgentRunStatus {
     RUNNING,
-    INVESTIGATING,
-    WAIT_USER_INPUT,
+    ANALYZING,
     WAIT_HUMAN_CONFIRM,
-    FINAL,
-    FAILED,
-    ESCALATED
+    COMPLETED,
+    FAILED
 }
