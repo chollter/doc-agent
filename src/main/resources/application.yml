@@ -125,9 +125,9 @@ resilience4j:
         exponentialBackoffMultiplier: 2
         exponentialMaxWaitDuration: 8s
         retryExceptions:
-          - com.gcll.ticketagent.resilience.RetryableCallException
+          - com.gcll.docagent.resilience.RetryableCallException
         ignoreExceptions:
-          - com.gcll.ticketagent.resilience.NonRetryableCallException
+          - com.gcll.docagent.resilience.NonRetryableCallException
       tool-default:
         maxAttempts: 1
   timelimiter:

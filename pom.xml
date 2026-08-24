@@ -10,11 +10,11 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.example</groupId>
-    <artifactId>tech-support-agent</artifactId>
+    <groupId>com.gcll</groupId>
+    <artifactId>doc-agent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
-    <name>tech-support-agent</name>
-    <description>Enterprise R&amp;D/Ops ticket analysis agent with Spring AI, RAG and human-in-the-loop.</description>
+    <name>doc-agent</name>
+    <description>Document analysis agent with ReAct loop, tool governance and traceable runs.</description>
 
     <properties>
         <java.version>21</java.version>
