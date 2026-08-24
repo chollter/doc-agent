@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Component;
@@ -29,6 +31,8 @@ import org.springframework.stereotype.Component;
  * 若未传入则用配置的默认值班邮箱 {@code opsmind.notify.oncall-default-recipient}。
  */
 @Component
+@Profile("mail")
+@ConditionalOnProperty(prefix = "opsmind.notify", name = "email-enabled", havingValue = "true")
 public class NotifyOncallTool implements ToolGateway {
 
     private static final Logger log = LoggerFactory.getLogger(NotifyOncallTool.class);

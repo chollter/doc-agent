@@ -18,6 +18,7 @@
   }
 
   const submitForm = $('submitForm');
+  const summaryForm = $('summaryForm');
   const supplementSection = $('supplementSection');
   const supplementBtn = $('supplementBtn');
   const clearBtn = $('clearBtn');
@@ -347,6 +348,40 @@
     const d = document.createElement('div');
     d.textContent = String(str);
     return d.innerHTML;
+  }
+
+  async function submitSummary(e) {
+    e.preventDefault();
+    const file = $('summaryFile')?.files?.[0];
+    const result = $('summaryResult');
+    if (!file) { showToast('请选择资料文件', true); return; }
+    const button = $('summaryBtn');
+    button.disabled = true;
+    result.classList.remove('hidden');
+    result.innerHTML = '<div class="analyzing-state"><div class="analyzing-spinner"></div><p>DocumentSummary Agent 正在执行</p></div>';
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      body.append('instruction', $('summaryInstruction')?.value || '');
+      const data = await apiFetch(`${API}/summary/runs`, { method: 'POST', body });
+      result.innerHTML = renderSummaryResult(data);
+      showToast('资料总结完成 · ' + data.executionMode);
+    } catch (err) {
+      result.innerHTML = '<div class="message-box">' + esc(err.message) + '</div>';
+      showToast(err.message, true);
+    } finally { button.disabled = false; }
+  }
+
+  function renderSummaryResult(data) {
+    const list = (items) => (items || []).map((item) => '<li>' + esc(item) + '</li>').join('');
+    return '<div class="analysis-card"><div class="card-heading"><h3>总结结果</h3><span class="soft-badge">' + esc(data.executionMode) + '</span></div>' +
+      '<p class="root-cause">' + esc(data.summary) + '</p>' +
+      '<p class="section-label">关键内容</p><ul>' + list(data.keyPoints) + '</ul>' +
+      '<p class="section-label">风险</p><ul>' + list(data.risks) + '</ul>' +
+      '<p class="section-label">待办</p><ul>' + list(data.todos) + '</ul>' +
+      '<p class="section-label">引用证据</p><ul class="source-list">' + list(data.citations) + '</ul></div>' +
+      '<div class="execution-box"><div class="runtime-title">Agent 执行过程</div>' +
+      (data.steps || []).map((step) => '<div class="lane-item"><div class="lane-node">' + esc(step.name) + '</div><div class="lane-meta"><span>' + esc(step.status) + '</span><span>' + esc(step.detail) + '</span></div></div>').join('') + '</div>';
   }
 
   async function submitTicket(e) {
@@ -1232,7 +1267,8 @@
     document.querySelectorAll('.tab').forEach((tab) => {
       tab.addEventListener('click', () => activateTab(tab.dataset.tab));
     });
-    on('submitForm', 'submit', submitTicket);
+    on('summaryForm', 'submit', submitSummary);
+  on('submitForm', 'submit', submitTicket);
     on('supplementBtn', 'click', supplementMessage);
     bindTicketSamples();
     on('clearBtn', 'click', clearTicketForm);

@@ -41,13 +41,30 @@
   </section>
 
   <nav class="tabs" aria-label="工作区">
-    <button type="button" class="tab active" data-tab="tickets">工单分析</button>
-    <button type="button" class="tab" data-tab="knowledge">知识库</button>
+    <button type="button" class="tab active" data-tab="summary">资料总结</button>
+    <button type="button" class="tab" data-tab="tickets">技术支持</button>
+    <button type="button" class="tab" data-tab="knowledge">资料库</button>
     <button type="button" class="tab" data-tab="eval">评测与观测</button>
   </nav>
 
   <main class="workspace">
-    <section class="tab-page active" id="tab-tickets">
+    <section class="tab-page active" id="tab-summary">
+      <section class="panel summary-panel">
+        <div class="panel-title-row">
+          <div><span class="eyebrow">DOCUMENT SUMMARY SKILL</span><h2>把资料交给 Agent</h2></div>
+          <span class="soft-badge">PUBLIC DATA READY</span>
+        </div>
+        <p class="field-help">上传公开文档，生成摘要、关键结论、风险、待办和引用。未配置模型时仍可使用规则降级模式。</p>
+        <form id="summaryForm">
+          <div class="field-row"><label for="summaryFile">资料文件（Markdown / TXT，≤512KB）</label><input id="summaryFile" type="file" accept=".md,.txt,text/markdown,text/plain" required></div>
+          <div class="field-row"><label for="summaryInstruction">你希望重点关注什么？（可选）</label><textarea id="summaryInstruction" rows="4" placeholder="例如：重点提取架构、风险和落地待办"></textarea></div>
+          <button type="submit" class="btn btn-primary" id="summaryBtn">开始总结</button>
+        </form>
+        <div id="summaryResult" class="summary-result hidden"></div>
+      </section>
+    </section>
+
+    <section class="tab-page" id="tab-tickets">
       <aside class="ticket-queue panel">
         <div class="panel-title-row">
           <h2>工单队列</h2>

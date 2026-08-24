@@ -4,6 +4,8 @@ import com.gcll.ticketagent.execution.tool.ToolSelection;
 import com.gcll.ticketagent.extract.IssueType;
 import com.gcll.ticketagent.extract.TicketExtractResult;
 import com.gcll.ticketagent.metrics.AgentMetrics;
+import com.gcll.ticketagent.platform.tool.ToolExecutor;
+import com.gcll.ticketagent.platform.tool.ToolRuntime;
 import com.gcll.ticketagent.persistence.repository.ToolExecutionLogRepository;
 import com.gcll.ticketagent.resilience.CallMetrics;
 import com.gcll.ticketagent.resilience.CallRegistry;
@@ -65,8 +67,7 @@ class EvidenceCollectionServiceTest {
         );
 
         ToolRegistry registry = new ToolRegistry(List.of(tool1, tool2));
-        EvidenceCollectionService service = new EvidenceCollectionService(
-                registry, logRepository, plainGateway(), new ToolArgMerger(), agentMetrics);
+        EvidenceCollectionService service = service(registry);
 
         TicketExtractResult extract = sampleExtract();
         ToolSelection selection = new ToolSelection(List.of("query_logs"), java.util.Map.of(), "test", false);
@@ -89,8 +90,7 @@ class EvidenceCollectionServiceTest {
         );
 
         ToolRegistry registry = new ToolRegistry(List.of(failingTool));
-        EvidenceCollectionService service = new EvidenceCollectionService(
-                registry, logRepository, plainGateway(), new ToolArgMerger(), agentMetrics);
+        EvidenceCollectionService service = service(registry);
 
         List<ToolResult> results = service.collect(
                 "run-002",
@@ -107,8 +107,7 @@ class EvidenceCollectionServiceTest {
     @Test
     void returnsEmptyWhenNoToolsSelected() {
         ToolRegistry registry = new ToolRegistry(List.of());
-        EvidenceCollectionService service = new EvidenceCollectionService(
-                registry, logRepository, plainGateway(), new ToolArgMerger(), agentMetrics);
+        EvidenceCollectionService service = service(registry);
 
         List<ToolResult> results = service.collect(
                 "run-003",
@@ -118,6 +117,18 @@ class EvidenceCollectionServiceTest {
         );
 
         assertThat(results).isEmpty();
+    }
+
+    private EvidenceCollectionService service(ToolRegistry registry) {
+        ExternalCallGateway gateway = plainGateway();
+        ToolRuntime runtime = new ToolRuntime(
+                registry,
+                new ToolExecutor(gateway),
+                new ToolArgMerger(),
+                logRepository,
+                agentMetrics
+        );
+        return new EvidenceCollectionService(runtime);
     }
 
     private TicketExtractResult sampleExtract() {

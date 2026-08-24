@@ -50,3 +50,9 @@ data/
 
 # Claude Code personal local config (team-shared settings.json is tracked)
 .claude/settings.local.json
+
+# ZCode session files
+.zcode/
+
+# Scratch / personal scripts (CV builder etc.)
+tmp/
