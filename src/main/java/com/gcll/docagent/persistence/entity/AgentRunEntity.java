@@ -20,6 +20,7 @@ public class AgentRunEntity {
     private String currentSummary;
     private String fileName;
     private String fileType;
+    private String skill;
     private String instruction;
     private Integer sectionCount;
     private String executionMode;
@@ -94,6 +95,9 @@ public class AgentRunEntity {
 
     public String getFileType() { return fileType; }
     public void setFileType(String fileType) { this.fileType = fileType; }
+
+    public String getSkill() { return skill; }
+    public void setSkill(String skill) { this.skill = skill; }
 
     public String getInstruction() { return instruction; }
     public void setInstruction(String instruction) { this.instruction = instruction; }

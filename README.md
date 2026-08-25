@@ -58,6 +58,8 @@ flowchart LR
 | 工具治理 | 工具统一注册 ToolRegistry（READ/WRITE/DANGER 风险分级），经 ToolRuntime 执行：Resilience4j 重试/熔断/超时 + tool_execution_log 审计 |
 | 三级降级 | ReAct 失败 → 直连 LLM（单次调用，按模型窗口截断）→ 规则摘要。无 API Key 也能完整演示 |
 | 引用可溯源 | LLM 输出必须携带 `{sectionId, quote}` 引用；CITATION_VERIFY 步剔除指向不存在节的编造引用、错位引用自动重挂 |
+| 垂直 Skill | SkillDefinition 注册表：同一执行引擎承载多个技能（文档分析 / 简历审查），技能只差提示词+工具集+默认指令 |
+| 人工确认闭环（HITL） | DANGER 级 export_report 工具被 ToolConfirmGate 拦截：run 进入 WAIT_HUMAN_CONFIRM、前端弹确认卡，人工确认后才写盘；拒绝/超时自动跳过，全程在 trace 可见 |
 | 全链路 Trace | 每步（含 ReAct 每轮 LLM 响应与每次工具调用）写 agent_step 树形表 + SSE 实时推送 + OTel span（双写已实现，默认采样 0，接 Collector 可开） |
 | 多格式解析 | PDF（PDFBox，扫描件明确报错）/ DOCX（POI，标题样式分节）/ MD（标题分节）/ TXT（空行聚合），统一分节视图 |
 | 一键演示 | 默认 H2 文件库 + 内嵌前端构建产物，克隆后 `mvn spring-boot:run` 即跑（仅需 `LLM_API_KEY` 可选） |
@@ -98,12 +100,14 @@ pnpm build        # 产物直出 ../src/main/resources/static
 | GET | `/api/analysis/runs/{id}/stream` | SSE 步骤流（连接即回放已落库步骤，支持刷新） |
 | GET | `/api/analysis/runs/{id}/document` | 文档分节视图（引用定位） |
 | GET | `/api/audit/agent-runs/{id}` | 步骤树审计（parentStepId / 耗时 / 工具 / LLM） |
+| GET | `/api/human/pending` | 待人工确认动作（可按 runId 过滤） |
+| POST | `/api/human/actions/{id}/confirm`、`/reject` | 确认/拒绝 DANGER 工具操作 |
 
 ## 项目结构
 
 ```
 src/main/java/com/gcll/docagent/
-├── analysis/      # 分析编排：run 生命周期、三级降级、引用校验
+├── analysis/      # 技能注册表 + 分析编排：run 生命周期、三级降级、引用校验
 ├── parsing/       # 四格式解析器 + 统一分节视图（DocumentParser SPI）
 ├── langchain4j/   # ReAct 装配：DocumentAnalysisAssistant + 工具提供者 + 步级监听
 ├── tool/          # 工具体系：ToolGateway SPI、注册表、风险分级、DANGER 门控
@@ -120,7 +124,9 @@ sample-docs/       # 演示示例：简历 PDF / 需求 DOCX / 技术方案 MD
 ## 面试讲解要点
 
 1. **为什么用双框架（Spring AI + LangChain4j）**：流程化调用（降级路径、token 统计）走 Spring AI ChatClient 生态；ReAct 自主工具循环需要 AiService 的类型安全工具协议——同一 DashScope 模型经两种协议接入，职责分离互不干扰。
-2. **工具调用如何做治理**：LLM 只"选择"，执行统一走 ToolRuntime——注册表查找 → Resilience4j 包裹（副作用工具不重试）→ tool_execution_log 落库 → 指标打点。平台内置 READ/WRITE/DANGER 风险分级与 DANGER 人工确认门控（有单测覆盖；当前演示工具集均为 READ 级，门控暂无触发场景）。
+2. **工具调用如何做治理**：LLM 只"选择"，执行统一走 ToolRuntime——注册表查找 → Resilience4j 包裹（副作用工具不重试）→ tool_execution_log 落库 → 指标打点。READ/WRITE/DANGER 三级风险分级：DANGER 级 export_report 被 ToolConfirmGate 拦截，run 转 WAIT_HUMAN_CONFIRM，前端确认卡人工放行后才写盘（可现场演示）。
+
+6. **为什么做 Skill 抽象**：Runtime 与业务解耦的实证——文档分析和简历审查两个技能共享同一执行引擎/降级链/trace/前端，新增技能只是在 SkillRegistry 注册提示词+工具集。
 3. **降级链设计**：三级降级各对应一类故障（循环失控 / LLM 网关故障 / 无 Key），executionMode 字段让降级对用户可见、对面试官可讲。
 4. **引用防幻觉**：结构化引用 + 校验步（存在性检查 + 引文重挂），报告每条结论可点击跳回原文。
 5. **工程细节**：MyBatis-Plus 乐观锁版本号在 upsert 时的同步问题、SSE"先回放后实时"解决连接竞态、H2/PG 双兼容 schema、`system-base` prompt 双路径统一。

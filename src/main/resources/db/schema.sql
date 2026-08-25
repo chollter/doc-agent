@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS agent_run (
     last_error      TEXT,
     file_name       VARCHAR(256),
     file_type       VARCHAR(32),
+    skill           VARCHAR(64),
     instruction     TEXT,
     section_count   INT,
     execution_mode  VARCHAR(32),
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS agent_run (
 -- 老库迁移（新库建表已含这些列，ALTER 为 no-op）
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS file_name VARCHAR(256);
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS file_type VARCHAR(32);
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS skill VARCHAR(64);
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS instruction TEXT;
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS section_count INT;
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS execution_mode VARCHAR(32);

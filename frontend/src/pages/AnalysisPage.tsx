@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileUp, Loader2, Play, RotateCcw, Upload } from 'lucide-react';
+import { FileUp, Loader2, Play, RotateCcw, ShieldAlert, Upload } from 'lucide-react';
 import {
   analysisApi,
   subscribeSteps,
@@ -19,10 +19,15 @@ const EXAMPLE_INSTRUCTIONS = [
   '用三句话总结这份文档',
 ];
 
+const SKILLS = [
+  { name: 'document-analysis', label: '文档分析' },
+  { name: 'resume-review', label: '简历审查' },
+];
+
 const SAMPLE_DOCS = [
-  { file: 'resume.pdf', label: '示例简历', instruction: '提炼这份简历的亮点，并给出针对性的改进建议' },
-  { file: 'product-requirements.docx', label: '需求文档', instruction: '梳理这份需求文档的核心功能与开放风险' },
-  { file: 'tech-spec.md', label: '技术方案', instruction: '评估这份技术方案的可行性，指出主要风险与建议' },
+  { file: 'resume.pdf', label: '示例简历', skill: 'resume-review', instruction: '提炼这份简历的亮点，并给出针对性的改进建议' },
+  { file: 'product-requirements.docx', label: '需求文档', skill: 'document-analysis', instruction: '梳理这份需求文档的核心功能与开放风险' },
+  { file: 'tech-spec.md', label: '技术方案', skill: 'document-analysis', instruction: '评估这份技术方案的可行性，指出主要风险与建议' },
 ];
 
 const ACCEPT = '.pdf,.docx,.md,.txt';
@@ -32,6 +37,7 @@ type Phase = 'idle' | 'running' | 'done' | 'failed';
 export default function AnalysisPage() {
   const [file, setFile] = useState<File | null>(null);
   const [instruction, setInstruction] = useState(EXAMPLE_INSTRUCTIONS[0]);
+  const [skill, setSkill] = useState(SKILLS[0].name);
   const [dragOver, setDragOver] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +105,7 @@ export default function AnalysisPage() {
     setElapsed(0);
     startedAtRef.current = Date.now();
     try {
-      const { runId } = await analysisApi.submit(file, instruction);
+      const { runId } = await analysisApi.submit(file, instruction, skill);
       analysisApi.getDocument(runId).then(setDoc).catch(() => setDoc(null));
       closeStreamRef.current = subscribeSteps(runId, mergeStep);
       pollRef.current = window.setInterval(() => {
@@ -119,6 +125,7 @@ export default function AnalysisPage() {
       const blob = await resp.blob();
       setFile(new File([blob], sample.file, { type: blob.type }));
       setInstruction(sample.instruction);
+      setSkill(sample.skill);
     } catch (ex) {
       setError(getErrorMessage(ex));
     }
@@ -131,6 +138,21 @@ export default function AnalysisPage() {
     setDetail(null);
     setDoc(null);
     setError(null);
+  };
+
+  const decideAction = async (approve: boolean) => {
+    const action = detail?.pending?.[0];
+    if (!action) return;
+    try {
+      if (approve) {
+        await analysisApi.confirmAction(action.id);
+      } else {
+        await analysisApi.rejectAction(action.id);
+      }
+    } catch (ex) {
+      setError(getErrorMessage(ex));
+    }
+    // 状态变化由既有轮询自动拉取（工具侧放行后 run 回到 ANALYZING → COMPLETED）
   };
 
   return (
@@ -197,6 +219,26 @@ export default function AnalysisPage() {
         </div>
 
         <div>
+          <div className="mb-1.5 text-xs font-semibold text-slate-500">分析技能</div>
+          <div className="flex gap-1.5">
+            {SKILLS.map((s) => (
+              <button
+                key={s.name}
+                type="button"
+                onClick={() => setSkill(s.name)}
+                className={`rounded-full px-3 py-1.5 text-xs transition-colors ${
+                  skill === s.name
+                    ? 'bg-sky-600 font-semibold text-white'
+                    : 'border border-slate-200 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
           <div className="mb-1.5 text-xs font-semibold text-slate-500">分析要求</div>
           <textarea
             value={instruction}
@@ -243,6 +285,35 @@ export default function AnalysisPage() {
 
         {error && (
           <div className="rounded-xl bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-600">{error}</div>
+        )}
+
+        {detail?.status === 'WAIT_HUMAN_CONFIRM' && (detail.pending?.length ?? 0) > 0 && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+            <div className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-amber-700">
+              <ShieldAlert size={15} />
+              高危操作待人工确认（DANGER 工具已被门控拦截）
+            </div>
+            <p className="mb-3 max-h-36 overflow-y-auto whitespace-pre-wrap rounded-lg bg-white/70 p-2.5 text-xs leading-5 text-slate-600">
+              {(detail.pending ?? [])[0].payload.slice(0, 500)}
+              {(detail.pending ?? [])[0].payload.length > 500 ? '…' : ''}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => decideAction(true)}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
+              >
+                确认执行
+              </button>
+              <button
+                type="button"
+                onClick={() => decideAction(false)}
+                className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-100"
+              >
+                拒绝
+              </button>
+            </div>
+          </div>
         )}
       </div>
 

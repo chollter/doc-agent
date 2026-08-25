@@ -26,6 +26,7 @@ public final class DomainEntityConverter {
         entity.setCurrentSummary(run.getCurrentSummary());
         entity.setFileName(run.getFileName());
         entity.setFileType(run.getFileType());
+        entity.setSkill(run.getSkill());
         entity.setInstruction(run.getInstruction());
         entity.setSectionCount(run.getSectionCount());
         entity.setExecutionMode(run.getExecutionMode());
@@ -52,6 +53,7 @@ public final class DomainEntityConverter {
         run.setCurrentSummary(entity.getCurrentSummary());
         run.setFileName(entity.getFileName());
         run.setFileType(entity.getFileType());
+        run.setSkill(entity.getSkill());
         run.setInstruction(entity.getInstruction());
         run.setSectionCount(entity.getSectionCount());
         run.setExecutionMode(entity.getExecutionMode());

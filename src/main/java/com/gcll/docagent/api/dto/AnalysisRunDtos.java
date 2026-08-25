@@ -21,6 +21,7 @@ public final class AnalysisRunDtos {
             String runId,
             String fileName,
             String fileType,
+            String skill,
             String instruction,
             String status,
             String executionMode,
@@ -35,6 +36,7 @@ public final class AnalysisRunDtos {
             String runId,
             String fileName,
             String fileType,
+            String skill,
             String instruction,
             String status,
             String executionMode,
@@ -42,6 +44,7 @@ public final class AnalysisRunDtos {
             String summary,
             JsonNode result,
             String lastError,
+            java.util.List<HumanActionDto> pending,
             Instant createdAt,
             Instant finishedAt
     ) {

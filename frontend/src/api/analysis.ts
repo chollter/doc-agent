@@ -25,6 +25,7 @@ export interface RunSummary {
   runId: string;
   fileName: string;
   fileType: string;
+  skill: string | null;
   instruction: string;
   status: string;
   executionMode: string | null;
@@ -33,10 +34,21 @@ export interface RunSummary {
   finishedAt: string | null;
 }
 
+export interface HumanActionDto {
+  id: string;
+  runId: string;
+  actionType: string;
+  status: string;
+  payload: string;
+  reason: string;
+  createdAt: string;
+}
+
 export interface RunDetail extends RunSummary {
   summary: string | null;
   result: AnalysisResult | null;
   lastError: string | null;
+  pending: HumanActionDto[] | null;
 }
 
 export interface DocSection {
@@ -80,11 +92,20 @@ export interface StepEvent {
 }
 
 export const analysisApi = {
-  submit(file: File, instruction: string): Promise<RunStart> {
+  submit(file: File, instruction: string, skill?: string): Promise<RunStart> {
     const form = new FormData();
     form.append('file', file);
     form.append('instruction', instruction);
+    if (skill) form.append('skill', skill);
     return request.upload('/api/analysis/runs', form);
+  },
+
+  confirmAction(id: string): Promise<void> {
+    return request.post(`/api/human/actions/${id}/confirm`);
+  },
+
+  rejectAction(id: string): Promise<void> {
+    return request.post(`/api/human/actions/${id}/reject`);
   },
 
   getRun(runId: string): Promise<RunDetail> {

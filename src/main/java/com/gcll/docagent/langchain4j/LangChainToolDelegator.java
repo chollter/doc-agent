@@ -4,61 +4,35 @@ import com.gcll.docagent.observability.trace.TraceRecorder;
 import com.gcll.docagent.platform.tool.ToolCallRequest;
 import com.gcll.docagent.platform.tool.ToolExecutionContext;
 import com.gcll.docagent.platform.tool.ToolRuntime;
+import com.gcll.docagent.tool.ToolExecutionHolder;
 import com.gcll.docagent.tool.ToolResult;
-import dev.langchain4j.agent.tool.P;
-import dev.langchain4j.agent.tool.Tool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * LangChain4j @Tool 方法集——把文档分析工具暴露给 ReAct 循环。
- * <p>每次调用经 {@link ToolRuntime} 统一执行（治理包裹 + tool_execution_log 落库 + 指标），
- * 并在其下记录步级 Trace（REACT_TOOL_CALL: 工具名 + 参数 + 返回摘要），
- * 与 {@code LangChain4jConfig} 的两个 Listener 互补形成完整审计。
+ * LangChain4j @Tool 方法的共享委派器——所有单工具 Provider 都经此执行：
+ * ToolRuntime 统一治理（Resilience4j 包裹 + tool_execution_log 落库 + 指标）
+ * 并记录步级 Trace（REACT_TOOL_CALL: 工具名 + 参数 + 返回摘要）。
  */
 @Component
-public class AnalysisToolProvider {
+public class LangChainToolDelegator {
 
-    private static final Logger log = LoggerFactory.getLogger(AnalysisToolProvider.class);
+    private static final Logger log = LoggerFactory.getLogger(LangChainToolDelegator.class);
 
     private final ToolRuntime toolRuntime;
 
-    public AnalysisToolProvider(ToolRuntime toolRuntime) {
+    public LangChainToolDelegator(ToolRuntime toolRuntime) {
         this.toolRuntime = toolRuntime;
     }
 
-    @Tool("获取文档大纲：每节一行的结构清单（节ID | 标题 | 字数 | 页码）。分析开始时先调用它了解文档全貌，再按需阅读具体节。")
-    public String getDocumentOutline() {
-        return delegate("get_document_outline", Map.of());
-    }
-
-    @Tool("按节ID阅读文档正文。sectionId 来自 get_document_outline 返回的节ID（如 sec-1）。")
-    public String readSection(
-            @P("节ID，如 sec-1") String sectionId
-    ) {
-        Map<String, String> params = new LinkedHashMap<>();
-        params.put("sectionId", sectionId);
-        return delegate("read_section", params);
-    }
-
-    @Tool("在全文中按关键词检索，返回命中节ID和上下文片段。用于快速定位与要求相关的内容。")
-    public String searchDocument(
-            @P("检索关键词") String keyword
-    ) {
-        Map<String, String> params = new LinkedHashMap<>();
-        params.put("keyword", keyword);
-        return delegate("search_document", params);
-    }
-
-    private String delegate(String toolName, Map<String, String> params) {
+    public String delegate(String toolName, Map<String, String> params) {
         TraceRecorder tracer = ReActContextHolder.getTracer();
         String parentStepId = ReActContextHolder.getParentStepId();
-        String runId = com.gcll.docagent.tool.ToolExecutionHolder.getRunId();
+        String runId = ToolExecutionHolder.getRunId();
 
         String toolStepId = null;
         if (tracer != null && parentStepId != null) {

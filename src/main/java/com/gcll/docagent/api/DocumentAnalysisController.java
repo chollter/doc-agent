@@ -5,11 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gcll.docagent.analysis.DocumentStore;
 import com.gcll.docagent.analysis.DocumentAnalysisService;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Detail;
+import com.gcll.docagent.api.dto.HumanActionDto;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.DocumentView;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Start;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Summary;
 import com.gcll.docagent.domain.AgentRun;
+import com.gcll.docagent.human.PendingAction;
 import com.gcll.docagent.persistence.repository.AgentRunRepository;
+import com.gcll.docagent.persistence.repository.PendingActionRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,15 +37,18 @@ public class DocumentAnalysisController {
     private final AgentRunRepository agentRunRepository;
     private final DocumentStore documentStore;
     private final ObjectMapper objectMapper;
+    private final PendingActionRepository pendingActionRepository;
 
     public DocumentAnalysisController(DocumentAnalysisService analysisService,
                                       AgentRunRepository agentRunRepository,
                                       DocumentStore documentStore,
-                                      ObjectMapper objectMapper) {
+                                      ObjectMapper objectMapper,
+                                      PendingActionRepository pendingActionRepository) {
         this.analysisService = analysisService;
         this.agentRunRepository = agentRunRepository;
         this.documentStore = documentStore;
         this.objectMapper = objectMapper;
+        this.pendingActionRepository = pendingActionRepository;
     }
 
     /** 提交分析：同步解析建档（解析错误直接 400），异步执行（SSE/轮询获取进度）。 */
@@ -50,8 +56,9 @@ public class DocumentAnalysisController {
     @ResponseStatus(HttpStatus.ACCEPTED)
     public Start submit(
             @RequestPart("file") MultipartFile file,
-            @RequestParam(required = false) String instruction) {
-        AgentRun run = analysisService.start(file, instruction);
+            @RequestParam(required = false) String instruction,
+            @RequestParam(required = false) String skill) {
+        AgentRun run = analysisService.start(file, instruction, skill);
         return new Start(run.getId(), run.getStatus().name());
     }
 
@@ -62,7 +69,7 @@ public class DocumentAnalysisController {
                 .sorted(Comparator.comparing(AgentRun::getCreatedAt).reversed())
                 .limit(50)
                 .map(run -> new Summary(
-                        run.getId(), run.getFileName(), run.getFileType(), run.getInstruction(),
+                        run.getId(), run.getFileName(), run.getFileType(), run.getSkill(), run.getInstruction(),
                         run.getStatus().name(), run.getExecutionMode(), run.getSectionCount(),
                         run.getCreatedAt(), run.getFinishedAt()))
                 .toList();
@@ -80,10 +87,15 @@ public class DocumentAnalysisController {
                 // 结果 JSON 损坏时返回 null，前端按无结果渲染
             }
         }
+        List<HumanActionDto> pending = pendingActionRepository.findPending().stream()
+                .filter(a -> a.getRunId().equals(runId))
+                .map(a -> new HumanActionDto(a.getId(), a.getRunId(), a.getActionType().name(),
+                        a.getStatus().name(), a.getPayload(), a.getReason(), a.getCreatedAt()))
+                .toList();
         return new Detail(
-                run.getId(), run.getFileName(), run.getFileType(), run.getInstruction(),
+                run.getId(), run.getFileName(), run.getFileType(), run.getSkill(), run.getInstruction(),
                 run.getStatus().name(), run.getExecutionMode(), run.getSectionCount(),
-                run.getCurrentSummary(), result, run.getLastError(),
+                run.getCurrentSummary(), result, run.getLastError(), pending,
                 run.getCreatedAt(), run.getFinishedAt());
     }
 

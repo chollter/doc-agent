@@ -6,8 +6,9 @@ import com.gcll.docagent.api.BusinessException;
 import com.gcll.docagent.api.ErrorCode;
 import com.gcll.docagent.domain.AgentRun;
 import com.gcll.docagent.domain.AgentRunStatus;
-import com.gcll.docagent.langchain4j.DocumentAnalysisAssistant;
 import com.gcll.docagent.langchain4j.ReActContextHolder;
+import com.gcll.docagent.langchain4j.SkillAssistant;
+import com.gcll.docagent.langchain4j.SkillAssistantFactory;
 import com.gcll.docagent.llm.LlmGateway;
 import com.gcll.docagent.observability.trace.TraceRecorder;
 import com.gcll.docagent.observability.trace.TraceRecorderFactory;
@@ -22,12 +23,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -59,9 +58,9 @@ public class DocumentAnalysisService {
     private final AgentRunRepository agentRunRepository;
     private final ObjectMapper objectMapper;
     private final ObjectProvider<LlmGateway> llmGatewayProvider;
-    private final ObjectProvider<DocumentAnalysisAssistant> assistantProvider;
+    private final SkillRegistry skillRegistry;
+    private final SkillAssistantFactory assistantFactory;
     private final boolean reactEnabled;
-    private final String reactSystemPrompt;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(3, r -> {
         Thread t = new Thread(r, "doc-analysis");
@@ -76,7 +75,8 @@ public class DocumentAnalysisService {
             AgentRunRepository agentRunRepository,
             ObjectMapper objectMapper,
             ObjectProvider<LlmGateway> llmGatewayProvider,
-            ObjectProvider<DocumentAnalysisAssistant> assistantProvider,
+            SkillRegistry skillRegistry,
+            SkillAssistantFactory assistantFactory,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled) {
         this.parsingService = parsingService;
         this.documentStore = documentStore;
@@ -84,13 +84,16 @@ public class DocumentAnalysisService {
         this.agentRunRepository = agentRunRepository;
         this.objectMapper = objectMapper;
         this.llmGatewayProvider = llmGatewayProvider;
-        this.assistantProvider = assistantProvider;
+        this.skillRegistry = skillRegistry;
+        this.assistantFactory = assistantFactory;
         this.reactEnabled = reactEnabled;
-        this.reactSystemPrompt = loadPrompt("document-analysis-react.txt");
     }
 
     /** 提交分析：同步解析 + 建档，异步执行。返回 runId 供轮询/SSE 订阅。 */
-    public AgentRun start(MultipartFile file, String instruction) {
+    public AgentRun start(MultipartFile file, String instruction, String skillName) {
+        SkillDefinition skill = skillRegistry.find(skillName)
+                .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST,
+                        "未知技能: " + skillName + "（可用: " + skillRegistry.list().stream().map(SkillDefinition::name).toList() + ")"));
         String fileName = file.getOriginalFilename();
         ParsedDocument doc;
         try {
@@ -107,20 +110,22 @@ public class DocumentAnalysisService {
                 doc.outline());
         run.setFileName(fileName);
         run.setFileType(doc.fileType());
-        run.setInstruction(instruction == null || instruction.isBlank() ? "提炼核心内容、风险与建议" : instruction.trim());
+        run.setSkill(skill.name());
+        run.setInstruction(instruction == null || instruction.isBlank()
+                ? skill.defaultInstruction() : instruction.trim());
         run.setSectionCount(doc.sections().size());
         agentRunRepository.save(run);
         documentStore.put(run.getId(), doc);
 
-        executor.submit(() -> executeRun(run.getId(), doc));
-        log.info("Analysis run submitted, runId={}, file={}, sections={}",
-                run.getId(), fileName, doc.sections().size());
+        executor.submit(() -> executeRun(run.getId(), doc, skill));
+        log.info("Analysis run submitted, runId={}, skill={}, file={}, sections={}",
+                run.getId(), skill.name(), fileName, doc.sections().size());
         return run;
     }
 
     // --- 异步执行 ---
 
-    private void executeRun(String runId, ParsedDocument doc) {
+    private void executeRun(String runId, ParsedDocument doc, SkillDefinition skill) {
         AgentRun run = agentRunRepository.findById(runId).orElse(null);
         if (run == null) {
             log.error("Run disappeared before execution, runId={}", runId);
@@ -138,7 +143,7 @@ public class DocumentAnalysisService {
 
             // ReAct 阶段
             if (reactEnabled) {
-                AnalysisResult r = runReact(runId, run, doc, tracer);
+                AnalysisResult r = runReact(runId, run, doc, skill, tracer);
                 if (r != null) {
                     result = r;
                     mode = "REACT";
@@ -146,7 +151,7 @@ public class DocumentAnalysisService {
             }
             // 降级 1：直连 LLM（单次调用，全文进上下文）
             if (result == null) {
-                AnalysisResult r = runDirectLlm(runId, run, doc, tracer);
+                AnalysisResult r = runDirectLlm(runId, run, doc, skill, tracer);
                 if (r != null) {
                     result = r;
                     mode = "LLM";
@@ -189,17 +194,14 @@ public class DocumentAnalysisService {
         tracer.end(step, "sections=" + doc.sections().size() + ", chars=" + doc.totalChars(), null);
     }
 
-    /** ReAct 循环：LLM 通过 get_document_outline / read_section / search_document 自主阅读。 */
-    private AnalysisResult runReact(String runId, AgentRun run, ParsedDocument doc, TraceRecorder tracer) {
-        DocumentAnalysisAssistant assistant = assistantProvider.getIfAvailable();
-        if (assistant == null) {
-            return null;
-        }
+    /** ReAct 循环：LLM 通过技能声明的工具集自主阅读与分析。 */
+    private AnalysisResult runReact(String runId, AgentRun run, ParsedDocument doc, SkillDefinition skill, TraceRecorder tracer) {
+        SkillAssistant assistant = assistantFactory.assistantFor(skill);
         String stepId = tracer.begin("REACT_ANALYZE", null);
         tracer.recordMeta(stepId, true, "LangChain4j");
         try {
             ToolExecutionHolder.setRunId(runId);
-            ReActContextHolder.set(reactSystemPrompt, tracer, stepId);
+            ReActContextHolder.set(skill.reactSystemPrompt(), tracer, stepId);
             String userMessage = "用户要求：" + run.getInstruction() + "\n\n文档大纲：\n" + doc.outline();
             String answer = assistant.analyze(userMessage);
             AnalysisResult result = parseResult(answer);
@@ -216,7 +218,7 @@ public class DocumentAnalysisService {
     }
 
     /** 降级 1：单次 LLM 调用，全文（按模型窗口截断）+ 要求进上下文。 */
-    private AnalysisResult runDirectLlm(String runId, AgentRun run, ParsedDocument doc, TraceRecorder tracer) {
+    private AnalysisResult runDirectLlm(String runId, AgentRun run, ParsedDocument doc, SkillDefinition skill, TraceRecorder tracer) {
         LlmGateway llmGateway = llmGatewayProvider.getIfAvailable();
         if (llmGateway == null) {
             return null;
@@ -227,7 +229,7 @@ public class DocumentAnalysisService {
             String userContent = "用户要求：" + run.getInstruction()
                     + "\n\n文档内容（[节ID] 标记了各节，引用时使用节ID）：\n" + renderWithSectionIds(doc);
             LlmResponse response = llmGateway.invoke(
-                    "llm.document-analysis", "document-analysis.txt", userContent, runId);
+                    "llm." + skill.name(), skill.directPromptFile(), userContent, runId);
             AnalysisResult result = parseResult(response.content());
             tracer.end(stepId, "direct llm completed", null);
             return result;
@@ -365,14 +367,6 @@ public class DocumentAnalysisService {
               .append(s.text()).append("\n\n");
         }
         return sb.toString().trim();
-    }
-
-    private static String loadPrompt(String file) {
-        try {
-            return new ClassPathResource("prompts/" + file).getContentAsString(StandardCharsets.UTF_8);
-        } catch (IOException ex) {
-            throw new IllegalStateException("Prompt file missing: " + file, ex);
-        }
     }
 
     @PreDestroy

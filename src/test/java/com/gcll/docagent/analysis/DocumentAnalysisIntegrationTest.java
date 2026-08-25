@@ -78,6 +78,7 @@ class DocumentAnalysisIntegrationTest {
                 .andReturn();
         var node = objectMapper.readTree(detail.getResponse().getContentAsString(StandardCharsets.UTF_8));
         assertThat(node.get("executionMode").asText()).isEqualTo("LLM");
+        assertThat(node.get("skill").asText()).isEqualTo("document-analysis");
         assertThat(node.get("summary").asText()).contains("ReAct");
         // 编造引用（sec-99）被 CITATION_VERIFY 剔除，真实引用保留
         assertThat(node.get("result").get("citations").size()).isEqualTo(1);

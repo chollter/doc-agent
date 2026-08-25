@@ -4,6 +4,11 @@ import { analysisApi, getErrorMessage, type AuditStep, type RunDetail, type RunS
 import ReportCard from '../components/ReportCard';
 import { durationSeconds, formatTime } from '../utils/format';
 
+const SKILL_LABEL: Record<string, string> = {
+  'document-analysis': '文档分析',
+  'resume-review': '简历审查',
+};
+
 const STATUS_STYLE: Record<string, string> = {
   COMPLETED: 'bg-emerald-100 text-emerald-700',
   ANALYZING: 'bg-blue-100 text-blue-700',
@@ -101,6 +106,11 @@ export default function HistoryPage() {
               >
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-slate-800">{run.fileName ?? '未知文件'}</span>
+                  {run.skill && (
+                    <span className="shrink-0 rounded-full bg-sky-50 px-2 py-0.5 text-xs text-sky-600">
+                      {SKILL_LABEL[run.skill] ?? run.skill}
+                    </span>
+                  )}
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[run.status] ?? 'bg-slate-100 text-slate-500'}`}>
                     {run.status}
                   </span>
