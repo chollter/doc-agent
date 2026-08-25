@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 @TableName("agent_run")
@@ -17,6 +18,14 @@ public class AgentRunEntity {
     private String status;
     private String originalContent;
     private String currentSummary;
+    private String fileName;
+    private String fileType;
+    private String instruction;
+    private Integer sectionCount;
+    private String executionMode;
+    private String resultJson;
+    private Instant startedAt;
+    private Instant finishedAt;
     private String idempotencyKey;
     private String requestId;
     @Version
@@ -79,6 +88,30 @@ public class AgentRunEntity {
     public void setCurrentSummary(String currentSummary) {
         this.currentSummary = currentSummary;
     }
+
+    public String getFileName() { return fileName; }
+    public void setFileName(String fileName) { this.fileName = fileName; }
+
+    public String getFileType() { return fileType; }
+    public void setFileType(String fileType) { this.fileType = fileType; }
+
+    public String getInstruction() { return instruction; }
+    public void setInstruction(String instruction) { this.instruction = instruction; }
+
+    public Integer getSectionCount() { return sectionCount; }
+    public void setSectionCount(Integer sectionCount) { this.sectionCount = sectionCount; }
+
+    public String getExecutionMode() { return executionMode; }
+    public void setExecutionMode(String executionMode) { this.executionMode = executionMode; }
+
+    public String getResultJson() { return resultJson; }
+    public void setResultJson(String resultJson) { this.resultJson = resultJson; }
+
+    public Instant getStartedAt() { return startedAt; }
+    public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }
+
+    public Instant getFinishedAt() { return finishedAt; }
+    public void setFinishedAt(Instant finishedAt) { this.finishedAt = finishedAt; }
 
     public String getIdempotencyKey() {
         return idempotencyKey;

@@ -9,6 +9,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * Agent 步骤事件发布器（SSE）。按 runId 维护订阅者列表，
+ * TraceRecorder 每次 begin/end 步骤时推送事件。
+ * <p>前端按 stepId 更新同一步骤的状态（RUNNING → SUCCESS/FAILED）。
+ */
 @Component
 public class AgentStepEventPublisher {
 
@@ -20,7 +25,7 @@ public class AgentStepEventPublisher {
         emitter.onTimeout(() -> remove(runId, emitter));
     }
 
-    public void publish(String runId, String stepName, String status, String message) {
+    public void publish(String runId, String stepId, String stepName, String status, String message) {
         List<SseEmitter> runEmitters = emitters.get(runId);
         if (runEmitters == null) {
             return;
@@ -31,12 +36,13 @@ public class AgentStepEventPublisher {
                         .name("step")
                         .data(Map.of(
                                 "runId", runId,
+                                "stepId", stepId == null ? "" : stepId,
                                 "stepName", stepName,
                                 "status", status,
                                 "message", message == null ? "" : message,
                                 "timestamp", System.currentTimeMillis()
                         )));
-            } catch (IOException ex) {
+            } catch (IOException | IllegalStateException ex) {
                 remove(runId, emitter);
             }
         }

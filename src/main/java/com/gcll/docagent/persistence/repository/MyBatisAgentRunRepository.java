@@ -34,7 +34,13 @@ public class MyBatisAgentRunRepository implements AgentRunRepository {
         if (existing == null) {
             agentRunMapper.insert(entity);
         } else {
+            // 乐观锁：领域对象持有的是旧版本号，先取库中当前值再更新；
+            // updateById 成功后 MP 会把递增的版本写回 entity，同步回领域对象供下次 save 使用
+            entity.setVersion(existing.getVersion());
             agentRunMapper.updateById(entity);
+        }
+        if (entity.getVersion() != null) {
+            run.setVersion(entity.getVersion());
         }
         return run;
     }

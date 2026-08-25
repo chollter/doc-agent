@@ -6,16 +6,28 @@ export interface SummaryStep {
   detail: string;
 }
 
+export interface TaskSection {
+  title: string;
+  purpose: string;
+  findings: string[];
+  citations: string[];
+  uncertainties: string[];
+}
+
 export interface DocumentSummaryReport {
   runId: string;
   skill: string;
   status: string;
   executionMode: 'LLM' | 'FALLBACK' | string;
+  taskType: string;
+  goal: string;
+  dimensions: string[];
   summary: string;
   keyPoints: string[];
   risks: string[];
   todos: string[];
   citations: string[];
+  sections: TaskSection[];
   steps: SummaryStep[];
 }
 

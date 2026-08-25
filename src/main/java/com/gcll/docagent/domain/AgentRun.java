@@ -16,6 +16,14 @@ public class AgentRun {
     private String originalContent;
     private String currentSummary;
     private String lastError;
+    private String fileName;
+    private String fileType;
+    private String instruction;
+    private Integer sectionCount;
+    private String executionMode;
+    private String resultJson;
+    private final Instant startedAt;
+    private Instant finishedAt;
     private String idempotencyKey;
     private String requestId;
     private long version;
@@ -30,6 +38,7 @@ public class AgentRun {
         this.userId = userId;
         this.originalContent = originalContent;
         this.status = AgentRunStatus.RUNNING;
+        this.startedAt = Instant.now();
         this.createdAt = Instant.now();
         this.updatedAt = this.createdAt;
     }
@@ -62,6 +71,28 @@ public class AgentRun {
         this.lastError = lastError;
         this.updatedAt = Instant.now();
     }
+
+    public String getFileName() { return fileName; }
+    public void setFileName(String fileName) { this.fileName = fileName; }
+
+    public String getFileType() { return fileType; }
+    public void setFileType(String fileType) { this.fileType = fileType; }
+
+    public String getInstruction() { return instruction; }
+    public void setInstruction(String instruction) { this.instruction = instruction; }
+
+    public Integer getSectionCount() { return sectionCount; }
+    public void setSectionCount(Integer sectionCount) { this.sectionCount = sectionCount; }
+
+    public String getExecutionMode() { return executionMode; }
+    public void setExecutionMode(String executionMode) { this.executionMode = executionMode; }
+
+    public String getResultJson() { return resultJson; }
+    public void setResultJson(String resultJson) { this.resultJson = resultJson; }
+
+    public Instant getStartedAt() { return startedAt; }
+    public Instant getFinishedAt() { return finishedAt; }
+    public void setFinishedAt(Instant finishedAt) { this.finishedAt = finishedAt; }
 
     public String getIdempotencyKey() { return idempotencyKey; }
     public void setIdempotencyKey(String idempotencyKey) {

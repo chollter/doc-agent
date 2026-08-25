@@ -21,7 +21,12 @@ public class MyBatisAgentStepRepository implements AgentStepRepository {
     @Override
     public void save(AgentStep step) {
         AgentStepEntity entity = DomainEntityConverter.toEntity(step);
-        agentStepMapper.insert(entity);
+        // begin/recordMeta/end 会对同一步骤多次 save，按主键 upsert
+        if (agentStepMapper.selectById(entity.getId()) == null) {
+            agentStepMapper.insert(entity);
+        } else {
+            agentStepMapper.updateById(entity);
+        }
     }
 
     @Override

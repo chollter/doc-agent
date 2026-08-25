@@ -41,6 +41,7 @@ public class AuditController {
     private AgentStepAuditDto toDto(AgentStep step) {
         return new AgentStepAuditDto(
                 step.getId(),
+                step.getParentStepId(),
                 step.getStepName(),
                 step.getStatus(),
                 step.getInputSnapshot(),

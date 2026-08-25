@@ -11,11 +11,25 @@ CREATE TABLE IF NOT EXISTS agent_run (
     original_content TEXT,
     current_summary TEXT,
     last_error      TEXT,
+    file_name       VARCHAR(256),
+    file_type       VARCHAR(32),
+    instruction     TEXT,
+    section_count   INT,
+    execution_mode  VARCHAR(32),
+    result_json     TEXT,
     started_at      TIMESTAMP,
     finished_at     TIMESTAMP,
     created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 老库迁移（新库建表已含这些列，ALTER 为 no-op）
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS file_name VARCHAR(256);
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS file_type VARCHAR(32);
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS instruction TEXT;
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS section_count INT;
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS execution_mode VARCHAR(32);
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS result_json TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_agent_run_session ON agent_run (session_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uk_agent_run_idempotency ON agent_run (idempotency_key);

@@ -121,7 +121,7 @@ public class TraceRecorder {
             log.debug("OTel span creation failed for step={}, ignoring: {}", stepName, ex.getMessage());
         }
 
-        eventPublisher.publish(run.getId(), stepName, "RUNNING", null);
+        eventPublisher.publish(run.getId(), stepId, stepName, "RUNNING", null);
         return stepId;
     }
 
@@ -167,7 +167,7 @@ public class TraceRecorder {
             }
         }
 
-        eventPublisher.publish(run.getId(), step.getStepName(), step.getStatus(), outputSnapshot);
+        eventPublisher.publish(run.getId(), stepId, step.getStepName(), step.getStatus(), outputSnapshot);
     }
 
     /**

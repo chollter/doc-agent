@@ -94,13 +94,14 @@ export const request = {
   /**
    * 文件上传
    */
-  upload<T>(url: string, formData: FormData, config?: AxiosRequestConfig): Promise<T> {
-    return instance.post(url, formData, {
+  async upload<T>(url: string, formData: FormData, config?: AxiosRequestConfig): Promise<T> {
+    const res = await instance.post(url, formData, {
       timeout: 120000,
       // 不手动设置 multipart Content-Type，让浏览器/Axios 自动补 boundary。
       // 手动写成 multipart/form-data 可能导致 Spring 无法解析上传 part。
       ...config,
-    }).then(res => res.data);
+    });
+    return res.data;
   },
 
   /**

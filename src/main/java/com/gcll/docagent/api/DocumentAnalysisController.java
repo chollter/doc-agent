@@ -1,0 +1,109 @@
+package com.gcll.docagent.api;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gcll.docagent.analysis.DocumentStore;
+import com.gcll.docagent.analysis.DocumentAnalysisService;
+import com.gcll.docagent.api.dto.AnalysisRunDtos.Detail;
+import com.gcll.docagent.api.dto.AnalysisRunDtos.DocumentView;
+import com.gcll.docagent.api.dto.AnalysisRunDtos.Start;
+import com.gcll.docagent.api.dto.AnalysisRunDtos.Summary;
+import com.gcll.docagent.domain.AgentRun;
+import com.gcll.docagent.persistence.repository.AgentRunRepository;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.util.Comparator;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/analysis")
+public class DocumentAnalysisController {
+
+    private final DocumentAnalysisService analysisService;
+    private final AgentRunRepository agentRunRepository;
+    private final DocumentStore documentStore;
+    private final ObjectMapper objectMapper;
+
+    public DocumentAnalysisController(DocumentAnalysisService analysisService,
+                                      AgentRunRepository agentRunRepository,
+                                      DocumentStore documentStore,
+                                      ObjectMapper objectMapper) {
+        this.analysisService = analysisService;
+        this.agentRunRepository = agentRunRepository;
+        this.documentStore = documentStore;
+        this.objectMapper = objectMapper;
+    }
+
+    /** 提交分析：同步解析建档（解析错误直接 400），异步执行（SSE/轮询获取进度）。 */
+    @PostMapping(path = "/runs", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public Start submit(
+            @RequestPart("file") MultipartFile file,
+            @RequestParam(required = false) String instruction) {
+        AgentRun run = analysisService.start(file, instruction);
+        return new Start(run.getId(), run.getStatus().name());
+    }
+
+    /** 历史列表（新→旧）。 */
+    @GetMapping("/runs")
+    public List<Summary> listRuns() {
+        return agentRunRepository.findAll().stream()
+                .sorted(Comparator.comparing(AgentRun::getCreatedAt).reversed())
+                .limit(50)
+                .map(run -> new Summary(
+                        run.getId(), run.getFileName(), run.getFileType(), run.getInstruction(),
+                        run.getStatus().name(), run.getExecutionMode(), run.getSectionCount(),
+                        run.getCreatedAt(), run.getFinishedAt()))
+                .toList();
+    }
+
+    /** run 详情：状态 + 结构化结果。 */
+    @GetMapping("/runs/{runId}")
+    public Detail getRun(@PathVariable String runId) {
+        AgentRun run = requireRun(runId);
+        JsonNode result = null;
+        if (run.getResultJson() != null) {
+            try {
+                result = objectMapper.readTree(run.getResultJson());
+            } catch (IOException ignored) {
+                // 结果 JSON 损坏时返回 null，前端按无结果渲染
+            }
+        }
+        return new Detail(
+                run.getId(), run.getFileName(), run.getFileType(), run.getInstruction(),
+                run.getStatus().name(), run.getExecutionMode(), run.getSectionCount(),
+                run.getCurrentSummary(), result, run.getLastError(),
+                run.getCreatedAt(), run.getFinishedAt());
+    }
+
+    /** 文档分节视图：右侧文档面板渲染 + 引用点击定位。缓存过期后返回 404（历史 run 的正文不再保留）。 */
+    @GetMapping("/runs/{runId}/document")
+    public DocumentView getDocument(@PathVariable String runId) {
+        requireRun(runId);
+        return documentStore.get(runId)
+                .map(doc -> new DocumentView(runId, doc.fileName(), doc.fileType(),
+                        doc.sections().size(),
+                        doc.sections().stream()
+                                .map(s -> new DocumentView.SectionDto(
+                                        s.id(), s.heading(), s.page(), s.charCount(), s.text()))
+                                .toList()))
+                .orElseThrow(() -> new BusinessException(ErrorCode.AGENT_RUN_NOT_FOUND,
+                        "文档缓存已过期（服务重启或超过容量），仅保留该 run 的大纲与结果"));
+    }
+
+    private AgentRun requireRun(String runId) {
+        return agentRunRepository.findById(runId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.AGENT_RUN_NOT_FOUND, "run 不存在: " + runId));
+    }
+}

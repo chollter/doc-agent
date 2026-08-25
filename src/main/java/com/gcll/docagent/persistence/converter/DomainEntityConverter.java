@@ -24,6 +24,14 @@ public final class DomainEntityConverter {
         entity.setStatus(run.getStatus().name());
         entity.setOriginalContent(run.getOriginalContent());
         entity.setCurrentSummary(run.getCurrentSummary());
+        entity.setFileName(run.getFileName());
+        entity.setFileType(run.getFileType());
+        entity.setInstruction(run.getInstruction());
+        entity.setSectionCount(run.getSectionCount());
+        entity.setExecutionMode(run.getExecutionMode());
+        entity.setResultJson(run.getResultJson());
+        entity.setStartedAt(run.getStartedAt());
+        entity.setFinishedAt(run.getFinishedAt());
         entity.setIdempotencyKey(run.getIdempotencyKey());
         entity.setRequestId(run.getRequestId());
         entity.setVersion(run.getVersion());
@@ -42,6 +50,13 @@ public final class DomainEntityConverter {
         );
         run.setStatus(AgentRunStatus.valueOf(entity.getStatus()));
         run.setCurrentSummary(entity.getCurrentSummary());
+        run.setFileName(entity.getFileName());
+        run.setFileType(entity.getFileType());
+        run.setInstruction(entity.getInstruction());
+        run.setSectionCount(entity.getSectionCount());
+        run.setExecutionMode(entity.getExecutionMode());
+        run.setResultJson(entity.getResultJson());
+        run.setFinishedAt(entity.getFinishedAt());
         run.setIdempotencyKey(entity.getIdempotencyKey());
         run.setRequestId(entity.getRequestId());
         if (entity.getVersion() != null) {
