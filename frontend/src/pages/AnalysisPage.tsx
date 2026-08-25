@@ -19,6 +19,12 @@ const EXAMPLE_INSTRUCTIONS = [
   '用三句话总结这份文档',
 ];
 
+const SAMPLE_DOCS = [
+  { file: 'resume.pdf', label: '示例简历', instruction: '提炼这份简历的亮点，并给出针对性的改进建议' },
+  { file: 'product-requirements.docx', label: '需求文档', instruction: '梳理这份需求文档的核心功能与开放风险' },
+  { file: 'tech-spec.md', label: '技术方案', instruction: '评估这份技术方案的可行性，指出主要风险与建议' },
+];
+
 const ACCEPT = '.pdf,.docx,.md,.txt';
 
 type Phase = 'idle' | 'running' | 'done' | 'failed';
@@ -105,6 +111,19 @@ export default function AnalysisPage() {
     }
   };
 
+  const loadSample = async (sample: (typeof SAMPLE_DOCS)[number]) => {
+    try {
+      setError(null);
+      const resp = await fetch(`${import.meta.env.PROD ? '' : 'http://localhost:8020'}/samples/${sample.file}`);
+      if (!resp.ok) throw new Error(`示例文档加载失败（${resp.status}）`);
+      const blob = await resp.blob();
+      setFile(new File([blob], sample.file, { type: blob.type }));
+      setInstruction(sample.instruction);
+    } catch (ex) {
+      setError(getErrorMessage(ex));
+    }
+  };
+
   const reset = () => {
     cleanup();
     setPhase('idle');
@@ -158,6 +177,24 @@ export default function AnalysisPage() {
             </>
           )}
         </label>
+
+        <div>
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500">没有文件？试试示例</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {SAMPLE_DOCS.map((s) => (
+              <button
+                key={s.file}
+                type="button"
+                onClick={() => loadSample(s)}
+                className="rounded-full border border-indigo-200 bg-indigo-50/60 px-2.5 py-1 text-xs text-indigo-600 hover:bg-indigo-100"
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div>
           <div className="mb-1.5 text-xs font-semibold text-slate-500">分析要求</div>

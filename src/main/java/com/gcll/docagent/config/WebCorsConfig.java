@@ -30,6 +30,10 @@ public class WebCorsConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        // 演示示例文档（与前端构建产物分离，避免 vite emptyOutDir 清掉）
+        registry.addResourceHandler("/samples/**")
+                .addResourceLocations("classpath:/samples/");
+
         registry.addResourceHandler("/**")
                 .addResourceLocations("classpath:/static/")
                 .resourceChain(true)

@@ -1,196 +1,134 @@
-## 项目定位
+# DocAgent — 文档分析 Agent
 
-OpsMind Agent 是一个面向技术支持工单的 AI 分诊与故障排查样板。它不是“大而全”的工单平台，而是聚焦几个高价值问题：工单描述经常信息不足，排查需要结合日志、历史案例和处理流程，LLM 输出需要来源约束、审计追踪、失败降级和人工确认。
+上传一份文档（PDF / DOCX / MD / TXT），输入你的要求，Agent 以 **ReAct 工具循环**自主阅读文档，实时展示每一步思考与工具调用，最终输出**引用可溯源**的结构化分析报告（摘要 / 关键内容 / 风险 / 建议）。
 
-核心闭环：
+> 面试演示友好：一条命令启动、零外部中间件、LLM 不可用时三级降级保证演示不断线、历史 run 可完整回放审计。
 
-```text
-工单输入 -> 结构化抽取 -> 信息缺口判断 -> Agent 规划 -> 工具 / RAG 取证
-        -> 根因分析 -> 优先级评估 -> 团队路由 -> 人工确认 -> 审计与评测
+## 90 秒演示剧本
+
+1. `mvn spring-boot:run` 启动（约 3 秒），打开 http://localhost:8020
+2. 点击「示例简历」一键加载 PDF（或拖入任意文档）
+3. 点击「开始分析」→ 中栏实时滚动 Agent 时间线：**解析文档 → 获取大纲 → 逐节阅读（工具调用，可展开参数与返回）→ 引用校验 → 生成报告**
+4. 右栏报告：摘要 / 关键点 / 风险 / 建议；点击引用 chip → 右侧文档面板**定位高亮原文出处**
+5. 切到「历史记录」→ 点击任意 run → 回放完整执行链路树（17 步级 trace，含耗时 / 工具 / LLM 徽标）
+6. （加分）不配置 API Key 重启 → executionMode 变为 FALLBACK，链路与报告依然完整——降级链路兜底
+
+## 架构
+
+```mermaid
+flowchart LR
+    subgraph Frontend["React 工作台"]
+        UI[分析工作台 / 历史回放]
+    end
+    subgraph API["Spring Boot 3"]
+        REST[POST /api/analysis/runs<br/>异步 + SSE]
+        SSE[步骤流·回放]
+    end
+    subgraph Engine["分析引擎"]
+        PARSE[PARSE 解析分节]
+        REACT[ReAct 工具循环<br/>LangChain4j AiService]
+        DIRECT[直连 LLM 降级]
+        RULE[规则摘要兜底]
+        VERIFY[引用校验]
+    end
+    subgraph Platform["平台层（可复用基建）"]
+        TOOLS[ToolRegistry + ToolRuntime<br/>风险分级 READ/WRITE/DANGER]
+        TRACE[TraceRecorder<br/>步级落库 + SSE + OTel]
+        RES[Resilience4j<br/>重试/熔断/超时/限流]
+        LLM[LlmGateway<br/>多模型路由 + 上下文窗口]
+    end
+    DB[(H2 / PostgreSQL)]
+
+    UI --> REST --> PARSE --> REACT
+    REACT -- 失败降级 --> DIRECT -- 失败降级 --> RULE
+    REACT --> VERIFY --> DB
+    REACT & DIRECT -.->. TOOLS & LLM
+    TRACE --> SSE --> UI
+    TRACE --> DB
+    TOOLS & LLM --> RES
 ```
 
-项目重点展示：
+**一次 run 的执行链**：`PARSE → REACT_ANALYZE（get_document_outline / read_section / search_document 自主迭代，最多 8 轮）→ [降级] DIRECT_LLM → [兜底] RULE_FALLBACK → CITATION_VERIFY → REPORT`，每步落库 `agent_step` 并推送 SSE。
 
-- Agent 编排：把抽取、追问、规划、查证、根因、路由、建议拆成可审计步骤。
-- RAG 来源约束：建议和根因尽量绑定标准处理流程、排查手册、历史故障等知识来源。
-- 工具治理：LLM 负责选择和解释，真实工具调用由后端统一执行、超时、记录和降级。
-- HITL 风控：P1 / 高风险 / 低置信度结果进入人工确认，不让模型直接闭环高风险动作。
-- Eval 与观测：支持 Golden Case 回归评测，并按 run 查看 LLM 调用次数、耗时、失败和 fallback。
+## 核心特性
 
-推荐先看：
+| 特性 | 说明 |
+|---|---|
+| 真·ReAct 循环 | LangChain4j AiService 驱动 Thought→Action→Observation，LLM 自主决定读哪些节、搜什么关键词 |
+| 工具治理 | 工具统一注册 ToolRegistry（READ/WRITE/DANGER 风险分级），经 ToolRuntime 执行：Resilience4j 重试/熔断/超时 + tool_execution_log 审计 |
+| 三级降级 | ReAct 失败 → 直连 LLM（单次调用，按模型窗口截断）→ 规则摘要。无 API Key 也能完整演示 |
+| 引用可溯源 | LLM 输出必须携带 `{sectionId, quote}` 引用；CITATION_VERIFY 步剔除指向不存在节的编造引用、错位引用自动重挂 |
+| 全链路 Trace | 每步（含 ReAct 每轮 LLM 响应与每次工具调用）写 agent_step 树形表 + SSE 实时推送 + OTel span，历史可回放 |
+| 多格式解析 | PDF（PDFBox，扫描件明确报错）/ DOCX（POI，标题样式分节）/ MD（标题分节）/ TXT（空行聚合），统一分节视图 |
+| 一键演示 | 默认 H2 文件库 + 内嵌前端构建产物，克隆后 `mvn spring-boot:run` 即跑（仅需 `LLM_API_KEY` 可选） |
 
-- `docs/demo-guide.md`：本地演示顺序和讲解口径。
-- `docs/project-design-tradeoffs.md`：架构设计、取舍和边界。
-- `docs/demo-cases.md`：固定演示用例。
-- `docs/KNOWN-ISSUES.md`：已知限制与设计权衡（工程深度体现）。
-- `docs/architecture-evolution-notes.md`：状态门控与 Eval 驱动的架构演进记录。
-- `docs/interview-answer-template-ai-app.md`：AI 应用岗面试答题模板。
+## 快速开始
 
-## 快速启动
-
-### 求职演示最短路径
-
-如果目标是快速展示项目能力，先看 [`docs/job-demo-runbook.md`](docs/job-demo-runbook.md)。它固定了 3 到 5 分钟演示顺序：信息不足追问、支付故障取证、人工确认、审计回放和 Eval。完整接口说明与启动边界见下文；不要把历史 Eval 报告当成当前环境刚刚生成的结果。
-
-> 默认向量后端为 **PgVector**（复用主库 PostgreSQL，无需额外容器）。如需切换 Milvus，
-> 见下文「向量后端切换」。
-
-### 第 -1 步：构建 MCP server 子进程（仅首次/代码变更后，手动执行）
-
-主应用启动时会通过 STDIO 拉起一个独立的 MCP server 子进程（`ops-mcp-server`）来执行
-`query_logs` 等受控工具。该模块是**仓库内的独立工程**（根 pom 不含 `<modules>`，
-根目录 `mvn package` 不会打包它），需要单独构建一次：
+环境要求：JDK 21+（Node 仅前端开发时需要）。
 
 ```bash
-mvn -f ops-mcp-server/pom.xml clean package -DskipTests
-```
+# 1.（可选）配置 DashScope API Key——不配也能跑（规则降级模式）
+export LLM_API_KEY=sk-xxx        # Windows: set LLM_API_KEY=sk-xxx
 
-产出 `ops-mcp-server/target/ops-mcp-server-1.0.0-SNAPSHOT.jar`。`application.yml` 的
-`spring.ai.mcp.client.stdio.connections.ops-mcp-server` 默认指向这个路径（相对于仓库根）。
-
-> 如果只想跑主应用、不需要 MCP 工具查真实数据，可关闭子进程拉起（MCP 工具会降级返回"无证据"）：
-> `set MCP_ENABLED=false` 或 `--spring.ai.mcp.client.enabled=false`。否则缺失 jar 会导致
-> `Unable to access jarfile` 启动报错。
-
-### 第 0 步：准备数据库（仅首次，手动执行一次）
-
-需要一个运行中的 PostgreSQL（≥ 12 建议 15+）实例。用具备 superuser/createdb 权限的账号
-连接到默认库，执行建库脚本：
-
-```bash
-psql -U postgres -h localhost -d postgres -f src/main/resources/db/init-database.sql
-```
-
-该脚本会：创建库 `tech_support_agent`、确认应用账号、在库内安装 pgvector 扩展（vector /
-hstore / uuid-ossp）并授权。库名/账号默认值与 `application.yml` 一致（`tech_support_agent`
-/ `postgres` / `postgres`），可用环境变量覆盖（见下文「配置」）。
-
-### 第 1 步：启动应用
-
-```bash
+# 2. 启动（内嵌前端 + H2，无任何外部依赖）
 mvn spring-boot:run
+
+# 3. 打开
+http://localhost:8020
 ```
 
-浏览器打开：
+生产/团队环境切 PostgreSQL：`--spring.profiles.active=pg`（连接参数见 `application-pg.yml`）。
 
-```text
-http://localhost:8020/
-```
-
-如果没有配置 `LLM_API_KEY`，系统会走规则/模板降级，核心 Demo 仍可运行。
-
-### 脚本执行顺序总览
-
-| 顺序 | 脚本 / 机制 | 何时执行 | 作用 |
-|---|---|---|---|
-| **0** | `db/init-database.sql` | **手动**，仅首次（或环境重建时） | 建库 + 应用账号 + 安装 pgvector 扩展 |
-| **1** | `db/schema.sql` | 应用每次启动自动 | 建业务表（`agent_run` / `agent_step` / `knowledge_document` / `tool_execution_log` / `pending_action` / `ops_log_sample` / `ops_metric_sample`） |
-| **2** | `db/data-knowledge.sql` | 应用每次启动自动 | 灌知识库种子数据（标准处理流程 / 排查手册 / 历史故障等） |
-| **3** | `PgVectorStoreConfig`（`initializeSchema=true`） | 应用首次启动自动 | 建 `vector_store` 表 + HNSW 索引（依赖第 0 步已装扩展） |
-| —（手动）| `db/pgvector-init.sql` | 仅当选择「预建表」路径时手动跑 | 预建 `vector_store` 表（此时需把 `PgVectorStoreConfig` 的 `initializeSchema` 改为 `false`） |
-
-> 顺序 1/2 由 `application.yml` 的 `spring.sql.init.mode: always` 驱动；顺序 3 由
-> Spring AI 的 `PgVectorStore` 在应用启动时执行。只有第 0 步和（可选的）pgvector-init
-> 需要人手执行，其余全自动。
-
-### 配置
-
-默认连接 `localhost:5432/tech_support_agent`，账号 `postgres/postgres`。通过环境变量覆盖：
+### 前端开发模式
 
 ```bash
-set PG_HOST=localhost
-set PG_PORT=5432
-set PG_DATABASE=tech_support_agent
-set PG_USER=postgres
-set PG_PASSWORD=postgres
-set LLM_API_KEY=你的DashScope密钥
-set LLM_MODEL=qwen-plus
+cd frontend
+pnpm install
+pnpm dev          # Vite 5173，代理 /api 到 8020，热更新
+pnpm build        # 产物直出 ../src/main/resources/static
 ```
 
-### 向量后端切换（可选）
+## API 一览
 
-默认 PgVector（零额外容器）。如需 Milvus：
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/analysis/runs` | multipart（file + instruction），202 返回 runId，异步执行 |
+| GET | `/api/analysis/runs` | 历史列表 |
+| GET | `/api/analysis/runs/{id}` | 详情（状态 + 结构化结果） |
+| GET | `/api/analysis/runs/{id}/stream` | SSE 步骤流（连接即回放已落库步骤，支持刷新） |
+| GET | `/api/analysis/runs/{id}/document` | 文档分节视图（引用定位） |
+| GET | `/api/audit/agent-runs/{id}` | 步骤树审计（parentStepId / 耗时 / 工具 / LLM） |
+
+## 项目结构
+
+```
+src/main/java/com/gcll/docagent/
+├── analysis/      # 分析编排：run 生命周期、三级降级、引用校验
+├── parsing/       # 四格式解析器 + 统一分节视图（DocumentParser SPI）
+├── langchain4j/   # ReAct 装配：DocumentAnalysisAssistant + 工具提供者 + 步级监听
+├── tool/          # 工具体系：ToolGateway SPI、注册表、风险分级、DANGER 门控
+│   └── document/  # 三个文档工具：outline / read_section / search
+├── platform/tool/ # ToolRuntime：批量执行 + 治理包裹 + 审计落库
+├── llm/           # LlmGateway：多模型路由、上下文窗口管理、摘要式记忆
+├── resilience/    # Resilience4j 网关：按调用类型的重试/熔断/超时/限流
+├── observability/ # TraceRecorder：步级双写（业务表 + OTel）
+└── api/           # REST + SSE 控制器
+frontend/          # React 18 + TS + Tailwind 工作台（构建产物进 static）
+sample-docs/       # 演示示例：简历 PDF / 需求 DOCX / 技术方案 MD
+```
+
+## 面试讲解要点
+
+1. **为什么用双框架（Spring AI + LangChain4j）**：流程化调用（降级路径、token 统计）走 Spring AI ChatClient 生态；ReAct 自主工具循环需要 AiService 的类型安全工具协议——同一 DashScope 模型经两种协议接入，职责分离互不干扰。
+2. **工具调用如何做治理**：LLM 只"选择"，执行统一走 ToolRuntime——注册表查找 → Resilience4j 包裹（副作用工具不重试）→ tool_execution_log 落库 → 指标打点；DANGER 级工具被 ToolConfirmGate 拦截等待人工确认。
+3. **降级链设计**：三级降级各对应一类故障（循环失控 / LLM 网关故障 / 无 Key），executionMode 字段让降级对用户可见、对面试官可讲。
+4. **引用防幻觉**：结构化引用 + 校验步（存在性检查 + 引文重挂），报告每条结论可点击跳回原文。
+5. **工程细节**：MyBatis-Plus 乐观锁版本号在 upsert 时的同步问题、SSE"先回放后实时"解决连接竞态、H2/PG 双兼容 schema、`system-base` prompt 双路径统一。
+
+## 测试
+
+68 个测试：解析层（四格式，PDF/DOCX fixture 测试内生成）、文档工具、工具运行时、治理网关、以及覆盖「LLM 正常 / LLM 失败降级 / 非法文件拒收」三场景的端到端集成测试（@MockitoBean 替换 LLM 网关）。
 
 ```bash
-docker compose up -d
-mvn spring-boot:run -Dspring-boot.run.profiles=milvus
-```
-
-`milvus` profile 会激活 `MilvusVectorStoreConfig`（`@Profile("milvus")`）覆盖默认的 PgVector Bean。
-
-## 常用接口
-
-信息不足追问：
-
-```bash
-curl.exe -X POST http://localhost:8020/api/tickets/agent-runs ^
-  -H "Content-Type: application/json" ^
-  -d "{\"sessionId\":\"sess-001\",\"userId\":\"u-1001\",\"content\":\"接口报错了\",\"source\":\"WEB\"}"
-```
-
-完整故障分析：
-
-```bash
-curl.exe -X POST http://localhost:8020/api/tickets/agent-runs ^
-  -H "Content-Type: application/json" ^
-  -d "{\"sessionId\":\"sess-002\",\"userId\":\"u-1001\",\"content\":\"生产环境 payment-service Pod OOMKilled，从上午 10 点开始，多个用户支付失败，内存使用从 200Mi 飙升到 512Mi 后被 kill\",\"source\":\"WEB\"}"
-```
-
-SSE 步骤流：
-
-```bash
-curl.exe -N http://localhost:8020/api/tickets/agent-runs/{runId}/stream
-```
-
-审计：
-
-```bash
-curl.exe http://localhost:8020/api/audit/agent-runs/{runId}
-```
-
-LLM 调用统计：
-
-```bash
-curl.exe http://localhost:8020/api/audit/agent-runs/{runId}/llm-stats
-```
-
-运行 Eval：
-
-```bash
-curl.exe -X POST http://localhost:8020/api/evals/run
-```
-
-## 异步模式
-
-默认接口仍同步返回完整分析结果，便于本地演示。开启 Kafka 异步执行：
-
-```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=milvus -Dspring-boot.run.arguments="--opsmind.async.enabled=true"
-```
-
-异步模式下提交接口先返回 runId，后台通过 Kafka 消费 run execution event 推进 Agent 流程。
-
-
-## 目录
-
-```text
-agent/           Agent 编排、Planner、SSE
-execution/       L3 ToolSelector
-ticket/          工单 API
-extract/         L1 结构化抽取
-understanding/   L1/L2 缺口分析、完整度决策、场景化追问
-knowledge/       RAG 检索
-execution/       L3 Tool 选择、Evidence（重构目标）
-tool/            Function + MCP Tool 抽象
-evidence/        Evidence 收集（重构中迁至 execution/）
-analysis/        L4 根因分析
-governance/      L5 优先级、路由、HITL（重构目标）
-priority/        优先级规则（重构中迁至 governance/）
-routing/         团队路由（重构中迁至 governance/）
-suggestion/      L4 处理建议 + 操作步骤
-human/           人工确认（重构中迁至 governance/）
-persistence/     MyBatis-Plus
-llm/             Spring AI 网关
-eval/            Golden Case 评测
-docs/            架构与重构文档
+mvn test
 ```
