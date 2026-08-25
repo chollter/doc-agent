@@ -62,6 +62,10 @@ public final class DomainEntityConverter {
         if (entity.getVersion() != null) {
             run.setVersion(entity.getVersion());
         }
+        // 回填时间戳（构造器默认取当前时刻，若不回填，历史 run 的耗时计算会得到负数）
+        run.setCreatedAt(toInstant(entity.getCreatedAt()));
+        run.setStartedAt(entity.getStartedAt());
+        run.setFinishedAt(entity.getFinishedAt());
         return run;
     }
 

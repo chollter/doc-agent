@@ -22,12 +22,12 @@ public class AgentRun {
     private Integer sectionCount;
     private String executionMode;
     private String resultJson;
-    private final Instant startedAt;
+    private Instant startedAt;
     private Instant finishedAt;
     private String idempotencyKey;
     private String requestId;
     private long version;
-    private final Instant createdAt;
+    private Instant createdAt;
     private Instant updatedAt;
     private final List<AgentStep> steps = new ArrayList<>();
 
@@ -91,6 +91,7 @@ public class AgentRun {
     public void setResultJson(String resultJson) { this.resultJson = resultJson; }
 
     public Instant getStartedAt() { return startedAt; }
+    public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }
     public Instant getFinishedAt() { return finishedAt; }
     public void setFinishedAt(Instant finishedAt) { this.finishedAt = finishedAt; }
 
@@ -110,6 +111,7 @@ public class AgentRun {
     public void setVersion(long version) { this.version = version; }
 
     public Instant getCreatedAt() { return createdAt; }
+    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 
     public List<AgentStep> getSteps() { return steps; }

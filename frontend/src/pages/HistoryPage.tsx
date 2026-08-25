@@ -1,262 +1,153 @@
-import {useEffect, useState} from 'react';
-import {AnimatePresence, motion} from 'framer-motion';
-import {historyApi, ResumeListItem} from '../api/history';
-import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
-import {formatDateOnly} from '../utils/date';
-import {getScoreProgressColor} from '../utils/score';
+import { useEffect, useState } from 'react';
+import { Loader2, RefreshCw } from 'lucide-react';
+import { analysisApi, getErrorMessage, type AuditStep, type RunDetail, type RunSummary } from '../api/analysis';
+import ReportCard from '../components/ReportCard';
+import { durationSeconds, formatTime } from '../utils/format';
 
-interface HistoryListProps {
-  onSelectResume: (id: number) => void;
+const STATUS_STYLE: Record<string, string> = {
+  COMPLETED: 'bg-emerald-100 text-emerald-700',
+  ANALYZING: 'bg-blue-100 text-blue-700',
+  RUNNING: 'bg-blue-100 text-blue-700',
+  FAILED: 'bg-rose-100 text-rose-700',
+};
+
+/** 审计步骤树：按 parentStepId 缩进渲染（后端已按时间排序）。 */
+function AuditTree({ steps }: { steps: AuditStep[] }) {
+  const byParent = new Map<string | null, AuditStep[]>();
+  for (const s of steps) {
+    const key = s.parentStepId ?? null;
+    byParent.set(key, [...(byParent.get(key) ?? []), s]);
+  }
+  const render = (parent: string | null, depth: number): JSX.Element[] =>
+    (byParent.get(parent) ?? []).flatMap((s) => [
+      <div key={s.id} className="flex items-center gap-2 py-1 text-xs" style={{ paddingLeft: depth * 16 }}>
+        <span
+          className={`inline-block h-2 w-2 rounded-full ${
+            s.status === 'SUCCESS' ? 'bg-emerald-500' : s.status === 'RUNNING' ? 'bg-blue-500' : 'bg-rose-500'
+          }`}
+        />
+        <span className="font-medium text-slate-700">{s.stepName}</span>
+        <span className="text-slate-400">{s.costMs}ms</span>
+        {s.toolUsed && <span className="rounded bg-amber-50 px-1.5 text-amber-600">{s.toolUsed}</span>}
+        {s.llmUsed && <span className="rounded bg-violet-50 px-1.5 text-violet-600">LLM</span>}
+        {s.errorMessage && <span className="truncate text-rose-500">{s.errorMessage}</span>}
+      </div>,
+      ...render(s.id, depth + 1),
+    ]);
+  return <div className="max-h-72 overflow-y-auto rounded-xl bg-slate-50 p-3">{render(null, 0)}</div>;
 }
 
-export default function HistoryList({ onSelectResume }: HistoryListProps) {
-  const [resumes, setResumes] = useState<ResumeListItem[]>([]);
+export default function HistoryPage() {
+  const [runs, setRuns] = useState<RunSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; filename: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ detail: RunDetail; audit: AuditStep[] } | null>(null);
 
-  useEffect(() => {
-    loadResumes();
-  }, []);
-
-  const loadResumes = async () => {
+  const load = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const data = await historyApi.getResumes();
-      setResumes(data);
-    } catch (err) {
-      console.error('加载历史记录失败', err);
+      setRuns(await analysisApi.listRuns());
+    } catch (ex) {
+      setError(getErrorMessage(ex));
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => { load(); }, []);
 
-
-  const handleDeleteClick = (id: number, filename: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // 阻止触发行点击事件
-    setDeleteConfirm({ id, filename });
+  const open = async (runId: string) => {
+    setSelected(null);
+    const [detail, audit] = await Promise.all([
+      analysisApi.getRun(runId),
+      analysisApi.getAudit(runId).catch(() => []),
+    ]);
+    setSelected({ detail, audit });
   };
-  
-  const handleDeleteConfirm = async () => {
-    if (!deleteConfirm) return;
-    
-    const { id } = deleteConfirm;
-    setDeletingId(id);
-    try {
-      await historyApi.deleteResume(id);
-      // 重新加载列表
-      await loadResumes();
-      setDeleteConfirm(null);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : '删除失败，请稍后重试');
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
-  const filteredResumes = resumes.filter(resume =>
-    resume.filename.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   return (
-    <motion.div 
-      className="w-full"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-    >
-      {/* 头部 */}
-      <div className="flex justify-between items-start mb-10 flex-wrap gap-6">
-        <div>
-          <motion.h1 
-            className="text-4xl font-bold text-slate-900 mb-2"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
+    <div className="grid h-screen grid-cols-12 gap-4 p-4">
+      <div className="col-span-6 flex min-w-0 flex-col">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-800">历史记录</h2>
+          <button
+            type="button"
+            onClick={load}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
           >
-            简历库
-          </motion.h1>
-          <motion.p 
-            className="text-slate-500"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.1 }}
-          >
-            管理您已分析过的所有简历及面试记录
-          </motion.p>
+            <RefreshCw size={13} />
+            刷新
+          </button>
         </div>
-        
-        <motion.div 
-          className="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 min-w-[280px] focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-100 transition-all"
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-        >
-          <svg className="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none">
-            <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
-            <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-          <input
-            type="text"
-            placeholder="搜索简历..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="flex-1 outline-none text-slate-700 placeholder:text-slate-400"
-          />
-        </motion.div>
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          {loading ? (
+            <div className="flex h-32 items-center justify-center text-slate-400">
+              <Loader2 size={18} className="mr-2 animate-spin" /> 加载中
+            </div>
+          ) : error ? (
+            <div className="p-6 text-sm text-rose-600">{error}</div>
+          ) : runs.length === 0 ? (
+            <div className="p-6 text-sm text-slate-400">还没有分析记录，去工作台提交一份文档吧</div>
+          ) : (
+            runs.map((run) => (
+              <button
+                key={run.runId}
+                type="button"
+                onClick={() => open(run.runId).catch((ex) => setError(getErrorMessage(ex)))}
+                className={`block w-full border-b border-slate-100 px-4 py-3 text-left transition-colors hover:bg-slate-50 ${
+                  selected?.detail.runId === run.runId ? 'bg-indigo-50/60' : ''
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-slate-800">{run.fileName ?? '未知文件'}</span>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${STATUS_STYLE[run.status] ?? 'bg-slate-100 text-slate-500'}`}>
+                    {run.status}
+                  </span>
+                  {run.executionMode && (
+                    <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-xs text-violet-600">
+                      {run.executionMode}
+                    </span>
+                  )}
+                  <span className="ml-auto shrink-0 text-xs text-slate-400">{formatTime(run.createdAt)}</span>
+                </div>
+                <div className="mt-1 truncate text-xs text-slate-500">{run.instruction}</div>
+              </button>
+            ))
+          )}
+        </div>
       </div>
 
-      {/* 加载状态 */}
-      {loading && (
-        <div className="text-center py-20">
-          <motion.div 
-            className="w-10 h-10 border-3 border-slate-200 border-t-primary-500 rounded-full mx-auto mb-4"
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-          />
-          <p className="text-slate-500">加载中...</p>
-        </div>
-      )}
-
-      {/* 空状态 */}
-      {!loading && filteredResumes.length === 0 && (
-        <motion.div 
-          className="text-center py-20 bg-white rounded-2xl"
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-        >
-          <div className="text-6xl mb-6">📄</div>
-          <h3 className="text-xl font-semibold text-slate-700 mb-2">暂无简历记录</h3>
-          <p className="text-slate-500">上传简历开始您的第一次 AI 面试分析</p>
-        </motion.div>
-      )}
-
-      {/* 表格 */}
-      {!loading && filteredResumes.length > 0 && (
-        <motion.div 
-          className="bg-white rounded-2xl shadow-sm overflow-hidden"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <table className="w-full">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-100">
-                <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">简历名称</th>
-                <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">上传日期</th>
-                <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">AI 评分</th>
-                <th className="text-left px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wide">面试状态</th>
-                <th className="w-20"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <AnimatePresence>
-                {filteredResumes.map((resume, index) => (
-                  <motion.tr
-                    key={resume.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                    onClick={() => onSelectResume(resume.id)}
-                    className="border-b border-slate-100 last:border-0 hover:bg-slate-50 cursor-pointer transition-colors group"
-                  >
-                    <td className="px-6 py-5">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-primary-50 rounded-xl flex items-center justify-center text-primary-500">
-                          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-                            <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            <polyline points="14,2 14,8 20,8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </div>
-                        <span className="font-medium text-slate-800">{resume.filename}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-5 text-slate-500">{formatDateOnly(resume.uploadedAt)}</td>
-                    <td className="px-6 py-5">
-                      {resume.latestScore !== undefined ? (
-                        <div className="flex items-center gap-3">
-                          <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
-                            <motion.div 
-                              className={`h-full ${getScoreProgressColor(resume.latestScore)} rounded-full`}
-                              initial={{ width: 0 }}
-                              animate={{ width: `${resume.latestScore}%` }}
-                              transition={{ duration: 0.8, delay: index * 0.05 }}
-                            />
-                          </div>
-                          <span className="font-bold text-slate-800">{resume.latestScore}</span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400">-</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-5">
-                      {resume.interviewCount > 0 ? (
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-sm font-medium">
-                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                            <polyline points="9,12 11,14 15,10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                          已完成
-                        </span>
-                      ) : (
-                        <span className="inline-flex px-3 py-1 bg-slate-100 text-slate-500 rounded-full text-sm">待面试</span>
-                      )}
-                    </td>
-                    <td className="px-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => handleDeleteClick(resume.id, resume.filename, e)}
-                          disabled={deletingId === resume.id}
-                          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="删除简历"
-                        >
-                          {deletingId === resume.id ? (
-                            <motion.div
-                              className="w-5 h-5 border-2 border-red-500 border-t-transparent rounded-full"
-                              animate={{ rotate: 360 }}
-                              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                            />
-                          ) : (
-                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-                              <path d="M3 6H5H21M8 6V4C8 3.46957 8.21071 2.96086 8.58579 2.58579C8.96086 2.21071 9.46957 2 10 2H14C14.5304 2 15.0391 2.21071 15.4142 2.58579C15.7893 2.96086 16 3.46957 16 4V6M19 6V20C19 20.5304 18.7893 21.0391 18.4142 21.4142C18.0391 21.7893 17.5304 22 17 22H7C6.46957 22 5.96086 21.7893 5.58579 21.4142C5.21071 21.0391 5 20.5304 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                              <path d="M10 11V17M14 11V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                            </svg>
-                          )}
-                        </button>
-                        <svg className="w-5 h-5 text-slate-300 group-hover:text-primary-500 group-hover:translate-x-1 transition-all" viewBox="0 0 24 24" fill="none">
-                          <polyline points="9,18 15,12 9,6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                      </div>
-                    </td>
-                  </motion.tr>
-                ))}
-              </AnimatePresence>
-            </tbody>
-          </table>
-        </motion.div>
-      )}
-      
-      {/* 删除确认对话框 */}
-      <DeleteConfirmDialog
-        open={deleteConfirm !== null}
-        item={deleteConfirm}
-        itemType="简历"
-        loading={deletingId !== null}
-        onConfirm={handleDeleteConfirm}
-        onCancel={() => setDeleteConfirm(null)}
-        customMessage={
-          deleteConfirm ? (
-            <>
-              <p className="mb-2">确定要删除简历 <strong>"{deleteConfirm.filename}"</strong> 吗？</p>
-              <p className="text-sm text-slate-500 mb-2">删除后将同时删除：</p>
-              <ul className="text-sm text-slate-500 list-disc list-inside mb-2">
-                <li>简历评价记录</li>
-                <li>所有模拟面试记录</li>
-              </ul>
-              <p className="text-sm font-semibold text-red-600">此操作不可恢复！</p>
-            </>
-          ) : undefined
-        }
-      />
-    </motion.div>
+      <div className="col-span-6 min-w-0 space-y-4 overflow-y-auto">
+        {!selected ? (
+          <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-400">
+            点击左侧记录，回放该次 Agent 的完整执行链路与结果
+          </div>
+        ) : (
+          <>
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-800">{selected.detail.fileName}</h3>
+                <span className="text-xs text-slate-400">
+                  {formatTime(selected.detail.createdAt)} · 用时 {durationSeconds(selected.detail.createdAt, selected.detail.finishedAt)}
+                </span>
+              </div>
+              <p className="mt-1.5 text-xs text-slate-500">要求：{selected.detail.instruction}</p>
+              <div className="mt-3 text-xs font-semibold text-slate-500">执行链路（{selected.audit.length} 步）</div>
+              <div className="mt-2">
+                <AuditTree steps={selected.audit} />
+              </div>
+            </div>
+            {selected.detail.result ? (
+              <ReportCard result={selected.detail.result} mode={selected.detail.executionMode} />
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-400 shadow-sm">
+                {selected.detail.lastError ?? '该 run 没有产出结果'}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }

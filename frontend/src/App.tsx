@@ -1,15 +1,16 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
-import SummaryPage from './pages/SummaryPage';
+import AnalysisPage from './pages/AnalysisPage';
+import HistoryPage from './pages/HistoryPage';
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<Navigate to="/summary" replace />} />
-          <Route path="summary" element={<SummaryPage />} />
-          <Route path="*" element={<Navigate to="/summary" replace />} />
+          <Route index element={<AnalysisPage />} />
+          <Route path="history" element={<HistoryPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>
