@@ -18,4 +18,12 @@ public interface AgentRunRepository {
     List<AgentRun> findStuckRunningRuns(Instant updatedBefore);
 
     Collection<AgentRun> findAll();
+
+    List<String> findQueuedIds(int limit);
+
+    /** CAS 认领，成功返回 true（多实例竞争下仅一个赢家）。 */
+    boolean claim(String runId, String instance);
+
+    /** 重新入队（自愈路径）。 */
+    boolean requeue(String runId, String fromStatus);
 }

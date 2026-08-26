@@ -23,6 +23,8 @@ public class AgentRun {
     private Integer sectionCount;
     private String executionMode;
     private String resultJson;
+    private String claimedBy;
+    private Long tokensUsed;
     private Instant startedAt;
     private Instant finishedAt;
     private String idempotencyKey;
@@ -94,6 +96,12 @@ public class AgentRun {
     public String getResultJson() { return resultJson; }
     public void setResultJson(String resultJson) { this.resultJson = resultJson; }
 
+    public String getClaimedBy() { return claimedBy; }
+    public void setClaimedBy(String claimedBy) { this.claimedBy = claimedBy; }
+
+    public Long getTokensUsed() { return tokensUsed; }
+    public void setTokensUsed(Long tokensUsed) { this.tokensUsed = tokensUsed; }
+
     public Instant getStartedAt() { return startedAt; }
     public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }
     public Instant getFinishedAt() { return finishedAt; }
@@ -117,6 +125,7 @@ public class AgentRun {
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
 
     public List<AgentStep> getSteps() { return steps; }
 }

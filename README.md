@@ -56,6 +56,7 @@ flowchart LR
 |---|---|
 | 真·ReAct 循环 | **自研 AgentLoop 内核**（LangChain4j 仅作模型传输层）：显式状态机 Thought→Action→Observation，LLM 自主决定读哪些节、搜什么关键词 |
 | Durable 执行 | 每轮 checkpoint 落库（消息+预算+文档快照）；进程被杀后重启自动从断点续跑（LOOP_RESUME 步骤进 trace） |
+| 水平扩展（DB 队列） | run 入库排队，多实例 CAS 认领互斥（实测双实例 10 run 分摊 4/6）；超时未推进的 run 自动重新入队由任意实例续跑——崩溃自愈从"启动时一次"升级为"持续自愈" |
 | 循环预算硬顶 | 轮次/工具调用/token 三重上界，超限是可预期停止原因并进入降级链，失控代价有界 |
 | 工具治理 | 工具统一注册 ToolRegistry（READ/WRITE/DANGER 风险分级），经 ToolRuntime 执行：Resilience4j 重试/熔断/超时 + tool_execution_log 审计 |
 | 三级降级 | ReAct 失败 → 直连 LLM（单次调用，按模型窗口截断）→ 规则摘要。无 API Key 也能完整演示 |
@@ -131,11 +132,26 @@ sample-docs/       # 演示示例：简历 PDF / 需求 DOCX / 技术方案 MD
 2. **为什么双框架分工（Spring AI + LangChain4j）**：流程化调用（降级路径、token 统计）走 Spring AI ChatClient 生态；循环传输层用 LangChain4j 的 OpenAI 兼容接入——同一 DashScope 模型两种协议，职责分离互不干扰。
 2. **工具调用如何做治理**：LLM 只"选择"，执行统一走 ToolRuntime——注册表查找 → Resilience4j 包裹（副作用工具不重试）→ tool_execution_log 落库 → 指标打点。READ/WRITE/DANGER 三级风险分级：DANGER 级 export_report 被 ToolConfirmGate 拦截，run 转 WAIT_HUMAN_CONFIRM，前端确认卡人工放行后才写盘（可现场演示）。
 
-7. **为什么做 Skill 抽象**：Runtime 与业务解耦的实证——文档分析和简历审查两个技能共享同一执行引擎/降级链/trace/前端，新增技能只是在 SkillRegistry 注册提示词+工具集。
+8. **为什么做 Skill 抽象**：Runtime 与业务解耦的实证——文档分析和简历审查两个技能共享同一执行引擎/降级链/trace/前端，新增技能只是在 SkillRegistry 注册提示词+工具集。
 3. **降级链设计**：三级降级各对应一类故障（循环失控 / LLM 网关故障 / 无 Key），executionMode 字段让降级对用户可见、对面试官可讲。
 4. **引用防幻觉**：结构化引用 + 校验步（存在性检查 + 引文重挂），报告每条结论可点击跳回原文。
 5. **工程细节**：MyBatis-Plus 乐观锁版本号在 upsert 时的同步问题、SSE"先回放后实时"解决连接竞态、门控去重（崩溃恢复重入不产生重复待确认行）、H2/PG 双兼容 schema。
-6. **崩溃恢复的边界**：DANGER 工具等待确认时被杀，恢复后从 checkpoint 重入循环，门控按 run+工具复用待确认行，不产生重复审计。
+6. **为什么 DB 队列而不是消息中间件**：run 的状态本来就在库里（agent_step/checkpoint），用 CAS 认领把"队列"也放进同一存储，免维护 Kafka/Redis；多实例互斥、崩溃自愈、断点续跑全部由 SQL 语义保证——量级判断，单机到中小规模够用。
+7. **崩溃恢复的边界：DANGER 工具等待确认时被杀，恢复后从 checkpoint 重入循环，门控按 run+工具复用待确认行，不产生重复审计。
+
+## 压测与成本（单实例 / 3 worker / qwen-plus）
+
+| 指标 | 数值 |
+|---|---|
+| 并发批次 8 run（同文档） | 8/8 完成，全部 REACT 模式 |
+| 端到端延迟（提交→完成，含排队） | P50 63.8s（单 run 纯执行约 21s） |
+| 吞吐 | 7.5 run/分钟 |
+| token | 均值 3.8k/run |
+| 单次分析成本 | ≈ ¥0.004 |
+
+并发压力实战：提示词与工具集曾出现不一致导致 9/12 run 循环降级直连——但 **12/12 全部完成、零失败**（三级降级链兜底），该案例同时暴露并修复了"提示词-工具集一致性"问题（过滤工具时同步过滤提示词指引 + 循环白名单防御幻觉调用）。
+
+多实例与自愈实测：双实例 CAS 分摊 4/6；杀掉正在执行的实例后，存活实例经自愈扫描重新入队并从 checkpoint 第 2 轮续跑（LOOP_RESUME，resumedBy 可追溯），最终 REACT 模式完成。
 
 ## 测试
 

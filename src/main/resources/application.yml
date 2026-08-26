@@ -86,6 +86,20 @@ logging:
     total-size-cap: 1GB
     clean-history-on-startup: true
 
+docagent:
+  analysis:
+    dispatcher:
+      # DB 队列轮询间隔与自愈扫描（多实例水平扩展：CAS 认领互斥）
+      poll-ms: 1000
+      requeue-scan-ms: 60000
+      # 超过该时长未推进的 run 重新入队由任意实例续跑
+      requeue-stale-minutes: 15
+    loop:
+      max-rounds: 10
+      max-tool-calls: 16
+      max-total-tokens: 60000
+      parallel-tools: true
+
 opsmind:
   llm:
     routing:

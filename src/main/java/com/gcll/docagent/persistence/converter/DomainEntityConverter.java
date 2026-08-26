@@ -31,6 +31,8 @@ public final class DomainEntityConverter {
         entity.setSectionCount(run.getSectionCount());
         entity.setExecutionMode(run.getExecutionMode());
         entity.setResultJson(run.getResultJson());
+        entity.setClaimedBy(run.getClaimedBy());
+        entity.setTokensUsed(run.getTokensUsed());
         entity.setStartedAt(run.getStartedAt());
         entity.setFinishedAt(run.getFinishedAt());
         entity.setIdempotencyKey(run.getIdempotencyKey());
@@ -58,6 +60,8 @@ public final class DomainEntityConverter {
         run.setSectionCount(entity.getSectionCount());
         run.setExecutionMode(entity.getExecutionMode());
         run.setResultJson(entity.getResultJson());
+        run.setClaimedBy(entity.getClaimedBy());
+        run.setTokensUsed(entity.getTokensUsed());
         run.setFinishedAt(entity.getFinishedAt());
         run.setIdempotencyKey(entity.getIdempotencyKey());
         run.setRequestId(entity.getRequestId());
@@ -66,6 +70,7 @@ public final class DomainEntityConverter {
         }
         // 回填时间戳（构造器默认取当前时刻，若不回填，历史 run 的耗时计算会得到负数）
         run.setCreatedAt(toInstant(entity.getCreatedAt()));
+        run.setUpdatedAt(toInstant(entity.getUpdatedAt()));
         run.setStartedAt(entity.getStartedAt());
         run.setFinishedAt(entity.getFinishedAt());
         return run;

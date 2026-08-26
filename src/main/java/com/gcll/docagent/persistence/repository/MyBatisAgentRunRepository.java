@@ -87,4 +87,19 @@ public class MyBatisAgentRunRepository implements AgentRunRepository {
                 .map(DomainEntityConverter::toDomain)
                 .collect(Collectors.toList());
     }
+
+    @Override
+    public List<String> findQueuedIds(int limit) {
+        return agentRunMapper.findQueuedIds(limit);
+    }
+
+    @Override
+    public boolean claim(String runId, String instance) {
+        return agentRunMapper.claim(runId, instance) == 1;
+    }
+
+    @Override
+    public boolean requeue(String runId, String fromStatus) {
+        return agentRunMapper.requeue(runId, fromStatus) == 1;
+    }
 }

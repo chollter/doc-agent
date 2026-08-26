@@ -9,6 +9,8 @@ import com.gcll.docagent.domain.AgentRunStatus;
 import com.gcll.docagent.langchain4j.ReActContextHolder;
 import com.gcll.docagent.llm.LlmGateway;
 import com.gcll.docagent.loop.AgentLoop;
+import com.gcll.docagent.loop.LoopCheckpointStore;
+import com.gcll.docagent.loop.LoopMessage;
 import com.gcll.docagent.loop.LoopState;
 import com.gcll.docagent.observability.trace.TraceRecorder;
 import com.gcll.docagent.observability.trace.TraceRecorderFactory;
@@ -31,26 +33,30 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.Executors;
 
 /**
- * 文档分析编排——一次 run 的完整生命周期：
+ * 文档分析编排——DB 队列驱动的多实例架构：
  * <pre>
- * PARSE（同步，失败直接 400）
- *   → REACT_ANALYZE（自研 AgentLoop：状态机 + 每轮 checkpoint + 预算硬顶）
- *     失败 → DIRECT_LLM（单次调用；携带循环已读片段——降级不丢上下文）
- *       失败 → RULE_FALLBACK（纯规则摘要，无 LLM 也能出结果）
- *   → CITATION_VERIFY（引用与真实节对齐，剔除编造引用）
- *   → REPORT（结果落库 + 终态 + 清理 checkpoint）
+ * start(): 同步解析 → checkpoint-0（消息+文档快照）→ run=QUEUED
+ * RunQueueScheduler 认领循环: 空闲容量内 CAS 认领（多实例天然互斥）→ 本实例执行
+ * executeClaimed(): 统一执行路径——round=0 走 PARSE 起新循环，round>0 记 LOOP_RESUME 从断点续跑
+ * 自愈循环: 超时未推进的 run 重新入队，任意实例续跑（崩溃恢复持续化，不只在启动时）
  * </pre>
- * 崩溃恢复：checkpoint 含消息+文档快照，重启后由 LoopRecovery 从断点续跑。
- * 每一步经 {@link TraceRecorder} 落 agent_step 表并推 SSE；三级降级体现在 executionMode。
+ * 执行链（单次认领内）：
+ * <pre>
+ * REACT_ANALYZE（自研 AgentLoop：状态机 + 每轮 checkpoint + 预算硬顶）
+ *   失败 → DIRECT_LLM（携带循环已读片段——降级不丢上下文）
+ *     失败 → RULE_FALLBACK（纯规则摘要，无 LLM 也能出结果）
+ * → CITATION_VERIFY → REPORT（结果+token账单落库 + 清理 checkpoint）
+ * </pre>
  */
 @Service
 public class DocumentAnalysisService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentAnalysisService.class);
+    private static final int WORKER_THREADS = 3;
 
     private final DocumentParsingService parsingService;
     private final DocumentStore documentStore;
@@ -60,10 +66,13 @@ public class DocumentAnalysisService {
     private final ObjectProvider<LlmGateway> llmGatewayProvider;
     private final SkillRegistry skillRegistry;
     private final AgentLoop agentLoop;
-    private final com.gcll.docagent.loop.LoopCheckpointStore checkpointStore;
+    private final LoopCheckpointStore checkpointStore;
     private final boolean reactEnabled;
+    private final boolean exportEnabled;
+    private final int requeueStaleMinutes;
+    private final String instanceId;
 
-    private final ExecutorService executor = Executors.newFixedThreadPool(3, r -> {
+    private final ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(WORKER_THREADS, r -> {
         Thread t = new Thread(r, "doc-analysis");
         t.setDaemon(true);
         return t;
@@ -78,8 +87,11 @@ public class DocumentAnalysisService {
             ObjectProvider<LlmGateway> llmGatewayProvider,
             SkillRegistry skillRegistry,
             AgentLoop agentLoop,
-            com.gcll.docagent.loop.LoopCheckpointStore checkpointStore,
-            @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled) {
+            LoopCheckpointStore checkpointStore,
+            @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
+            @Value("${docagent.analysis.export-enabled:true}") boolean exportEnabled,
+            @Value("${docagent.analysis.dispatcher.requeue-stale-minutes:15}") int requeueStaleMinutes,
+            @Value("${server.port:0}") int port) {
         this.parsingService = parsingService;
         this.documentStore = documentStore;
         this.traceRecorderFactory = traceRecorderFactory;
@@ -90,9 +102,12 @@ public class DocumentAnalysisService {
         this.agentLoop = agentLoop;
         this.checkpointStore = checkpointStore;
         this.reactEnabled = reactEnabled;
+        this.exportEnabled = exportEnabled;
+        this.requeueStaleMinutes = requeueStaleMinutes;
+        this.instanceId = "p" + port + "-" + UUID.randomUUID().toString().substring(0, 6);
     }
 
-    /** 提交分析：同步解析 + 建档，异步执行。返回 runId 供轮询/SSE 订阅。 */
+    /** 提交分析：同步解析 + checkpoint-0 + 入队（QUEUED）。执行由调度器异步认领。 */
     public AgentRun start(MultipartFile file, String instruction, String skillName) {
         SkillDefinition skill = skillRegistry.find(skillName)
                 .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST,
@@ -117,70 +132,101 @@ public class DocumentAnalysisService {
         run.setInstruction(instruction == null || instruction.isBlank()
                 ? skill.defaultInstruction() : instruction.trim());
         run.setSectionCount(doc.sections().size());
+        run.setStatus(AgentRunStatus.QUEUED);
+
+        // checkpoint-0 先落（消息+文档快照）——任何实例认领后都能独立执行
+        checkpointStore.save(run.getId(), new LoopState(
+                skill.name(),
+                List.of(
+                        LoopMessage.system(effectiveSystemPrompt(skill)),
+                        LoopMessage.user(buildUserMessage(run, doc))),
+                0, 0, 0, doc));
         agentRunRepository.save(run);
         documentStore.put(run.getId(), doc);
 
-        executor.submit(() -> executeRun(run.getId(), doc, skill));
-        log.info("Analysis run submitted, runId={}, skill={}, file={}, sections={}",
+        log.info("Analysis run queued, runId={}, skill={}, file={}, sections={}",
                 run.getId(), skill.name(), fileName, doc.sections().size());
         return run;
     }
 
-    /** 崩溃恢复入口：从 checkpoint 重建文档与上下文，从断点续跑。 */
-    public void resume(String runId) {
-        LoopState state = checkpointStore.find(runId)
-                .orElseThrow(() -> new IllegalStateException("run " + runId + " 无检查点，无法恢复"));
+    private static String buildUserMessage(AgentRun run, ParsedDocument doc) {
+        return "用户要求：" + run.getInstruction() + "\n\n文档大纲：\n" + doc.outline();
+    }
+
+    // --- 队列调度（由 RunQueueScheduler 驱动） ---
+
+    /** 按空闲 worker 容量认领 QUEUED run（CAS，多实例互斥），提交本实例执行。 */
+    public void claimQueuedRuns() {
+        int free = WORKER_THREADS - executor.getActiveCount();
+        if (free <= 0) {
+            return;
+        }
+        List<String> candidates = agentRunRepository.findQueuedIds(free);
+        for (String runId : candidates) {
+            if (agentRunRepository.claim(runId, instanceId)) {
+                log.info("Claimed run {}, instance={}", runId, instanceId);
+                executor.submit(() -> executeClaimed(runId));
+            }
+        }
+    }
+
+    /** 自愈：超时未推进的 run 重新入队，由任意实例从 checkpoint 续跑。 */
+    public void requeueStaleRuns() {
+        Instant cutoff = Instant.now().minusSeconds(requeueStaleMinutes * 60L);
+        for (AgentRun run : agentRunRepository.findAll()) {
+            if (run.getStatus() != AgentRunStatus.ANALYZING
+                    && run.getStatus() != AgentRunStatus.WAIT_HUMAN_CONFIRM) {
+                continue;
+            }
+            Instant heartbeat = run.getUpdatedAt() != null ? run.getUpdatedAt() : run.getCreatedAt();
+            if (heartbeat.isAfter(cutoff)) {
+                continue;
+            }
+            if (checkpointStore.find(run.getId()).map(s -> s.document() != null).orElse(false)) {
+                boolean requeued = agentRunRepository.requeue(run.getId(), run.getStatus().name());
+                log.warn("Requeued stale run {} (status={}, lastUpdate={}, requeued={})",
+                        run.getId(), run.getStatus(), heartbeat, requeued);
+            } else {
+                run.setStatus(AgentRunStatus.FAILED);
+                run.setLastError("执行中断且无检查点，无法恢复");
+                run.setFinishedAt(Instant.now());
+                agentRunRepository.save(run);
+            }
+        }
+    }
+
+    // --- 认领后的统一执行路径 ---
+
+    private void executeClaimed(String runId) {
+        AgentRun run = agentRunRepository.findById(runId).orElse(null);
+        if (run == null) {
+            log.error("Claimed run disappeared, runId={}", runId);
+            return;
+        }
+        LoopState state = checkpointStore.find(runId).orElse(null);
+        if (state == null || state.document() == null) {
+            fatal(run, runId, traceRecorderFactory.create(run),
+                    new IllegalStateException("认领的 run 缺少检查点/文档快照"));
+            return;
+        }
         ParsedDocument doc = state.document();
-        if (doc == null) {
-            throw new IllegalStateException("checkpoint 缺少文档快照，无法恢复");
-        }
-        SkillDefinition skill = skillRegistry.find(state.skillName()).orElseGet(skillRegistry::defaultSkill);
         documentStore.put(runId, doc);
-        executor.submit(() -> executeResumed(runId, doc, skill, state));
-    }
+        SkillDefinition skill = skillRegistry.find(state.skillName()).orElseGet(skillRegistry::defaultSkill);
 
-    /** 扫描非终态 run，判断是否可恢复（有 checkpoint 且含文档快照）。 */
-    public boolean hasResumableCheckpoint(String runId) {
-        return checkpointStore.find(runId).map(s -> s.document() != null).orElse(false);
-    }
-
-    // --- 异步执行 ---
-
-    private void executeRun(String runId, ParsedDocument doc, SkillDefinition skill) {
-        AgentRun run = agentRunRepository.findById(runId).orElse(null);
-        if (run == null) {
-            log.error("Run disappeared before execution, runId={}", runId);
-            return;
-        }
         TraceRecorder tracer = traceRecorderFactory.create(run);
         try {
-            run.setStatus(AgentRunStatus.ANALYZING);
-            agentRunRepository.save(run);
-            traceParse(tracer, doc);
-            analyzeAndFinish(runId, run, doc, skill, null, tracer);
-        } catch (Exception fatal) {
-            fatal(run, runId, tracer, fatal);
-        }
-    }
-
-    private void executeResumed(String runId, ParsedDocument doc, SkillDefinition skill, LoopState state) {
-        AgentRun run = agentRunRepository.findById(runId).orElse(null);
-        if (run == null) {
-            log.error("Resumed run disappeared, runId={}", runId);
-            return;
-        }
-        TraceRecorder tracer = traceRecorderFactory.create(run);
-        try {
-            run.setStatus(AgentRunStatus.ANALYZING);
-            agentRunRepository.save(run);
-            String stepId = tracer.begin("LOOP_RESUME", null);
-            tracer.recordInput(stepId, "from round " + state.round()
-                    + ", messages=" + state.messages().size()
-                    + ", tokensUsed=" + state.tokensUsed());
-            tracer.end(stepId, "checkpoint 恢复成功，续跑", null);
+            if (state.round() > 0) {
+                String stepId = tracer.begin("LOOP_RESUME", null);
+                tracer.recordInput(stepId, "from round " + state.round()
+                        + ", messages=" + state.messages().size()
+                        + ", resumedBy=" + instanceId);
+                tracer.end(stepId, "队列自愈：从 checkpoint 续跑", null);
+            } else {
+                traceParse(tracer, doc);
+            }
             analyzeAndFinish(runId, run, doc, skill, state, tracer);
-        } catch (Exception fatal) {
-            fatal(run, runId, tracer, fatal);
+        } catch (Exception fatalEx) {
+            fatal(run, runId, tracer, fatalEx);
         }
     }
 
@@ -190,26 +236,30 @@ public class DocumentAnalysisService {
         AnalysisResult result = null;
         String mode = null;
         List<AgentLoop.ObservedFragment> observations = List.of();
+        Long tokensUsed = null;
 
         if (reactEnabled) {
             LoopOutcome outcome = runLoop(runId, run, doc, skill, resumeFrom, tracer);
             if (outcome.result() != null) {
                 result = outcome.result();
                 mode = "REACT";
+                tokensUsed = outcome.tokensUsed();
             } else {
                 observations = outcome.observations();
             }
         }
         if (result == null) {
-            AnalysisResult r = runDirectLlm(runId, run, doc, skill, tracer, observations);
-            if (r != null) {
-                result = r;
+            LlmOutcome llm = runDirectLlm(runId, run, doc, skill, tracer, observations);
+            if (llm.result() != null) {
+                result = llm.result();
                 mode = "LLM";
+                tokensUsed = llm.tokensUsed();
             }
         }
         if (result == null) {
             result = ruleFallback(doc, tracer);
             mode = "FALLBACK";
+            tokensUsed = 0L;
         }
 
         result = verifyCitations(result, doc, tracer);
@@ -217,14 +267,17 @@ public class DocumentAnalysisService {
         run.setResultJson(objectMapper.writeValueAsString(result));
         run.setExecutionMode(mode);
         run.setCurrentSummary(result.summary());
+        run.setTokensUsed(tokensUsed);
         run.setStatus(AgentRunStatus.COMPLETED);
         run.setFinishedAt(Instant.now());
         agentRunRepository.save(run);
         checkpointStore.delete(runId);
 
         String reportStep = tracer.begin("REPORT", null);
-        tracer.end(reportStep, "executionMode=" + mode + ", citations=" + result.citations().size(), null);
-        log.info("Analysis run completed, runId={}, mode={}, citations={}", runId, mode, result.citations().size());
+        tracer.end(reportStep, "executionMode=" + mode + ", citations=" + result.citations().size()
+                + (tokensUsed != null ? ", tokens=" + tokensUsed : "") + ", instance=" + instanceId, null);
+        log.info("Analysis run completed, runId={}, mode={}, tokens={}, instance={}",
+                runId, mode, tokensUsed, instanceId);
     }
 
     private void fatal(AgentRun run, String runId, TraceRecorder tracer, Exception fatal) {
@@ -243,7 +296,30 @@ public class DocumentAnalysisService {
         tracer.end(step, "sections=" + doc.sections().size() + ", chars=" + doc.totalChars(), null);
     }
 
-    private record LoopOutcome(AnalysisResult result, List<AgentLoop.ObservedFragment> observations) {
+    private record LoopOutcome(AnalysisResult result, List<AgentLoop.ObservedFragment> observations, Long tokensUsed) {
+    }
+
+    private record LlmOutcome(AnalysisResult result, Long tokensUsed) {
+    }
+
+    /** 技能实际暴露的工具（压测等场景可关掉 DANGER 导出）。 */
+    private List<String> effectiveToolNames(SkillDefinition skill) {
+        if (exportEnabled) {
+            return skill.toolNames();
+        }
+        return skill.toolNames().stream().filter(t -> !"export_report".equals(t)).toList();
+    }
+
+    /** 工具集与提示词必须一致：剔除导出工具时同步剔除提示词中的导出指引行，
+     *  否则模型会按提示调用不在 spec 列表里的工具，导致请求非法。 */
+    private String effectiveSystemPrompt(SkillDefinition skill) {
+        if (exportEnabled) {
+            return skill.reactSystemPrompt();
+        }
+        return skill.reactSystemPrompt().lines()
+                .filter(line -> !line.contains("export_report"))
+                .reduce((a, b) -> a + "\n" + b)
+                .orElse(skill.reactSystemPrompt());
     }
 
     /** 自研循环阶段。成功返回解析结果；失败返回 null + 已收集片段（供降级复用）。 */
@@ -253,28 +329,27 @@ public class DocumentAnalysisService {
         tracer.recordMeta(stepId, true, "AgentLoop");
         try {
             ToolExecutionHolder.setRunId(runId);
-            ReActContextHolder.set(skill.reactSystemPrompt(), tracer, stepId);
-            String userMessage = "用户要求：" + run.getInstruction() + "\n\n文档大纲：\n" + doc.outline();
+            ReActContextHolder.set(effectiveSystemPrompt(skill), tracer, stepId);
             AgentLoop.LoopResult loopResult = agentLoop.run(new AgentLoop.LoopContext(
-                    runId, skill.name(), skill.toolNames(), skill.reactSystemPrompt(),
-                    userMessage, doc, tracer, stepId, resumeFrom));
+                    runId, skill.name(), effectiveToolNames(skill), effectiveSystemPrompt(skill),
+                    buildUserMessage(run, doc), doc, tracer, stepId, resumeFrom));
             if (loopResult.success()) {
                 AnalysisResult result = parseResult(loopResult.finalAnswer());
                 tracer.end(stepId, "loop completed: rounds=" + loopResult.rounds()
                         + ", toolCalls=" + loopResult.toolCalls()
                         + ", tokens=" + loopResult.tokensUsed()
                         + ", citations=" + result.citations().size(), null);
-                return new LoopOutcome(result, loopResult.observations());
+                return new LoopOutcome(result, loopResult.observations(), loopResult.tokensUsed());
             }
             log.warn("Loop stopped, runId={}, reason={}, observations={}",
                     runId, loopResult.stopReason(), loopResult.observations().size());
             tracer.end(stepId, "loop stopped(" + loopResult.stopReason() + "), carrying "
                     + loopResult.observations().size() + " fragments → fallback", loopResult.stopReason());
-            return new LoopOutcome(null, loopResult.observations());
+            return new LoopOutcome(null, loopResult.observations(), loopResult.tokensUsed());
         } catch (Exception ex) {
             log.warn("Loop analysis failed, falling back, runId={}: {}", runId, ex.getMessage());
             tracer.end(stepId, "loop failed → fallback direct LLM", ex.getMessage());
-            return new LoopOutcome(null, List.of());
+            return new LoopOutcome(null, List.of(), null);
         } finally {
             ReActContextHolder.clear();
             ToolExecutionHolder.clear();
@@ -282,12 +357,12 @@ public class DocumentAnalysisService {
     }
 
     /** 降级 1：单次 LLM 调用。若循环已读片段则一并携带——降级不丢上下文。 */
-    private AnalysisResult runDirectLlm(String runId, AgentRun run, ParsedDocument doc,
-                                        SkillDefinition skill, TraceRecorder tracer,
-                                        List<AgentLoop.ObservedFragment> observations) {
+    private LlmOutcome runDirectLlm(String runId, AgentRun run, ParsedDocument doc,
+                                    SkillDefinition skill, TraceRecorder tracer,
+                                    List<AgentLoop.ObservedFragment> observations) {
         LlmGateway llmGateway = llmGatewayProvider.getIfAvailable();
         if (llmGateway == null) {
-            return null;
+            return new LlmOutcome(null, null);
         }
         String stepId = tracer.begin("DIRECT_LLM", null);
         tracer.recordMeta(stepId, true, "SpringAI");
@@ -299,13 +374,14 @@ public class DocumentAnalysisService {
             LlmResponse response = llmGateway.invoke(
                     "llm." + skill.name(), skill.directPromptFile(), userContent, runId);
             AnalysisResult result = parseResult(response.content());
-            tracer.end(stepId, "direct llm completed"
+            long tokens = response.promptTokens() + response.completionTokens();
+            tracer.end(stepId, "direct llm completed, tokens=" + tokens
                     + (carried.isEmpty() ? "" : ", carried=" + observations.size() + " fragments"), null);
-            return result;
+            return new LlmOutcome(result, tokens);
         } catch (Exception ex) {
             log.warn("Direct LLM failed, falling back to rule, runId={}: {}", runId, ex.getMessage());
             tracer.end(stepId, "direct LLM failed → fallback rule", ex.getMessage());
-            return null;
+            return new LlmOutcome(null, null);
         }
     }
 

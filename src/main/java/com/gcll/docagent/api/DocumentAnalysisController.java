@@ -71,7 +71,7 @@ public class DocumentAnalysisController {
                 .map(run -> new Summary(
                         run.getId(), run.getFileName(), run.getFileType(), run.getSkill(), run.getInstruction(),
                         run.getStatus().name(), run.getExecutionMode(), run.getSectionCount(),
-                        run.getCreatedAt(), run.getFinishedAt()))
+                        run.getTokensUsed(), run.getCreatedAt(), run.getFinishedAt()))
                 .toList();
     }
 
@@ -95,7 +95,8 @@ public class DocumentAnalysisController {
         return new Detail(
                 run.getId(), run.getFileName(), run.getFileType(), run.getSkill(), run.getInstruction(),
                 run.getStatus().name(), run.getExecutionMode(), run.getSectionCount(),
-                run.getCurrentSummary(), result, run.getLastError(), pending,
+                run.getCurrentSummary(), result, run.getLastError(),
+                run.getTokensUsed(), run.getClaimedBy(), pending,
                 run.getCreatedAt(), run.getFinishedAt());
     }
 

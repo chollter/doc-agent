@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS agent_run (
     section_count   INT,
     execution_mode  VARCHAR(32),
     result_json     TEXT,
+    claimed_by      VARCHAR(128),
+    tokens_used     BIGINT,
     started_at      TIMESTAMP,
     finished_at     TIMESTAMP,
     created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -32,8 +34,12 @@ ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS instruction TEXT;
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS section_count INT;
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS execution_mode VARCHAR(32);
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS result_json TEXT;
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS claimed_by VARCHAR(128);
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS tokens_used BIGINT;
 
 CREATE INDEX IF NOT EXISTS idx_agent_run_session ON agent_run (session_id);
+-- 队列扫描：按状态取待认领 run
+CREATE INDEX IF NOT EXISTS idx_agent_run_status ON agent_run (status, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS uk_agent_run_idempotency ON agent_run (idempotency_key);
 
 CREATE TABLE IF NOT EXISTS agent_step (

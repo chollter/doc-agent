@@ -1,7 +1,9 @@
 package com.gcll.docagent.loop;
 
+import com.gcll.docagent.langchain4j.ReActContextHolder;
 import com.gcll.docagent.observability.trace.TraceRecorder;
 import com.gcll.docagent.parsing.ParsedDocument;
+import com.gcll.docagent.tool.ToolExecutionHolder;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -17,6 +19,9 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * 自研 ReAct 执行内核——显式状态机 THOUGHT→ACTION→OBSERVATION。
@@ -38,17 +43,27 @@ public class AgentLoop {
     private final LoopToolSpecs toolSpecs;
     private final LoopCheckpointStore checkpointStore;
     private final LoopBudget budget;
+    private final boolean parallelTools;
+
+    /** 工具并行执行池（一轮内多个调用并发发出，如同时读 3 个节）。 */
+    private final ExecutorService toolExecutor = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "loop-tool");
+        t.setDaemon(true);
+        return t;
+    });
 
     public AgentLoop(ChatModel chatModel,
                      LoopToolSpecs toolSpecs,
                      LoopCheckpointStore checkpointStore,
                      @Value("${docagent.analysis.loop.max-rounds:10}") int maxRounds,
                      @Value("${docagent.analysis.loop.max-tool-calls:16}") int maxToolCalls,
-                     @Value("${docagent.analysis.loop.max-total-tokens:60000}") long maxTotalTokens) {
+                     @Value("${docagent.analysis.loop.max-total-tokens:60000}") long maxTotalTokens,
+                     @Value("${docagent.analysis.loop.parallel-tools:true}") boolean parallelTools) {
         this.chatModel = chatModel;
         this.toolSpecs = toolSpecs;
         this.checkpointStore = checkpointStore;
         this.budget = new LoopBudget(maxRounds, maxToolCalls, maxTotalTokens);
+        this.parallelTools = parallelTools;
     }
 
     /** 一次循环执行的完整输入。 */
@@ -137,14 +152,29 @@ public class AgentLoop {
                         observations, state, state.round(), state.toolCalls(), state.tokensUsed());
             }
 
-            // 4. ACTION + OBSERVATION：执行本轮全部工具调用
+            // 4. ACTION + OBSERVATION：执行本轮全部工具调用（多个调用并行发出）
+            List<ToolExecutionRequest> requests = ai.toolExecutionRequests();
+            // 白名单防御：模型偶尔会幻觉调用本轮未声明的工具，直接执行会构成非法请求
+            requests = requests.stream()
+                    .filter(r -> ctx.toolNames().contains(r.name()))
+                    .toList();
+            if (requests.isEmpty()) {
+                List<LoopMessage> withHint = new ArrayList<>(state.messages());
+                withHint.add(LoopMessage.assistant(ai));
+                withHint.add(LoopMessage.user("刚才的工具调用不在当前可用列表中。请仅使用可用工具，或直接输出最终 JSON。"));
+                state = state.withMessages(List.copyOf(withHint)).advance(0);
+                checkpointStore.save(ctx.runId(), state);
+                continue;
+            }
+            List<String> results = executeToolBatch(ctx, requests);
             int executedThisRound = 0;
-            for (ToolExecutionRequest request : ai.toolExecutionRequests()) {
+            for (int i = 0; i < requests.size(); i++) {
+                ToolExecutionRequest request = requests.get(i);
                 if (state.toolCalls() + executedThisRound >= budget.maxToolCalls()) {
                     stopReason = "BUDGET_TOOL_CALLS";
                     break;
                 }
-                String observation = toolSpecs.execute(ctx.runId(), request.name(), request.arguments());
+                String observation = results.get(i);
                 observations.add(new ObservedFragment(request.name(), request.arguments(), observation));
 
                 List<LoopMessage> withTool = new ArrayList<>(state.messages());
@@ -166,6 +196,41 @@ public class AgentLoop {
         checkpointStore.save(ctx.runId(), state);
         return new LoopResult(false, null, stopReason, observations, state,
                 state.round(), state.toolCalls(), state.tokensUsed());
+    }
+
+    /**
+     * 执行一批工具调用，返回与请求顺序一致的观察列表。
+     * 并行路径把 runId/trace 上下文显式传播到工具线程（ThreadLocal 不随线程池传递）。
+     */
+    private List<String> executeToolBatch(LoopContext ctx, List<ToolExecutionRequest> requests) {
+        List<String> results = new ArrayList<>(requests.size());
+        if (!parallelTools || requests.size() <= 1) {
+            for (ToolExecutionRequest request : requests) {
+                results.add(toolSpecs.execute(ctx.runId(), request.name(), request.arguments()));
+            }
+            return results;
+        }
+        List<Future<String>> futures = new ArrayList<>(requests.size());
+        for (ToolExecutionRequest request : requests) {
+            futures.add(toolExecutor.submit(() -> {
+                ToolExecutionHolder.setRunId(ctx.runId());
+                ReActContextHolder.set(ctx.systemPrompt(), ctx.tracer(), ctx.parentStepId());
+                try {
+                    return toolSpecs.execute(ctx.runId(), request.name(), request.arguments());
+                } finally {
+                    ToolExecutionHolder.clear();
+                    ReActContextHolder.clear();
+                }
+            }));
+        }
+        for (Future<String> future : futures) {
+            try {
+                results.add(future.get());
+            } catch (Exception ex) {
+                results.add("【工具异常】" + ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            }
+        }
+        return results;
     }
 
     private List<ChatMessage> toFrameworkMessages(LoopState state) {

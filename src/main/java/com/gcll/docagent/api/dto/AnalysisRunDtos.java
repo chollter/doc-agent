@@ -26,6 +26,7 @@ public final class AnalysisRunDtos {
             String status,
             String executionMode,
             Integer sectionCount,
+            Long tokensUsed,
             Instant createdAt,
             Instant finishedAt
     ) {
@@ -44,6 +45,8 @@ public final class AnalysisRunDtos {
             String summary,
             JsonNode result,
             String lastError,
+            Long tokensUsed,
+            String claimedBy,
             java.util.List<HumanActionDto> pending,
             Instant createdAt,
             Instant finishedAt

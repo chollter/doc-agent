@@ -25,6 +25,8 @@ public class AgentRunEntity {
     private Integer sectionCount;
     private String executionMode;
     private String resultJson;
+    private String claimedBy;
+    private Long tokensUsed;
     private Instant startedAt;
     private Instant finishedAt;
     private String idempotencyKey;
@@ -110,6 +112,12 @@ public class AgentRunEntity {
 
     public String getResultJson() { return resultJson; }
     public void setResultJson(String resultJson) { this.resultJson = resultJson; }
+
+    public String getClaimedBy() { return claimedBy; }
+    public void setClaimedBy(String claimedBy) { this.claimedBy = claimedBy; }
+
+    public Long getTokensUsed() { return tokensUsed; }
+    public void setTokensUsed(Long tokensUsed) { this.tokensUsed = tokensUsed; }
 
     public Instant getStartedAt() { return startedAt; }
     public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }

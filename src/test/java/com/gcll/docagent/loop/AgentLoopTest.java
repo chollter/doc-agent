@@ -82,7 +82,7 @@ class AgentLoopTest {
     }
 
     private AgentLoop newLoop(ScriptedModel model, InMemoryStore store) {
-        return new AgentLoop(model, toolSpecs(), store, 10, 16, 60000);
+        return new AgentLoop(model, toolSpecs(), store, 10, 16, 60000, false);
     }
 
     private AgentLoop.LoopContext ctx(String runId) {
@@ -126,7 +126,7 @@ class AgentLoopTest {
                     .build(), 100));
         }
         InMemoryStore store = new InMemoryStore();
-        AgentLoop tight = new AgentLoop(model, toolSpecs(), store, 2, 16, 60000);
+        AgentLoop tight = new AgentLoop(model, toolSpecs(), store, 2, 16, 60000, false);
 
         AgentLoop.LoopResult result = tight.run(ctx("r2"));
 
@@ -143,7 +143,7 @@ class AgentLoopTest {
                         .id("c1").name("read_section").arguments("{}").build()))
                 .build(), 90000));
         InMemoryStore store = new InMemoryStore();
-        AgentLoop tight = new AgentLoop(model, toolSpecs(), store, 10, 16, 60000);
+        AgentLoop tight = new AgentLoop(model, toolSpecs(), store, 10, 16, 60000, false);
 
         AgentLoop.LoopResult result = tight.run(ctx("r3"));
 
@@ -164,7 +164,7 @@ class AgentLoopTest {
         AgentLoop.LoopContext context = ctx("r4");
 
         // 第一段：模拟崩溃——只给一轮响应就中断（用小轮次预算制造停止）
-        AgentLoop half = new AgentLoop(model, toolSpecs(), store, 1, 16, 60000);
+        AgentLoop half = new AgentLoop(model, toolSpecs(), store, 1, 16, 60000, false);
         AgentLoop.LoopResult first = half.run(context);
         assertThat(first.success()).isFalse();
 
