@@ -1,0 +1,41 @@
+{
+  "cases": [
+    {
+      "name": "tech-spec-summary",
+      "file": "samples/tech-spec.md",
+      "skill": "document-analysis",
+      "instruction": "提炼这份技术方案的核心内容与风险",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "minKeyPoints": 2,
+        "minCitations": 1,
+        "keywords": ["技术方案"]
+      }
+    },
+    {
+      "name": "resume-review-basic",
+      "file": "samples/resume.pdf",
+      "skill": "resume-review",
+      "instruction": "提炼这份简历的亮点，并给出改进建议",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "minKeyPoints": 1,
+        "minCitations": 1
+      }
+    },
+    {
+      "name": "requirements-risk-scan",
+      "file": "samples/product-requirements.docx",
+      "skill": "document-analysis",
+      "instruction": "梳理核心功能与开放风险",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "minKeyPoints": 2,
+        "minCitations": 1
+      }
+    }
+  ]
+}

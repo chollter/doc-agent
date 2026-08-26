@@ -60,6 +60,7 @@ flowchart LR
 | 引用可溯源 | LLM 输出必须携带 `{sectionId, quote}` 引用；CITATION_VERIFY 步剔除指向不存在节的编造引用、错位引用自动重挂 |
 | 垂直 Skill | SkillDefinition 注册表：同一执行引擎承载多个技能（文档分析 / 简历审查），技能只差提示词+工具集+默认指令 |
 | 人工确认闭环（HITL） | DANGER 级 export_report 工具被 ToolConfirmGate 拦截：run 进入 WAIT_HUMAN_CONFIRM、前端弹确认卡，人工确认后才写盘；拒绝/超时自动跳过，全程在 trace 可见 |
+| Golden Case 评测 | 固定输入+断言走完整生产链路回归；轨迹指标（ReAct轮次/工具调用/大纲优先率/冗余读/引用保留与剔除）从 trace 落库数据计算；断言与执行模式无关，无 Key 的 CI 与真实 Key 环境同一套通过标准 |
 | 全链路 Trace | 每步（含 ReAct 每轮 LLM 响应与每次工具调用）写 agent_step 树形表 + SSE 实时推送 + OTel span（双写已实现，默认采样 0，接 Collector 可开） |
 | 多格式解析 | PDF（PDFBox，扫描件明确报错）/ DOCX（POI，标题样式分节）/ MD（标题分节）/ TXT（空行聚合），统一分节视图 |
 | 一键演示 | 默认 H2 文件库 + 内嵌前端构建产物，克隆后 `mvn spring-boot:run` 即跑（仅需 `LLM_API_KEY` 可选） |
@@ -102,6 +103,7 @@ pnpm build        # 产物直出 ../src/main/resources/static
 | GET | `/api/audit/agent-runs/{id}` | 步骤树审计（parentStepId / 耗时 / 工具 / LLM） |
 | GET | `/api/human/pending` | 待人工确认动作（可按 runId 过滤） |
 | POST | `/api/human/actions/{id}/confirm`、`/reject` | 确认/拒绝 DANGER 工具操作 |
+| GET / POST | `/api/evals/cases`、`/api/evals/run` | golden case 清单 / 全量评测（同步，返回报告+轨迹指标） |
 
 ## 项目结构
 
@@ -133,7 +135,7 @@ sample-docs/       # 演示示例：简历 PDF / 需求 DOCX / 技术方案 MD
 
 ## 测试
 
-68 个测试：解析层（四格式，PDF/DOCX fixture 测试内生成）、文档工具、工具运行时、治理网关、以及覆盖「LLM 正常 / LLM 失败降级 / 非法文件拒收」三场景的端到端集成测试（@MockitoBean 替换 LLM 网关）。
+72 个测试：解析层（四格式，PDF/DOCX fixture 测试内生成）、文档工具、工具运行时、治理网关、以及覆盖「LLM 正常 / LLM 失败降级 / 非法文件拒收」三场景的端到端集成测试（@MockitoBean 替换 LLM 网关）。
 
 ```bash
 mvn test
