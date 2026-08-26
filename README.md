@@ -48,13 +48,15 @@ flowchart LR
     TOOLS & LLM --> RES
 ```
 
-**一次 run 的执行链**：`PARSE → REACT_ANALYZE（get_document_outline / read_section / search_document 自主迭代，最多 8 轮）→ [降级] DIRECT_LLM → [兜底] RULE_FALLBACK → CITATION_VERIFY → REPORT`，每步落库 `agent_step` 并推送 SSE。
+**一次 run 的执行链**：`PARSE → REACT_ANALYZE（自研 AgentLoop：get_document_outline / read_section / search_document 自主迭代，预算内不限死轮次）→ [降级] DIRECT_LLM（携带循环已读片段，降级不丢上下文）→ [兜底] RULE_FALLBACK → CITATION_VERIFY → REPORT`，每步落库 `agent_step` 并推送 SSE；循环每轮写 `agent_checkpoint`，崩溃重启后自动续跑。
 
 ## 核心特性
 
 | 特性 | 说明 |
 |---|---|
-| 真·ReAct 循环 | LangChain4j AiService 驱动 Thought→Action→Observation，LLM 自主决定读哪些节、搜什么关键词 |
+| 真·ReAct 循环 | **自研 AgentLoop 内核**（LangChain4j 仅作模型传输层）：显式状态机 Thought→Action→Observation，LLM 自主决定读哪些节、搜什么关键词 |
+| Durable 执行 | 每轮 checkpoint 落库（消息+预算+文档快照）；进程被杀后重启自动从断点续跑（LOOP_RESUME 步骤进 trace） |
+| 循环预算硬顶 | 轮次/工具调用/token 三重上界，超限是可预期停止原因并进入降级链，失控代价有界 |
 | 工具治理 | 工具统一注册 ToolRegistry（READ/WRITE/DANGER 风险分级），经 ToolRuntime 执行：Resilience4j 重试/熔断/超时 + tool_execution_log 审计 |
 | 三级降级 | ReAct 失败 → 直连 LLM（单次调用，按模型窗口截断）→ 规则摘要。无 API Key 也能完整演示 |
 | 引用可溯源 | LLM 输出必须携带 `{sectionId, quote}` 引用；CITATION_VERIFY 步剔除指向不存在节的编造引用、错位引用自动重挂 |
@@ -125,17 +127,19 @@ sample-docs/       # 演示示例：简历 PDF / 需求 DOCX / 技术方案 MD
 
 ## 面试讲解要点
 
-1. **为什么用双框架（Spring AI + LangChain4j）**：流程化调用（降级路径、token 统计）走 Spring AI ChatClient 生态；ReAct 自主工具循环需要 AiService 的类型安全工具协议——同一 DashScope 模型经两种协议接入，职责分离互不干扰。
+1. **为什么自研循环而不用框架的 AiService**：框架循环给不了三样东西——崩溃恢复（每轮 checkpoint + 重启续跑）、预算硬顶（轮次/工具/token 可预期停止）、降级不丢上下文（失败时已读片段随结果带出给 DIRECT_LLM 复用，而非整体作废重读全文）。LangChain4j 退为纯传输层（ChatModel+消息类型），循环逻辑完全自有。
+2. **为什么双框架分工（Spring AI + LangChain4j）**：流程化调用（降级路径、token 统计）走 Spring AI ChatClient 生态；循环传输层用 LangChain4j 的 OpenAI 兼容接入——同一 DashScope 模型两种协议，职责分离互不干扰。
 2. **工具调用如何做治理**：LLM 只"选择"，执行统一走 ToolRuntime——注册表查找 → Resilience4j 包裹（副作用工具不重试）→ tool_execution_log 落库 → 指标打点。READ/WRITE/DANGER 三级风险分级：DANGER 级 export_report 被 ToolConfirmGate 拦截，run 转 WAIT_HUMAN_CONFIRM，前端确认卡人工放行后才写盘（可现场演示）。
 
-6. **为什么做 Skill 抽象**：Runtime 与业务解耦的实证——文档分析和简历审查两个技能共享同一执行引擎/降级链/trace/前端，新增技能只是在 SkillRegistry 注册提示词+工具集。
+7. **为什么做 Skill 抽象**：Runtime 与业务解耦的实证——文档分析和简历审查两个技能共享同一执行引擎/降级链/trace/前端，新增技能只是在 SkillRegistry 注册提示词+工具集。
 3. **降级链设计**：三级降级各对应一类故障（循环失控 / LLM 网关故障 / 无 Key），executionMode 字段让降级对用户可见、对面试官可讲。
 4. **引用防幻觉**：结构化引用 + 校验步（存在性检查 + 引文重挂），报告每条结论可点击跳回原文。
-5. **工程细节**：MyBatis-Plus 乐观锁版本号在 upsert 时的同步问题、SSE"先回放后实时"解决连接竞态、H2/PG 双兼容 schema、`system-base` prompt 双路径统一。
+5. **工程细节**：MyBatis-Plus 乐观锁版本号在 upsert 时的同步问题、SSE"先回放后实时"解决连接竞态、门控去重（崩溃恢复重入不产生重复待确认行）、H2/PG 双兼容 schema。
+6. **崩溃恢复的边界**：DANGER 工具等待确认时被杀，恢复后从 checkpoint 重入循环，门控按 run+工具复用待确认行，不产生重复审计。
 
 ## 测试
 
-72 个测试：解析层（四格式，PDF/DOCX fixture 测试内生成）、文档工具、工具运行时、治理网关、以及覆盖「LLM 正常 / LLM 失败降级 / 非法文件拒收」三场景的端到端集成测试（@MockitoBean 替换 LLM 网关）。
+76 个测试：解析层（四格式，PDF/DOCX fixture 测试内生成）、文档工具、工具运行时、治理网关、以及覆盖「LLM 正常 / LLM 失败降级 / 非法文件拒收」三场景的端到端集成测试（@MockitoBean 替换 LLM 网关）。
 
 ```bash
 mvn test

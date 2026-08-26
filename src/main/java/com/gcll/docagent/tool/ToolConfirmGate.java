@@ -52,6 +52,16 @@ public class ToolConfirmGate {
      * @return ConfirmDecision：APPROVED（已确认放行）/ BLOCKED（等待确认）/ REJECTED（已拒绝）
      */
     public ConfirmDecision requestConfirm(ToolDescriptor descriptor, String runId, String toolPayload) {
+        // 同一 run+工具已有待确认动作时复用（崩溃恢复后重入不会产生重复 pending 行）
+        ConfirmState existing = pendingRequests.get(ConfirmState.key(runId, descriptor.name()));
+        if (existing != null) {
+            var stillPending = pendingActionRepository.findById(existing.actionId())
+                    .map(a -> a.getStatus() == PendingActionStatus.PENDING)
+                    .orElse(false);
+            if (stillPending) {
+                return ConfirmDecision.blocked(existing.actionId());
+            }
+        }
         String actionId = UUID.randomUUID().toString();
         PendingAction action = new PendingAction(
                 actionId,

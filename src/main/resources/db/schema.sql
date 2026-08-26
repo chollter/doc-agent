@@ -87,6 +87,14 @@ CREATE TABLE IF NOT EXISTS pending_action (
 
 CREATE INDEX IF NOT EXISTS idx_pending_action_run ON pending_action (run_id);
 
+-- 自研循环检查点（每轮覆盖写入；run 完成后删除）
+CREATE TABLE IF NOT EXISTS agent_checkpoint (
+    run_id      VARCHAR(64)  PRIMARY KEY,
+    round       INT          NOT NULL DEFAULT 0,
+    state_json  TEXT         NOT NULL,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Spring AI ChatMemory 对话历史表（JDBC repository；与官方 schema-postgresql.sql 等价）
 CREATE TABLE IF NOT EXISTS SPRING_AI_CHAT_MEMORY (
     conversation_id VARCHAR(36) NOT NULL,

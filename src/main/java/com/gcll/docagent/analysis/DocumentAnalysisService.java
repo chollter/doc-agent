@@ -7,9 +7,9 @@ import com.gcll.docagent.api.ErrorCode;
 import com.gcll.docagent.domain.AgentRun;
 import com.gcll.docagent.domain.AgentRunStatus;
 import com.gcll.docagent.langchain4j.ReActContextHolder;
-import com.gcll.docagent.langchain4j.SkillAssistant;
-import com.gcll.docagent.langchain4j.SkillAssistantFactory;
 import com.gcll.docagent.llm.LlmGateway;
+import com.gcll.docagent.loop.AgentLoop;
+import com.gcll.docagent.loop.LoopState;
 import com.gcll.docagent.observability.trace.TraceRecorder;
 import com.gcll.docagent.observability.trace.TraceRecorderFactory;
 import com.gcll.docagent.parsing.DocSection;
@@ -38,14 +38,14 @@ import java.util.concurrent.Executors;
  * 文档分析编排——一次 run 的完整生命周期：
  * <pre>
  * PARSE（同步，失败直接 400）
- *   → REACT_ANALYZE（LangChain4j 工具循环，LLM 自主读文档）
- *     失败 → DIRECT_LLM（Spring AI 单次调用，全文截断进上下文）
+ *   → REACT_ANALYZE（自研 AgentLoop：状态机 + 每轮 checkpoint + 预算硬顶）
+ *     失败 → DIRECT_LLM（单次调用；携带循环已读片段——降级不丢上下文）
  *       失败 → RULE_FALLBACK（纯规则摘要，无 LLM 也能出结果）
  *   → CITATION_VERIFY（引用与真实节对齐，剔除编造引用）
- *   → REPORT（结果落库 + 终态）
+ *   → REPORT（结果落库 + 终态 + 清理 checkpoint）
  * </pre>
- * 每一步经 {@link TraceRecorder} 落 agent_step 表并推 SSE；三级降级体现在 executionMode
- * （REACT / LLM / FALLBACK），是"LLM 不可用也能演示"的保底设计。
+ * 崩溃恢复：checkpoint 含消息+文档快照，重启后由 LoopRecovery 从断点续跑。
+ * 每一步经 {@link TraceRecorder} 落 agent_step 表并推 SSE；三级降级体现在 executionMode。
  */
 @Service
 public class DocumentAnalysisService {
@@ -59,7 +59,8 @@ public class DocumentAnalysisService {
     private final ObjectMapper objectMapper;
     private final ObjectProvider<LlmGateway> llmGatewayProvider;
     private final SkillRegistry skillRegistry;
-    private final SkillAssistantFactory assistantFactory;
+    private final AgentLoop agentLoop;
+    private final com.gcll.docagent.loop.LoopCheckpointStore checkpointStore;
     private final boolean reactEnabled;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(3, r -> {
@@ -76,7 +77,8 @@ public class DocumentAnalysisService {
             ObjectMapper objectMapper,
             ObjectProvider<LlmGateway> llmGatewayProvider,
             SkillRegistry skillRegistry,
-            SkillAssistantFactory assistantFactory,
+            AgentLoop agentLoop,
+            com.gcll.docagent.loop.LoopCheckpointStore checkpointStore,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled) {
         this.parsingService = parsingService;
         this.documentStore = documentStore;
@@ -85,7 +87,8 @@ public class DocumentAnalysisService {
         this.objectMapper = objectMapper;
         this.llmGatewayProvider = llmGatewayProvider;
         this.skillRegistry = skillRegistry;
-        this.assistantFactory = assistantFactory;
+        this.agentLoop = agentLoop;
+        this.checkpointStore = checkpointStore;
         this.reactEnabled = reactEnabled;
     }
 
@@ -123,6 +126,24 @@ public class DocumentAnalysisService {
         return run;
     }
 
+    /** 崩溃恢复入口：从 checkpoint 重建文档与上下文，从断点续跑。 */
+    public void resume(String runId) {
+        LoopState state = checkpointStore.find(runId)
+                .orElseThrow(() -> new IllegalStateException("run " + runId + " 无检查点，无法恢复"));
+        ParsedDocument doc = state.document();
+        if (doc == null) {
+            throw new IllegalStateException("checkpoint 缺少文档快照，无法恢复");
+        }
+        SkillDefinition skill = skillRegistry.find(state.skillName()).orElseGet(skillRegistry::defaultSkill);
+        documentStore.put(runId, doc);
+        executor.submit(() -> executeResumed(runId, doc, skill, state));
+    }
+
+    /** 扫描非终态 run，判断是否可恢复（有 checkpoint 且含文档快照）。 */
+    public boolean hasResumableCheckpoint(String runId) {
+        return checkpointStore.find(runId).map(s -> s.document() != null).orElse(false);
+    }
+
     // --- 异步执行 ---
 
     private void executeRun(String runId, ParsedDocument doc, SkillDefinition skill) {
@@ -135,57 +156,85 @@ public class DocumentAnalysisService {
         try {
             run.setStatus(AgentRunStatus.ANALYZING);
             agentRunRepository.save(run);
-
             traceParse(tracer, doc);
-
-            AnalysisResult result = null;
-            String mode = null;
-
-            // ReAct 阶段
-            if (reactEnabled) {
-                AnalysisResult r = runReact(runId, run, doc, skill, tracer);
-                if (r != null) {
-                    result = r;
-                    mode = "REACT";
-                }
-            }
-            // 降级 1：直连 LLM（单次调用，全文进上下文）
-            if (result == null) {
-                AnalysisResult r = runDirectLlm(runId, run, doc, skill, tracer);
-                if (r != null) {
-                    result = r;
-                    mode = "LLM";
-                }
-            }
-            // 降级 2：纯规则摘要（无 LLM 也能出结果）
-            if (result == null) {
-                result = ruleFallback(doc, tracer);
-                mode = "FALLBACK";
-            }
-
-            // 引用校验：剔除指向不存在节的引用
-            result = verifyCitations(result, doc, tracer);
-
-            run.setResultJson(objectMapper.writeValueAsString(result));
-            run.setExecutionMode(mode);
-            run.setCurrentSummary(result.summary());
-            run.setStatus(AgentRunStatus.COMPLETED);
-            run.setFinishedAt(Instant.now());
-            agentRunRepository.save(run);
-
-            String reportStep = tracer.begin("REPORT", null);
-            tracer.end(reportStep, "executionMode=" + mode + ", citations=" + result.citations().size(), null);
-            log.info("Analysis run completed, runId={}, mode={}, cost summary chars={}",
-                    runId, mode, result.summary().length());
+            analyzeAndFinish(runId, run, doc, skill, null, tracer);
         } catch (Exception fatal) {
-            log.error("Analysis run failed, runId={}", runId, fatal);
-            run.setStatus(AgentRunStatus.FAILED);
-            run.setLastError(fatal.getClass().getSimpleName() + ": " + fatal.getMessage());
-            run.setFinishedAt(Instant.now());
-            agentRunRepository.save(run);
-            String failStep = tracer.begin("RUN_FAILED", null);
-            tracer.end(failStep, run.getLastError(), run.getLastError());
+            fatal(run, runId, tracer, fatal);
         }
+    }
+
+    private void executeResumed(String runId, ParsedDocument doc, SkillDefinition skill, LoopState state) {
+        AgentRun run = agentRunRepository.findById(runId).orElse(null);
+        if (run == null) {
+            log.error("Resumed run disappeared, runId={}", runId);
+            return;
+        }
+        TraceRecorder tracer = traceRecorderFactory.create(run);
+        try {
+            run.setStatus(AgentRunStatus.ANALYZING);
+            agentRunRepository.save(run);
+            String stepId = tracer.begin("LOOP_RESUME", null);
+            tracer.recordInput(stepId, "from round " + state.round()
+                    + ", messages=" + state.messages().size()
+                    + ", tokensUsed=" + state.tokensUsed());
+            tracer.end(stepId, "checkpoint 恢复成功，续跑", null);
+            analyzeAndFinish(runId, run, doc, skill, state, tracer);
+        } catch (Exception fatal) {
+            fatal(run, runId, tracer, fatal);
+        }
+    }
+
+    /** 降级链主流程：循环 →（失败带片段）直连 →（失败）规则 → 引用校验 → 报告。 */
+    private void analyzeAndFinish(String runId, AgentRun run, ParsedDocument doc,
+                                  SkillDefinition skill, LoopState resumeFrom, TraceRecorder tracer) throws Exception {
+        AnalysisResult result = null;
+        String mode = null;
+        List<AgentLoop.ObservedFragment> observations = List.of();
+
+        if (reactEnabled) {
+            LoopOutcome outcome = runLoop(runId, run, doc, skill, resumeFrom, tracer);
+            if (outcome.result() != null) {
+                result = outcome.result();
+                mode = "REACT";
+            } else {
+                observations = outcome.observations();
+            }
+        }
+        if (result == null) {
+            AnalysisResult r = runDirectLlm(runId, run, doc, skill, tracer, observations);
+            if (r != null) {
+                result = r;
+                mode = "LLM";
+            }
+        }
+        if (result == null) {
+            result = ruleFallback(doc, tracer);
+            mode = "FALLBACK";
+        }
+
+        result = verifyCitations(result, doc, tracer);
+
+        run.setResultJson(objectMapper.writeValueAsString(result));
+        run.setExecutionMode(mode);
+        run.setCurrentSummary(result.summary());
+        run.setStatus(AgentRunStatus.COMPLETED);
+        run.setFinishedAt(Instant.now());
+        agentRunRepository.save(run);
+        checkpointStore.delete(runId);
+
+        String reportStep = tracer.begin("REPORT", null);
+        tracer.end(reportStep, "executionMode=" + mode + ", citations=" + result.citations().size(), null);
+        log.info("Analysis run completed, runId={}, mode={}, citations={}", runId, mode, result.citations().size());
+    }
+
+    private void fatal(AgentRun run, String runId, TraceRecorder tracer, Exception fatal) {
+        log.error("Analysis run failed, runId={}", runId, fatal);
+        run.setStatus(AgentRunStatus.FAILED);
+        run.setLastError(fatal.getClass().getSimpleName() + ": " + fatal.getMessage());
+        run.setFinishedAt(Instant.now());
+        agentRunRepository.save(run);
+        String failStep = tracer.begin("RUN_FAILED", null);
+        tracer.end(failStep, run.getLastError(), run.getLastError());
     }
 
     private void traceParse(TraceRecorder tracer, ParsedDocument doc) {
@@ -194,31 +243,48 @@ public class DocumentAnalysisService {
         tracer.end(step, "sections=" + doc.sections().size() + ", chars=" + doc.totalChars(), null);
     }
 
-    /** ReAct 循环：LLM 通过技能声明的工具集自主阅读与分析。 */
-    private AnalysisResult runReact(String runId, AgentRun run, ParsedDocument doc, SkillDefinition skill, TraceRecorder tracer) {
-        SkillAssistant assistant = assistantFactory.assistantFor(skill);
+    private record LoopOutcome(AnalysisResult result, List<AgentLoop.ObservedFragment> observations) {
+    }
+
+    /** 自研循环阶段。成功返回解析结果；失败返回 null + 已收集片段（供降级复用）。 */
+    private LoopOutcome runLoop(String runId, AgentRun run, ParsedDocument doc,
+                                SkillDefinition skill, LoopState resumeFrom, TraceRecorder tracer) {
         String stepId = tracer.begin("REACT_ANALYZE", null);
-        tracer.recordMeta(stepId, true, "LangChain4j");
+        tracer.recordMeta(stepId, true, "AgentLoop");
         try {
             ToolExecutionHolder.setRunId(runId);
             ReActContextHolder.set(skill.reactSystemPrompt(), tracer, stepId);
             String userMessage = "用户要求：" + run.getInstruction() + "\n\n文档大纲：\n" + doc.outline();
-            String answer = assistant.analyze(userMessage);
-            AnalysisResult result = parseResult(answer);
-            tracer.end(stepId, "react completed, citations=" + result.citations().size(), null);
-            return result;
+            AgentLoop.LoopResult loopResult = agentLoop.run(new AgentLoop.LoopContext(
+                    runId, skill.name(), skill.toolNames(), skill.reactSystemPrompt(),
+                    userMessage, doc, tracer, stepId, resumeFrom));
+            if (loopResult.success()) {
+                AnalysisResult result = parseResult(loopResult.finalAnswer());
+                tracer.end(stepId, "loop completed: rounds=" + loopResult.rounds()
+                        + ", toolCalls=" + loopResult.toolCalls()
+                        + ", tokens=" + loopResult.tokensUsed()
+                        + ", citations=" + result.citations().size(), null);
+                return new LoopOutcome(result, loopResult.observations());
+            }
+            log.warn("Loop stopped, runId={}, reason={}, observations={}",
+                    runId, loopResult.stopReason(), loopResult.observations().size());
+            tracer.end(stepId, "loop stopped(" + loopResult.stopReason() + "), carrying "
+                    + loopResult.observations().size() + " fragments → fallback", loopResult.stopReason());
+            return new LoopOutcome(null, loopResult.observations());
         } catch (Exception ex) {
-            log.warn("ReAct analysis failed, falling back to direct LLM, runId={}: {}", runId, ex.getMessage());
-            tracer.end(stepId, "ReAct failed → fallback direct LLM", ex.getMessage());
-            return null;
+            log.warn("Loop analysis failed, falling back, runId={}: {}", runId, ex.getMessage());
+            tracer.end(stepId, "loop failed → fallback direct LLM", ex.getMessage());
+            return new LoopOutcome(null, List.of());
         } finally {
             ReActContextHolder.clear();
             ToolExecutionHolder.clear();
         }
     }
 
-    /** 降级 1：单次 LLM 调用，全文（按模型窗口截断）+ 要求进上下文。 */
-    private AnalysisResult runDirectLlm(String runId, AgentRun run, ParsedDocument doc, SkillDefinition skill, TraceRecorder tracer) {
+    /** 降级 1：单次 LLM 调用。若循环已读片段则一并携带——降级不丢上下文。 */
+    private AnalysisResult runDirectLlm(String runId, AgentRun run, ParsedDocument doc,
+                                        SkillDefinition skill, TraceRecorder tracer,
+                                        List<AgentLoop.ObservedFragment> observations) {
         LlmGateway llmGateway = llmGatewayProvider.getIfAvailable();
         if (llmGateway == null) {
             return null;
@@ -226,18 +292,44 @@ public class DocumentAnalysisService {
         String stepId = tracer.begin("DIRECT_LLM", null);
         tracer.recordMeta(stepId, true, "SpringAI");
         try {
+            String carried = renderObservations(observations);
             String userContent = "用户要求：" + run.getInstruction()
+                    + (carried.isEmpty() ? "" : "\n\nAgent 此前已阅读的片段（降级续读，勿重复阅读）：\n" + carried)
                     + "\n\n文档内容（[节ID] 标记了各节，引用时使用节ID）：\n" + renderWithSectionIds(doc);
             LlmResponse response = llmGateway.invoke(
                     "llm." + skill.name(), skill.directPromptFile(), userContent, runId);
             AnalysisResult result = parseResult(response.content());
-            tracer.end(stepId, "direct llm completed", null);
+            tracer.end(stepId, "direct llm completed"
+                    + (carried.isEmpty() ? "" : ", carried=" + observations.size() + " fragments"), null);
             return result;
         } catch (Exception ex) {
             log.warn("Direct LLM failed, falling back to rule, runId={}: {}", runId, ex.getMessage());
             tracer.end(stepId, "direct LLM failed → fallback rule", ex.getMessage());
             return null;
         }
+    }
+
+    /** 把循环已读片段渲染进降级 prompt（每片截断 600 字，总量约 4000 字）。 */
+    private static String renderObservations(List<AgentLoop.ObservedFragment> observations) {
+        if (observations == null || observations.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        int total = 0;
+        for (AgentLoop.ObservedFragment f : observations) {
+            if (total > 4000) {
+                sb.append("…（其余片段已省略）\n");
+                break;
+            }
+            String body = f.observation() == null ? "" : f.observation();
+            if (body.length() > 600) {
+                body = body.substring(0, 600) + "…";
+            }
+            sb.append("· ").append(f.toolName()).append(" ").append(f.args() == null ? "" : f.args())
+              .append(" → ").append(body).append('\n');
+            total += body.length();
+        }
+        return sb.toString();
     }
 
     /** 降级 2：纯规则摘要——无 API Key / LLM 全挂时仍可演示完整链路与 trace。 */
@@ -287,7 +379,6 @@ public class DocumentAnalysisService {
             if (section.isPresent()) {
                 kept.add(new AnalysisResult.Citation(normalized, c.quote()));
             } else if (c.quote() != null && !c.quote().isBlank()) {
-                // 节ID无效但引文能定位到唯一节：重新挂到真实节
                 List<DocSection> matches = doc.sections().stream()
                         .filter(s -> s.text() != null && s.text().contains(c.quote().trim()))
                         .toList();
