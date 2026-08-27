@@ -36,6 +36,23 @@
         "minKeyPoints": 2,
         "minCitations": 1
       }
+    },
+    {
+      "name": "jd-match-defect-injection",
+      "file": "eval-docs/defect-resume.md",
+      "skill": "resume-review",
+      "instruction": "分析这份简历与目标岗位的匹配度，找出差距并给出改进建议",
+      "jobDescription": "高级Java后端工程师（AI方向）\n\n岗位要求：\n1. 精通Java/Spring Boot微服务架构，3年以上生产级经验\n2. 有AI/LLM应用工程化经验（RAG/Agent/向量检索），有实际落地案例\n3. 熟悉Kubernetes/Service Mesh等云原生技术，有生产级容器编排经验\n4. 有大团队（15人以上）技术方案主导经验\n5. 英语流利（CET-6或同等），能参与跨国技术讨论\n6. 有Python数据分析经验者优先",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "minKeyPoints": 2,
+        "minCitations": 2,
+        "minGaps": 3,
+        "minMatchDimensions": 3,
+        "minInterviewQuestions": 2,
+        "mustContainGapKeywords": ["Kubernetes", "团队", "英语"]
+      }
     }
   ]
 }

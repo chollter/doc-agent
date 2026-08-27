@@ -8,11 +8,14 @@ import java.util.List;
  * 评测用例——固定输入 + 结果断言，让"引用防幻觉""降级可靠"这类主张变得可度量。
  * <p>断言设计为模式无关（REACT/LLM/FALLBACK 皆须通过），保证无 API Key 的 CI 环境
  * 也能跑通全量回归；接入真实 Key 时同一批用例自动验证更强路径。
+ * <p>P10 起支持配对缺陷注入：简历×JD 埋已知匹配/差距/幻觉陷阱，
+ * 断言差距检出率、匹配维度完整性与面试题 grounding。
  *
  * @param name        用例名
  * @param file        classpath 下的文档路径（如 samples/tech-spec.md）
  * @param skill       技能名
  * @param instruction 分析指令
+ * @param jobDescription 目标岗位JD（可选；提供时启用匹配分析）
  * @param timeoutSeconds 单用例超时
  * @param assertions  结果断言
  */
@@ -22,6 +25,7 @@ public record EvalCase(
         String file,
         String skill,
         String instruction,
+        String jobDescription,
         int timeoutSeconds,
         Assertions assertions
 ) {
@@ -32,7 +36,13 @@ public record EvalCase(
             List<String> allowedModes,
             Integer minKeyPoints,
             Integer minCitations,
-            List<String> keywords
+            List<String> keywords,
+            // ---- P10: 岗位匹配断言 ----
+            Integer minGaps,
+            Integer minMatchDimensions,
+            Integer minInterviewQuestions,
+            List<String> mustContainGapKeywords,
+            List<String> mustNotContainGapKeywords
     ) {
     }
 }

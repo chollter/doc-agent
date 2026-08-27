@@ -97,7 +97,7 @@ public class EvalRunner {
         try {
             byte[] bytes = new ClassPathResource(evalCase.file()).getInputStream().readAllBytes();
             AgentRun run = analysisService.start(
-                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(), null);
+                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(), evalCase.jobDescription());
             runId = run.getId();
 
             int timeoutSeconds = evalCase.timeoutSeconds() > 0 ? evalCase.timeoutSeconds() : DEFAULT_TIMEOUT_SECONDS;
@@ -187,6 +187,44 @@ public class EvalRunner {
                 }
             }
         }
+
+        // ---- P10: 岗位匹配断言（仅 LLM 模式下检查；FALLBACK 不产出这些字段） ----
+        if ("FALLBACK".equals(run.getExecutionMode())) {
+            return;
+        }
+        int gaps = result.gaps() == null ? 0 : result.gaps().size();
+        if (a.minGaps() != null && gaps < a.minGaps()) {
+            failures.add("gaps=" + gaps + " 少于下限 " + a.minGaps());
+        }
+        int dims = result.matchDimensions() == null ? 0 : result.matchDimensions().size();
+        if (a.minMatchDimensions() != null && dims < a.minMatchDimensions()) {
+            failures.add("matchDimensions=" + dims + " 少于下限 " + a.minMatchDimensions());
+        }
+        int questions = result.interviewQuestions() == null ? 0 : result.interviewQuestions().size();
+        if (a.minInterviewQuestions() != null && questions < a.minInterviewQuestions()) {
+            failures.add("interviewQuestions=" + questions + " 少于下限 " + a.minInterviewQuestions());
+        }
+        if (a.mustContainGapKeywords() != null && !a.mustContainGapKeywords().isEmpty()) {
+            String gapText = result.gaps() == null ? "" : result.gaps().stream()
+                    .map(g -> String.valueOf(g.getOrDefault("requirement", "")) + " "
+                            + String.valueOf(g.getOrDefault("gap", "")))
+                    .reduce("", (x, y) -> x + " " + y);
+            for (String kw : a.mustContainGapKeywords()) {
+                if (!gapText.contains(kw)) {
+                    failures.add("差距清单缺少关键词: " + kw + "（漏检）");
+                }
+            }
+        }
+        if (a.mustNotContainGapKeywords() != null && !a.mustNotContainGapKeywords().isEmpty()) {
+            String gapText = result.gaps() == null ? "" : result.gaps().stream()
+                    .map(g -> String.valueOf(g.getOrDefault("requirement", "")))
+                    .reduce("", (x, y) -> x + " " + y);
+            for (String kw : a.mustNotContainGapKeywords()) {
+                if (gapText.contains(kw)) {
+                    failures.add("差距清单不应包含关键词: " + kw + "（误报）");
+                }
+            }
+        }
     }
 
     private ResultJson parseResult(String json) {
@@ -207,7 +245,9 @@ public class EvalRunner {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record ResultJson(String summary, List<String> keyPoints, List<Map<String, String>> citations) {
+    record ResultJson(String summary, List<String> keyPoints, List<Map<String, String>> citations,
+            List<Map<String, String>> gaps, List<Map<String, String>> matchDimensions,
+            List<Map<String, String>> interviewQuestions, List<String> risks) {
     }
 
     public record CaseResult(
