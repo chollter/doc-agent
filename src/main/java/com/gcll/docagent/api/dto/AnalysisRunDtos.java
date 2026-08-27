@@ -53,6 +53,10 @@ public final class AnalysisRunDtos {
     ) {
     }
 
+    /** 追问消息。 */
+    public record MessageDto(Integer turn, String role, String content, String createdAt) {
+    }
+
     /** 文档分节视图（右侧文档面板 + 引用定位）。 */
     public record DocumentView(
             String runId,

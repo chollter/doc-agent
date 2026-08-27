@@ -28,6 +28,7 @@ public final class DomainEntityConverter {
         entity.setFileType(run.getFileType());
         entity.setSkill(run.getSkill());
         entity.setInstruction(run.getInstruction());
+        entity.setJobDescription(run.getJobDescription());
         entity.setSectionCount(run.getSectionCount());
         entity.setExecutionMode(run.getExecutionMode());
         entity.setResultJson(run.getResultJson());
@@ -57,6 +58,7 @@ public final class DomainEntityConverter {
         run.setFileType(entity.getFileType());
         run.setSkill(entity.getSkill());
         run.setInstruction(entity.getInstruction());
+        run.setJobDescription(entity.getJobDescription());
         run.setSectionCount(entity.getSectionCount());
         run.setExecutionMode(entity.getExecutionMode());
         run.setResultJson(entity.getResultJson());

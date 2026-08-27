@@ -17,6 +17,8 @@ import com.gcll.docagent.observability.trace.TraceRecorderFactory;
 import com.gcll.docagent.parsing.DocSection;
 import com.gcll.docagent.parsing.DocumentParsingService;
 import com.gcll.docagent.parsing.ParsedDocument;
+import com.gcll.docagent.persistence.entity.AgentMessageEntity;
+import com.gcll.docagent.persistence.mapper.AgentMessageMapper;
 import com.gcll.docagent.persistence.repository.AgentRunRepository;
 import com.gcll.docagent.resilience.LlmResponse;
 import com.gcll.docagent.tool.ToolExecutionHolder;
@@ -32,6 +34,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.Executors;
@@ -67,6 +70,7 @@ public class DocumentAnalysisService {
     private final SkillRegistry skillRegistry;
     private final AgentLoop agentLoop;
     private final LoopCheckpointStore checkpointStore;
+    private final AgentMessageMapper agentMessageMapper;
     private final boolean reactEnabled;
     private final boolean exportEnabled;
     private final int requeueStaleMinutes;
@@ -88,6 +92,7 @@ public class DocumentAnalysisService {
             SkillRegistry skillRegistry,
             AgentLoop agentLoop,
             LoopCheckpointStore checkpointStore,
+            AgentMessageMapper agentMessageMapper,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
             @Value("${docagent.analysis.export-enabled:true}") boolean exportEnabled,
             @Value("${docagent.analysis.dispatcher.requeue-stale-minutes:15}") int requeueStaleMinutes,
@@ -101,6 +106,7 @@ public class DocumentAnalysisService {
         this.skillRegistry = skillRegistry;
         this.agentLoop = agentLoop;
         this.checkpointStore = checkpointStore;
+        this.agentMessageMapper = agentMessageMapper;
         this.reactEnabled = reactEnabled;
         this.exportEnabled = exportEnabled;
         this.requeueStaleMinutes = requeueStaleMinutes;
@@ -108,7 +114,7 @@ public class DocumentAnalysisService {
     }
 
     /** 提交分析：同步解析 + checkpoint-0 + 入队（QUEUED）。执行由调度器异步认领。 */
-    public AgentRun start(MultipartFile file, String instruction, String skillName) {
+    public AgentRun start(MultipartFile file, String instruction, String skillName, String jobDescription) {
         SkillDefinition skill = skillRegistry.find(skillName)
                 .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST,
                         "未知技能: " + skillName + "（可用: " + skillRegistry.list().stream().map(SkillDefinition::name).toList() + ")"));
@@ -131,6 +137,9 @@ public class DocumentAnalysisService {
         run.setSkill(skill.name());
         run.setInstruction(instruction == null || instruction.isBlank()
                 ? skill.defaultInstruction() : instruction.trim());
+        if (jobDescription != null && !jobDescription.isBlank()) {
+            run.setJobDescription(jobDescription.trim());
+        }
         run.setSectionCount(doc.sections().size());
         run.setStatus(AgentRunStatus.QUEUED);
 
@@ -151,6 +160,45 @@ public class DocumentAnalysisService {
 
     private static String buildUserMessage(AgentRun run, ParsedDocument doc) {
         return "用户要求：" + run.getInstruction() + "\n\n文档大纲：\n" + doc.outline();
+    }
+
+    public AgentRun followUp(String runId, String message) {
+        AgentRun run = agentRunRepository.findById(runId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.AGENT_RUN_NOT_FOUND, "run 不存在: " + runId));
+        if (run.getStatus() != AgentRunStatus.COMPLETED) {
+            throw new BusinessException(ErrorCode.INVALID_STATE, "run 状态 " + run.getStatus() + "，仅 COMPLETED 可追问");
+        }
+        if (message == null || message.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "追问内容不能为空");
+        }
+        LoopState state = checkpointStore.find(runId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_STATE, "会话状态已过期"));
+        saveMessage(runId, state.turn() + 1, "USER", message.trim());
+        List<LoopMessage> messages = new ArrayList<>(state.messages());
+        messages.add(LoopMessage.user("[追问轮] 请直接用自然语言回答以下问题，不要输出JSON格式。引用原文时用 [节ID] 标注。\n\n" + message.trim()));
+        checkpointStore.save(runId, state.nextTurn(List.copyOf(messages)));
+        run.setStatus(AgentRunStatus.QUEUED);
+        run.setFinishedAt(null);
+        agentRunRepository.save(run);
+        log.info("Follow-up queued, runId={}, turn={}", runId, state.turn() + 1);
+        return run;
+    }
+
+    public List<AgentMessageEntity> getMessages(String runId) {
+        return agentMessageMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AgentMessageEntity>()
+                        .eq(AgentMessageEntity::getRunId, runId)
+                        .orderByAsc(AgentMessageEntity::getTurn));
+    }
+
+    private void saveMessage(String runId, int turn, String role, String content) {
+        AgentMessageEntity entity = new AgentMessageEntity();
+        entity.setRunId(runId);
+        entity.setTurn(turn);
+        entity.setRole(role);
+        entity.setContent(content);
+        entity.setCreatedAt(java.time.LocalDateTime.now());
+        agentMessageMapper.insert(entity);
     }
 
     // --- 队列调度（由 RunQueueScheduler 驱动） ---
@@ -215,7 +263,12 @@ public class DocumentAnalysisService {
 
         TraceRecorder tracer = traceRecorderFactory.create(run);
         try {
-            if (state.round() > 0) {
+            if (state.turn() > 0) {
+                String stepId = tracer.begin("FOLLOW_UP", null);
+                tracer.recordInput(stepId, "turn=" + state.turn()
+                        + ", messages=" + state.messages().size());
+                tracer.end(stepId, "追问轮续跑", null);
+            } else if (state.round() > 0) {
                 String stepId = tracer.begin("LOOP_RESUME", null);
                 tracer.recordInput(stepId, "from round " + state.round()
                         + ", messages=" + state.messages().size()
@@ -233,6 +286,10 @@ public class DocumentAnalysisService {
     /** 降级链主流程：循环 →（失败带片段）直连 →（失败）规则 → 引用校验 → 报告。 */
     private void analyzeAndFinish(String runId, AgentRun run, ParsedDocument doc,
                                   SkillDefinition skill, LoopState resumeFrom, TraceRecorder tracer) throws Exception {
+        if (resumeFrom.turn() > 0) {
+            analyzeFollowUp(runId, run, doc, skill, resumeFrom, tracer);
+            return;
+        }
         AnalysisResult result = null;
         String mode = null;
         List<AgentLoop.ObservedFragment> observations = List.of();
@@ -271,13 +328,64 @@ public class DocumentAnalysisService {
         run.setStatus(AgentRunStatus.COMPLETED);
         run.setFinishedAt(Instant.now());
         agentRunRepository.save(run);
-        checkpointStore.delete(runId);
+        // checkpoint 保留供追问
 
         String reportStep = tracer.begin("REPORT", null);
         tracer.end(reportStep, "executionMode=" + mode + ", citations=" + result.citations().size()
                 + (tokensUsed != null ? ", tokens=" + tokensUsed : "") + ", instance=" + instanceId, null);
         log.info("Analysis run completed, runId={}, mode={}, tokens={}, instance={}",
                 runId, mode, tokensUsed, instanceId);
+    }
+
+    /** 追问轮：自由文本回答，不覆写首轮报告。 */
+    private void analyzeFollowUp(String runId, AgentRun run, ParsedDocument doc,
+                                 SkillDefinition skill, LoopState state, TraceRecorder tracer) throws Exception {
+        String answer = null;
+        String mode = "REACT";
+        if (reactEnabled) {
+            String stepId = tracer.begin("REACT_ANALYZE", null);
+            tracer.recordMeta(stepId, true, "AgentLoop");
+            try {
+                ToolExecutionHolder.setRunId(runId);
+                ReActContextHolder.set(effectiveSystemPrompt(skill), tracer, stepId);
+                AgentLoop.LoopResult loopResult = agentLoop.run(new AgentLoop.LoopContext(
+                        runId, skill.name(), effectiveToolNames(skill), effectiveSystemPrompt(skill),
+                        "", doc, tracer, stepId, state));
+                if (loopResult.success()) {
+                    answer = loopResult.finalAnswer();
+                    tracer.end(stepId, "follow-up loop: rounds=" + loopResult.rounds(), null);
+                } else {
+                    tracer.end(stepId, "loop stopped(" + loopResult.stopReason() + ")", loopResult.stopReason());
+                }
+            } catch (Exception ex) {
+                tracer.end(stepId, "loop failed: " + ex.getMessage(), ex.getMessage());
+            } finally {
+                ReActContextHolder.clear();
+                ToolExecutionHolder.clear();
+            }
+        }
+        if (answer == null || answer.isBlank()) {
+            LlmGateway llmGateway = llmGatewayProvider.getIfAvailable();
+            if (llmGateway != null) {
+                try {
+                    String flat = state.messages().stream()
+                            .filter(m -> m.text() != null && !m.text().isBlank())
+                            .map(m -> (m.role().equals("USER") ? "[User] " : "[Assistant] ") + m.text())
+                            .reduce((a, b) -> a + "\\n" + b).orElse("");
+                    LlmResponse resp = llmGateway.invoke("llm." + skill.name(), skill.directPromptFile(), flat, runId);
+                    answer = resp.content();
+                    mode = "LLM";
+                } catch (Exception ex) { log.warn("FollowUp LLM failed: {}", ex.getMessage()); }
+            }
+        }
+        if (answer == null || answer.isBlank()) { answer = "抱歉，本轮无法生成回答。"; mode = "FALLBACK"; }
+        saveMessage(runId, state.turn(), "ASSISTANT", answer);
+        run.setStatus(AgentRunStatus.COMPLETED);
+        run.setFinishedAt(Instant.now());
+        agentRunRepository.save(run);
+        String s2 = tracer.begin("FOLLOW_UP_ANSWER", null);
+        tracer.end(s2, "mode=" + mode, null);
+        log.info("FollowUp completed, runId={}, turn={}, mode={}", runId, state.turn(), mode);
     }
 
     private void fatal(AgentRun run, String runId, TraceRecorder tracer, Exception fatal) {
@@ -435,7 +543,7 @@ public class DocumentAnalysisService {
                 keyPoints,
                 List.of("规则模式不做推断，未识别文档中的风险"),
                 List.of("LLM 当前不可用，建议配置 LLM_API_KEY 后重新分析以获得针对性建议"),
-                citations);
+                citations, null, null, null);
         tracer.end(stepId, "rule fallback completed", null);
         return result;
     }
@@ -468,8 +576,7 @@ public class DocumentAnalysisService {
             }
         }
         tracer.end(stepId, "kept=" + kept.size() + ", dropped=" + dropped, null);
-        return new AnalysisResult(result.summary(), result.keyPoints(), result.risks(),
-                result.suggestions(), List.copyOf(kept));
+        return result.withCitations(List.copyOf(kept));
     }
 
     // --- 结果解析 ---
@@ -503,7 +610,10 @@ public class DocumentAnalysisService {
                     raw.keyPoints == null ? List.of() : raw.keyPoints,
                     raw.risks == null ? List.of() : raw.risks,
                     raw.suggestions == null ? List.of() : raw.suggestions,
-                    citations);
+                    citations,
+                    parseMatchDimensions(raw.matchDimensions),
+                    parseGaps(raw.gaps),
+                    parseInterviewQuestions(raw.interviewQuestions));
         } catch (IllegalArgumentException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -548,6 +658,33 @@ public class DocumentAnalysisService {
         public List<String> risks;
         public List<String> suggestions;
         public List<RawCitation> citations;
+        public List<RawMatchDimension> matchDimensions;
+        public List<RawGap> gaps;
+        public List<RawInterviewQuestion> interviewQuestions;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawMatchDimension { public String name; public String level; public String reason; }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawGap { public String requirement; public String gap; public String suggestion; }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawInterviewQuestion { public String question; public String intent; public String suggestedAnswer; public Boolean isGapPrep; }
+
+    private static List<AnalysisResult.MatchDimension> parseMatchDimensions(List<RawMatchDimension> raw) {
+        if (raw == null) return null;
+        return raw.stream().filter(Objects::nonNull).map(m -> new AnalysisResult.MatchDimension(m.name, m.level, m.reason)).toList();
+    }
+
+    private static List<AnalysisResult.Gap> parseGaps(List<RawGap> raw) {
+        if (raw == null) return null;
+        return raw.stream().filter(Objects::nonNull).map(g -> new AnalysisResult.Gap(g.requirement, g.gap, g.suggestion)).toList();
+    }
+
+    private static List<AnalysisResult.InterviewQuestion> parseInterviewQuestions(List<RawInterviewQuestion> raw) {
+        if (raw == null) return null;
+        return raw.stream().filter(Objects::nonNull).map(q -> new AnalysisResult.InterviewQuestion(q.question, q.intent, q.suggestedAnswer, Boolean.TRUE.equals(q.isGapPrep))).toList();
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

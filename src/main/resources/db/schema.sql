@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS agent_run (
     file_type       VARCHAR(32),
     skill           VARCHAR(64),
     instruction     TEXT,
+    job_description TEXT,
     section_count   INT,
     execution_mode  VARCHAR(32),
     result_json     TEXT,
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS agent_run (
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS file_name VARCHAR(256);
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS file_type VARCHAR(32);
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS skill VARCHAR(64);
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS job_description TEXT;
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS instruction TEXT;
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS section_count INT;
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS execution_mode VARCHAR(32);
@@ -92,6 +94,17 @@ CREATE TABLE IF NOT EXISTS pending_action (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_action_run ON pending_action (run_id);
+
+-- 追问轮次消息
+CREATE TABLE IF NOT EXISTS agent_message (
+    id         VARCHAR(64)  PRIMARY KEY,
+    run_id     VARCHAR(64)  NOT NULL,
+    turn       INT          NOT NULL DEFAULT 1,
+    role       VARCHAR(16)  NOT NULL,
+    content    TEXT         NOT NULL,
+    created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_message_run ON agent_message (run_id);
 
 -- 自研循环检查点（每轮覆盖写入；run 完成后删除）
 CREATE TABLE IF NOT EXISTS agent_checkpoint (

@@ -97,7 +97,7 @@ public class EvalRunner {
         try {
             byte[] bytes = new ClassPathResource(evalCase.file()).getInputStream().readAllBytes();
             AgentRun run = analysisService.start(
-                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill());
+                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(), null);
             runId = run.getId();
 
             int timeoutSeconds = evalCase.timeoutSeconds() > 0 ? evalCase.timeoutSeconds() : DEFAULT_TIMEOUT_SECONDS;

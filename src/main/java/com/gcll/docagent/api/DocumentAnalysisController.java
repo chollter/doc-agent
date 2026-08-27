@@ -57,8 +57,9 @@ public class DocumentAnalysisController {
     public Start submit(
             @RequestPart("file") MultipartFile file,
             @RequestParam(required = false) String instruction,
-            @RequestParam(required = false) String skill) {
-        AgentRun run = analysisService.start(file, instruction, skill);
+            @RequestParam(required = false) String skill,
+            @RequestParam(required = false) String jobDescription) {
+        AgentRun run = analysisService.start(file, instruction, skill, jobDescription);
         return new Start(run.getId(), run.getStatus().name());
     }
 
@@ -98,6 +99,26 @@ public class DocumentAnalysisController {
                 run.getCurrentSummary(), result, run.getLastError(),
                 run.getTokensUsed(), run.getClaimedBy(), pending,
                 run.getCreatedAt(), run.getFinishedAt());
+    }
+
+    /** 追问：向已完成的 run 追加用户消息，重回队列续跑。 */
+    @org.springframework.web.bind.annotation.PostMapping("/runs/{runId}/messages")
+    public org.springframework.http.ResponseEntity<Start> followUp(
+            @org.springframework.web.bind.annotation.PathVariable String runId,
+            @org.springframework.web.bind.annotation.RequestBody java.util.Map<String, String> body) {
+        AgentRun run = analysisService.followUp(runId, body.get("message"));
+        return org.springframework.http.ResponseEntity.accepted()
+                .body(new Start(run.getId(), run.getStatus().name()));
+    }
+
+    /** 追问消息列表（历史回放用）。 */
+    @org.springframework.web.bind.annotation.GetMapping("/runs/{runId}/messages")
+    public java.util.List<com.gcll.docagent.api.dto.AnalysisRunDtos.MessageDto> getMessages(
+            @org.springframework.web.bind.annotation.PathVariable String runId) {
+        return analysisService.getMessages(runId).stream()
+                .map(m -> new com.gcll.docagent.api.dto.AnalysisRunDtos.MessageDto(
+                        m.getTurn(), m.getRole(), m.getContent(), m.getCreatedAt().toString()))
+                .toList();
     }
 
     /** 文档分节视图：右侧文档面板渲染 + 引用点击定位。缓存过期后返回 404（历史 run 的正文不再保留）。 */

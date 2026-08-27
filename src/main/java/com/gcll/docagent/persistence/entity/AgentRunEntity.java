@@ -22,6 +22,7 @@ public class AgentRunEntity {
     private String fileType;
     private String skill;
     private String instruction;
+    private String jobDescription;
     private Integer sectionCount;
     private String executionMode;
     private String resultJson;
@@ -102,6 +103,8 @@ public class AgentRunEntity {
     public void setSkill(String skill) { this.skill = skill; }
 
     public String getInstruction() { return instruction; }
+    public String getJobDescription() { return jobDescription; }
+    public void setJobDescription(String jobDescription) { this.jobDescription = jobDescription; }
     public void setInstruction(String instruction) { this.instruction = instruction; }
 
     public Integer getSectionCount() { return sectionCount; }
