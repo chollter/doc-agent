@@ -74,7 +74,7 @@ public class DocumentAnalysisService {
     private final LoopCheckpointStore checkpointStore;
     private final AgentMessageMapper agentMessageMapper;
     private final ResumeEntityExtractor entityExtractor;
-    private final ResumePatternChecker patternChecker;
+    private final RedFlagChecker redFlagChecker;
     private final ResumeProfileBuilder profileBuilder;
     private final ResumeQualityScorer qualityScorer;
     private final boolean reactEnabled;
@@ -100,7 +100,7 @@ public class DocumentAnalysisService {
             LoopCheckpointStore checkpointStore,
             AgentMessageMapper agentMessageMapper,
             ResumeEntityExtractor entityExtractor,
-            ResumePatternChecker patternChecker,
+            RedFlagChecker redFlagChecker,
             ResumeProfileBuilder profileBuilder,
             ResumeQualityScorer qualityScorer,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
@@ -118,7 +118,7 @@ public class DocumentAnalysisService {
         this.checkpointStore = checkpointStore;
         this.agentMessageMapper = agentMessageMapper;
         this.entityExtractor = entityExtractor;
-        this.patternChecker = patternChecker;
+        this.redFlagChecker = redFlagChecker;
         this.profileBuilder = profileBuilder;
         this.qualityScorer = qualityScorer;
         this.reactEnabled = reactEnabled;
@@ -342,9 +342,10 @@ public class DocumentAnalysisService {
             } else {
                 traceParse(tracer, doc);
             }
-            // 简历技能：实体抽取 + 模式检查 + 画像构建（仅首轮）
+            // 简历技能：实体抽取 + 红旗筛查 + 画像构建（仅首轮）
             ResumeEntities entities = new ResumeEntities(List.of());
             List<String> patternFindings = List.of();
+            List<RedFlag> redFlags = List.of();
             ResumeProfile profile = null;
             boolean extractionDegraded = false;
             if (state.turn() == 0 && state.round() == 0 && "resume-review".equals(skill.name())) {
@@ -361,10 +362,11 @@ public class DocumentAnalysisService {
                     tracer.end(extractStep, "extracted " + entities.getAll().size()
                             + " entities" + (extractionDegraded ? " (DEGRADED)" : ""), null);
 
-                    String checkStep = tracer.begin("PATTERN_CHECK", null);
+                    String checkStep = tracer.begin("RED_FLAG_CHECK", null);
                     tracer.recordMeta(checkStep, false, null);
-                    patternFindings = patternChecker.check(entities);
-                    tracer.end(checkStep, "found " + patternFindings.size() + " patterns", null);
+                    redFlags = redFlagChecker.check(entities, fullText, Persona.GENERAL);
+                    patternFindings = redFlags.stream().map(RedFlag::message).toList();
+                    tracer.end(checkStep, "found " + redFlags.size() + " red flags", null);
 
                     String profileStep = tracer.begin("PROFILE_BUILD", null);
                     tracer.recordMeta(profileStep, false, null);
