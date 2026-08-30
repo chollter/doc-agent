@@ -77,8 +77,10 @@ public class EvalRunner {
     public EvalReport runAll() {
         List<EvalCase> cases = loadCases();
         List<CaseResult> results = new ArrayList<>();
+        // 配对单调性需要基线先跑：name → 漏斗快照（strength band / presentation 分）
+        Map<String, FunnelJson> verdictsByName = new java.util.HashMap<>();
         for (EvalCase evalCase : cases) {
-            results.add(runCase(evalCase));
+            results.add(runCase(evalCase, verdictsByName));
         }
         return new EvalReport(
                 results.size(),
@@ -88,7 +90,7 @@ public class EvalRunner {
                 Instant.now());
     }
 
-    private CaseResult runCase(EvalCase evalCase) {
+    private CaseResult runCase(EvalCase evalCase, Map<String, FunnelJson> verdictsByName) {
         List<String> failures = new ArrayList<>();
         TrajectoryMetrics metrics = null;
         String runId = null;
@@ -97,7 +99,8 @@ public class EvalRunner {
         try {
             byte[] bytes = new ClassPathResource(evalCase.file()).getInputStream().readAllBytes();
             AgentRun run = analysisService.start(
-                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(), evalCase.jobDescription(), null, null);
+                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(),
+                    evalCase.jobDescription(), evalCase.targetDirection(), null, null, null);
             runId = run.getId();
 
             int timeoutSeconds = evalCase.timeoutSeconds() > 0 ? evalCase.timeoutSeconds() : DEFAULT_TIMEOUT_SECONDS;
@@ -112,7 +115,11 @@ public class EvalRunner {
                     toolExecutionLogRepository.findByRunId(run.getId()),
                     Duration.between(started, ended).toMillis());
 
-            checkAssertions(evalCase, finished, failures);
+            checkAssertions(evalCase, finished, failures, verdictsByName);
+            ResultJson result = parseResult(finished.getResultJson());
+            if (result != null && result.funnelVerdict() != null) {
+                verdictsByName.put(evalCase.name(), result.funnelVerdict());
+            }
         } catch (Exception ex) {
             failures.add("执行异常: " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
         }
@@ -150,7 +157,8 @@ public class EvalRunner {
         throw new IllegalStateException("用例超时（" + timeoutSeconds + "s）未达终态");
     }
 
-    private void checkAssertions(EvalCase evalCase, AgentRun run, List<String> failures) {
+    private void checkAssertions(EvalCase evalCase, AgentRun run, List<String> failures,
+                                 Map<String, FunnelJson> verdictsByName) {
         EvalCase.Assertions a = evalCase.assertions();
         if (a == null) {
             return;
@@ -226,7 +234,7 @@ public class EvalRunner {
             }
         }
 
-        // ---- 简历深度分析断言 ----
+        // ---- 简历深度分析断言（P11；hasQualityScore 仅供历史 run 兼容） ----
         if (a.hasProfile() != null && a.hasProfile()) {
             if (result.profile() == null || result.profile().isEmpty()) {
                 failures.add("缺少候选人画像 (profile)");
@@ -245,6 +253,92 @@ public class EvalRunner {
         if (a.minEnhancedKeyPoints() != null && enhancedKeyPoints < a.minEnhancedKeyPoints()) {
             failures.add("enhancedKeyPoints=" + enhancedKeyPoints + " 少于下限 " + a.minEnhancedKeyPoints());
         }
+
+        // ---- P12: 漏斗分角度断言 ----
+        FunnelJson verdict = result.funnelVerdict();
+        if (a.hasFunnelVerdict() != null && a.hasFunnelVerdict() && verdict == null) {
+            failures.add("缺少漏斗结论 (funnelVerdict)");
+        }
+        if (verdict == null) {
+            return;
+        }
+        if (verdict.analysisDegraded()) {
+            failures.add("漏斗结论标记为降级 (analysisDegraded)，本断言组不允许降级");
+            return;
+        }
+        int leverageCards = verdict.leverageCards() == null ? 0 : verdict.leverageCards().size();
+        if (a.minLeverageCards() != null && leverageCards < a.minLeverageCards()) {
+            failures.add("leverageCards=" + leverageCards + " 少于下限 " + a.minLeverageCards());
+        }
+        java.util.Set<String> flagTypes = verdict.redFlags() == null ? java.util.Set.of()
+                : verdict.redFlags().stream().map(f -> f.get("type")).collect(java.util.stream.Collectors.toSet());
+        if (a.mustHaveRedFlagTypes() != null) {
+            for (String type : a.mustHaveRedFlagTypes()) {
+                if (!flagTypes.contains(type)) {
+                    failures.add("红旗缺失: " + type + "（漏检）");
+                }
+            }
+        }
+        if (a.mustNotHaveRedFlagTypes() != null) {
+            for (String type : a.mustNotHaveRedFlagTypes()) {
+                if (flagTypes.contains(type)) {
+                    failures.add("红旗误报: " + type);
+                }
+            }
+        }
+        String band = verdict.strength() == null ? null
+                : String.valueOf(verdict.strength().get("band"));
+        if (a.strengthBandAtMost() != null && !bandEqualsOrWorse(band, a.strengthBandAtMost())) {
+            failures.add("强度档位=" + band + " 应不高于 " + a.strengthBandAtMost());
+        }
+        if (a.matchMode() != null && !a.matchMode().equals(verdict.matchMode())) {
+            failures.add("matchMode=" + verdict.matchMode() + " 期望 " + a.matchMode());
+        }
+        long metCount = verdict.mustHaveCoverage() == null ? 0 : verdict.mustHaveCoverage().stream()
+                .filter(c -> "MET".equals(c.get("status"))).count();
+        if (a.minCoverageMet() != null && metCount < a.minCoverageMet()) {
+            failures.add("共性要求 MET=" + metCount + " 少于下限 " + a.minCoverageMet());
+        }
+        if (a.maxCoverageMet() != null && metCount > a.maxCoverageMet()) {
+            failures.add("共性要求 MET=" + metCount + " 超过上限 " + a.maxCoverageMet() + "（该缺陷未检出）");
+        }
+        if (a.mustContainVocabularyTerms() != null && verdict.vocabularyGaps() != null) {
+            java.util.Set<String> gapTerms = verdict.vocabularyGaps().stream()
+                    .map(v -> v.get("term")).collect(java.util.stream.Collectors.toSet());
+            for (String term : a.mustContainVocabularyTerms()) {
+                if (!gapTerms.contains(term)) {
+                    failures.add("词汇缺口缺失: " + term + "（表述升级建议漏检）");
+                }
+            }
+        }
+        // 配对单调性：注入缺陷后强度档位必须严格变差（WEAK=0 < MIXED=1 < STRONG=2）
+        if (a.expectWorseThan() != null) {
+            FunnelJson base = verdictsByName.get(a.expectWorseThan());
+            if (base == null) {
+                failures.add("配对基线用例未先运行: " + a.expectWorseThan());
+            } else {
+                String baseBand = base.strength() == null ? null : String.valueOf(base.strength().get("band"));
+                if (band == null || baseBand == null || bandRank(band) >= bandRank(baseBand)) {
+                    failures.add("配对单调性失败: 缺陷版强度档位 " + band
+                            + " 未严格差于基线 " + baseBand);
+                }
+            }
+        }
+    }
+
+    /** WEAK=0 / MIXED=1 / STRONG=2，未知 -1。 */
+    private static int bandRank(String band) {
+        return switch (band == null ? "" : band) {
+            case "WEAK" -> 0;
+            case "MIXED" -> 1;
+            case "STRONG" -> 2;
+            default -> -1;
+        };
+    }
+
+    /** actual 不高于（即不优于）expected：rank(actual) <= rank(expected)。 */
+    private static boolean bandEqualsOrWorse(String actual, String expected) {
+        return bandRank(actual) >= 0 && bandRank(actual) <= bandRank(expected);
     }
 
     private ResultJson parseResult(String json) {
@@ -273,7 +367,25 @@ public class EvalRunner {
             List<Map<String, String>> actionableSuggestions,
             List<Map<String, String>> enhancedKeyPoints,
             List<Map<String, String>> enhancedRisks,
-            Map<String, Object> profile) {
+            Map<String, Object> profile,
+            // P12 漏斗结论
+            FunnelJson funnelVerdict) {
+    }
+
+    /** 漏斗结论的评测视图（resultJson 中 funnelVerdict 字段的弱类型映射）。 */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record FunnelJson(
+            String matchMode,
+            String archetypeId,
+            boolean analysisDegraded,
+            List<Map<String, String>> redFlags,
+            Map<String, Object> strength,
+            Map<String, Object> presentation,
+            List<Map<String, String>> vocabularyGaps,
+            List<Map<String, String>> mustHaveCoverage,
+            List<Map<String, String>> variantFit,
+            List<Map<String, String>> leverageCards,
+            Map<String, Object> positioning) {
     }
 
     public record CaseResult(

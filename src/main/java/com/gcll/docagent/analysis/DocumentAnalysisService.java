@@ -76,7 +76,7 @@ public class DocumentAnalysisService {
     private final ResumeEntityExtractor entityExtractor;
     private final RedFlagChecker redFlagChecker;
     private final ResumeProfileBuilder profileBuilder;
-    private final ResumeQualityScorer qualityScorer;
+    private final ArchetypeRegistry archetypeRegistry;
     private final boolean reactEnabled;
     private final boolean exportEnabled;
     private final int requeueStaleMinutes;
@@ -102,7 +102,7 @@ public class DocumentAnalysisService {
             ResumeEntityExtractor entityExtractor,
             RedFlagChecker redFlagChecker,
             ResumeProfileBuilder profileBuilder,
-            ResumeQualityScorer qualityScorer,
+            ArchetypeRegistry archetypeRegistry,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
             @Value("${docagent.analysis.export-enabled:true}") boolean exportEnabled,
             @Value("${docagent.analysis.dispatcher.requeue-stale-minutes:15}") int requeueStaleMinutes,
@@ -120,7 +120,7 @@ public class DocumentAnalysisService {
         this.entityExtractor = entityExtractor;
         this.redFlagChecker = redFlagChecker;
         this.profileBuilder = profileBuilder;
-        this.qualityScorer = qualityScorer;
+        this.archetypeRegistry = archetypeRegistry;
         this.reactEnabled = reactEnabled;
         this.exportEnabled = exportEnabled;
         this.requeueStaleMinutes = requeueStaleMinutes;
@@ -129,7 +129,7 @@ public class DocumentAnalysisService {
 
     /** 提交分析：同步解析 + checkpoint-0 + 入队（QUEUED）。执行由调度器异步认领。 */
     public AgentRun start(MultipartFile file, String instruction, String skillName, String jobDescription,
-                          String promptVersion, String optimizationNote) {
+                          String targetDirection, String persona, String promptVersion, String optimizationNote) {
         SkillDefinition skill = skillRegistry.find(skillName)
                 .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST,
                         "未知技能: " + skillName + "（可用: " + skillRegistry.list().stream().map(SkillDefinition::name).toList() + ")"));
@@ -154,6 +154,12 @@ public class DocumentAnalysisService {
                 ? skill.defaultInstruction() : instruction.trim());
         if (jobDescription != null && !jobDescription.isBlank()) {
             run.setJobDescription(jobDescription.trim());
+        }
+        if (targetDirection != null && !targetDirection.isBlank()) {
+            run.setTargetDirection(targetDirection.trim());
+        }
+        if (persona != null && !persona.isBlank()) {
+            run.setPersona(persona.trim());
         }
         if (promptVersion != null && !promptVersion.isBlank()) {
             run.setPromptVersion(promptVersion.trim());
@@ -180,16 +186,15 @@ public class DocumentAnalysisService {
     }
 
     private static String buildUserMessage(AgentRun run, ParsedDocument doc) {
-        return buildUserMessage(run, doc, null, List.of());
+        return buildUserMessage(run, doc, ResumeContext.empty());
     }
 
-    private static String buildUserMessage(AgentRun run, ParsedDocument doc,
-                                            ResumeEntities entities, List<String> patternFindings) {
+    private static String buildUserMessage(AgentRun run, ParsedDocument doc, ResumeContext ctx) {
         StringBuilder sb = new StringBuilder();
         sb.append("用户要求：").append(run.getInstruction());
         sb.append("\n\n文档大纲：\n").append(doc.outline());
 
-        // 简历技能：附加预抽取的实体和模式检查结果
+        ResumeEntities entities = ctx.entities();
         if (entities != null && !entities.isEmpty()) {
             sb.append("\n\n## 预抽取的简历实体（供参考，无需重新从原文提取）");
             sb.append("\n技能：").append(entities.getSkillNames());
@@ -200,31 +205,80 @@ public class DocumentAnalysisService {
                 metrics.forEach(m -> sb.append("\n  - ").append(m.value()));
             }
 
-            var timePeriods = entities.getByType(ResumeEntity.EntityType.TIME_PERIOD);
-            if (!timePeriods.isEmpty()) {
-                sb.append("\n时间段：");
-                timePeriods.forEach(t -> sb.append("\n  - ").append(t.value()));
-            }
-
-            var roles = entities.getByType(ResumeEntity.EntityType.ROLE);
-            if (!roles.isEmpty()) {
-                sb.append("\n职位：");
-                roles.forEach(r -> sb.append("\n  - ").append(r.value()));
-            }
-
-            var claims = entities.getByType(ResumeEntity.EntityType.CLAIM);
-            if (!claims.isEmpty()) {
-                sb.append("\n关键声明：");
-                claims.forEach(c -> sb.append("\n  - ").append(c.value()));
+            var workEntries = entities.getByType(ResumeEntity.EntityType.WORK_ENTRY);
+            if (!workEntries.isEmpty()) {
+                sb.append("\n工作经历条目（experienceStrength 请逐条对照这些条目评估）：");
+                workEntries.forEach(w -> sb.append("\n  - ").append(w.value()));
             }
         }
 
-        if (patternFindings != null && !patternFindings.isEmpty()) {
-            sb.append("\n\n## 模式检查结果（代码已验证，可直接引用）");
-            patternFindings.forEach(f -> sb.append("\n  - ").append(f));
+        if (ctx.redFlags() != null && !ctx.redFlags().isEmpty()) {
+            sb.append("\n\n## 红旗筛查结果（代码已验证，可直接引用）");
+            ctx.redFlags().forEach(f -> sb.append("\n  - [").append(f.severity()).append("] ").append(f.message()));
+        }
+
+        if (run.getJobDescription() != null && !run.getJobDescription().isBlank()) {
+            sb.append("\n\n## 目标岗位JD（matchDimensions/gaps/interviewQuestions 必须逐条对照）\n")
+              .append(run.getJobDescription());
+        } else if (ctx.archetype() != null) {
+            Archetype a = ctx.archetype();
+            sb.append("\n\n## 方向画像（广撒网模式，mustHaveCoverage/variantFit/positioning 必须对照）");
+            sb.append("\n画像：").append(a.getName()).append("（").append(a.getSummary()).append("）");
+            sb.append("\n共性要求（逐条给 MET/PARTIAL/MISSING + 证据）：");
+            for (Archetype.MustHave m : a.getMustHaves()) {
+                sb.append("\n  - [").append(m.getId()).append("] ").append(m.getRequirement())
+                  .append("（证据线索：").append(String.join("、", m.getEvidenceHints())).append("）");
+            }
+            sb.append("\n子方向（逐个给 HIGH/MEDIUM/LOW 适配）：");
+            for (Archetype.Variant v : a.getVariants()) {
+                sb.append("\n  - [").append(v.getId()).append("] ").append(v.getName())
+                  .append("：").append(String.join("、", v.getDifferentiators()));
+            }
+            sb.append("\n筛选题库（interviewQuestions 从中挑选最相关的 3-5 条）：");
+            for (String q : a.getScreeningQuestions()) {
+                sb.append("\n  - ").append(q);
+            }
         }
 
         return sb.toString();
+    }
+
+    /** 人群：用户显式指定优先，否则按画像年限推断。 */
+    private static Persona resolvePersona(AgentRun run, ResumeProfile profile) {
+        if (run.getPersona() != null && !run.getPersona().isBlank()) {
+            try {
+                return Persona.valueOf(run.getPersona().trim().toUpperCase());
+            } catch (IllegalArgumentException ignored) {
+                // 非法值回落到推断
+            }
+        }
+        int years = profile != null ? profile.yearsOfExperience() : 0;
+        return Persona.infer(years, false);
+    }
+
+    /** 方向画像：JD 未提供且用户填了方向时解析（代码 alias 优先）。 */
+    private Archetype resolveArchetype(AgentRun run) {
+        if (run.getJobDescription() != null || run.getTargetDirection() == null) {
+            return null;
+        }
+        return archetypeRegistry.resolve(run.getTargetDirection()).orElse(null);
+    }
+
+    /** 简历分析的上下文——实体/红旗/画像/方向画像一次打包，贯穿执行链。 */
+    private record ResumeContext(
+            ResumeEntities entities,
+            List<RedFlag> redFlags,
+            ResumeProfile profile,
+            Archetype archetype,
+            String matchMode,
+            boolean degraded,
+            String fullText,
+            Persona persona
+    ) {
+        static ResumeContext empty() {
+            return new ResumeContext(new ResumeEntities(List.of()), List.of(), null, null,
+                    FunnelVerdict.MODE_NONE, false, "", Persona.GENERAL);
+        }
     }
 
     public AgentRun followUp(String runId, String message) {
@@ -342,12 +396,8 @@ public class DocumentAnalysisService {
             } else {
                 traceParse(tracer, doc);
             }
-            // 简历技能：实体抽取 + 红旗筛查 + 画像构建（仅首轮）
-            ResumeEntities entities = new ResumeEntities(List.of());
-            List<String> patternFindings = List.of();
-            List<RedFlag> redFlags = List.of();
-            ResumeProfile profile = null;
-            boolean extractionDegraded = false;
+            // 简历技能：实体抽取 → 画像构建（供人群推断）→ 红旗筛查（人群调阈值）→ 方向画像解析（仅首轮）
+            ResumeContext resumeCtx = ResumeContext.empty();
             if (state.turn() == 0 && state.round() == 0 && "resume-review".equals(skill.name())) {
                 String extractStep = tracer.begin("ENTITY_EXTRACT", null);
                 tracer.recordMeta(extractStep, true, "LLM");
@@ -357,52 +407,62 @@ public class DocumentAnalysisService {
                             .reduce((a, b) -> a + "\n" + b)
                             .orElse("");
                     ExtractionOutcome outcome = entityExtractor.extract(fullText, doc.fileName());
-                    entities = outcome.entities();
-                    extractionDegraded = outcome.degraded();
+                    ResumeEntities entities = outcome.entities();
                     tracer.end(extractStep, "extracted " + entities.getAll().size()
-                            + " entities" + (extractionDegraded ? " (DEGRADED)" : ""), null);
-
-                    String checkStep = tracer.begin("RED_FLAG_CHECK", null);
-                    tracer.recordMeta(checkStep, false, null);
-                    redFlags = redFlagChecker.check(entities, fullText, Persona.GENERAL);
-                    patternFindings = redFlags.stream().map(RedFlag::message).toList();
-                    tracer.end(checkStep, "found " + redFlags.size() + " red flags", null);
+                            + " entities" + (outcome.degraded() ? " (DEGRADED)" : ""), null);
 
                     String profileStep = tracer.begin("PROFILE_BUILD", null);
                     tracer.recordMeta(profileStep, false, null);
-                    profile = profileBuilder.build(entities);
+                    ResumeProfile profile = profileBuilder.build(entities);
                     tracer.end(profileStep, "profile built", null);
+
+                    Persona persona = resolvePersona(run, profile);
+                    List<RedFlag> redFlags = outcome.degraded()
+                            ? List.of()
+                            : redFlagChecker.check(entities, fullText, persona);
+                    String checkStep = tracer.begin("RED_FLAG_CHECK", null);
+                    tracer.recordMeta(checkStep, false, null);
+                    tracer.end(checkStep, "found " + redFlags.size() + " red flags, persona=" + persona, null);
+
+                    Archetype archetype = resolveArchetype(run);
+                    String matchMode = archetype != null ? FunnelVerdict.MODE_DIRECTION
+                            : run.getJobDescription() != null ? FunnelVerdict.MODE_JD
+                            : FunnelVerdict.MODE_NONE;
+                    resumeCtx = new ResumeContext(entities, redFlags, profile, archetype,
+                            matchMode, outcome.degraded(), fullText, persona);
                 } catch (Exception ex) {
                     tracer.end(extractStep, "extraction failed: " + ex.getMessage(), ex.getMessage());
                     log.warn("Entity extraction / profile build failed: {}", ex.getMessage());
+                    resumeCtx = ResumeContext.empty();
                 }
             }
-            analyzeAndFinish(runId, run, doc, skill, state, tracer, entities, patternFindings, profile,
-                    buildUserMessage(run, doc, entities, patternFindings));
+            analyzeAndFinish(runId, run, doc, skill, state, tracer, resumeCtx,
+                    buildUserMessage(run, doc, resumeCtx));
         } catch (Exception fatalEx) {
             fatal(run, runId, tracer, fatalEx);
         }
     }
 
-    /** 降级链主流程：循环 →（失败带片段）直连 →（失败）规则 → 引用校验 → 报告。 */
+    /** 降级链主流程：循环 →（失败带片段）直连 →（失败）规则 → 引用校验 → 漏斗组装 → 报告。 */
     private void analyzeAndFinish(String runId, AgentRun run, ParsedDocument doc,
                                   SkillDefinition skill, LoopState resumeFrom, TraceRecorder tracer,
-                                  ResumeEntities entities, List<String> patternFindings,
-                                  ResumeProfile profile,
+                                  ResumeContext resumeCtx,
                                   String enrichedUserMessage) throws Exception {
         if (resumeFrom.turn() > 0) {
             analyzeFollowUp(runId, run, doc, skill, resumeFrom, tracer);
             return;
         }
         AnalysisResult result = null;
+        LlmFunnelFields funnelFields = LlmFunnelFields.empty();
         String mode = null;
         List<AgentLoop.ObservedFragment> observations = List.of();
         Long tokensUsed = null;
 
         if (reactEnabled) {
             LoopOutcome outcome = runLoop(runId, run, doc, skill, resumeFrom, tracer, enrichedUserMessage);
-            if (outcome.result() != null) {
-                result = outcome.result();
+            if (outcome.parsed() != null && outcome.parsed().analysis() != null) {
+                result = outcome.parsed().analysis();
+                funnelFields = outcome.parsed().funnel();
                 mode = "REACT";
                 tokensUsed = outcome.tokensUsed();
             } else {
@@ -411,8 +471,9 @@ public class DocumentAnalysisService {
         }
         if (result == null) {
             LlmOutcome llm = runDirectLlm(runId, run, doc, skill, tracer, observations, enrichedUserMessage);
-            if (llm.result() != null) {
-                result = llm.result();
+            if (llm.parsed() != null && llm.parsed().analysis() != null) {
+                result = llm.parsed().analysis();
+                funnelFields = llm.parsed().funnel();
                 mode = "LLM";
                 tokensUsed = llm.tokensUsed();
             }
@@ -425,28 +486,30 @@ public class DocumentAnalysisService {
 
         result = verifyCitations(result, doc, tracer);
 
-        // 附加实体和模式检查结果（简历技能）
-        if (!entities.isEmpty() || !patternFindings.isEmpty()) {
-            result = result.withEntitiesAndFindings(entities.getAll(), patternFindings);
+        // 附加实体和红旗结果（简历技能）
+        if (!resumeCtx.entities().isEmpty() || !resumeCtx.redFlags().isEmpty()) {
+            result = result.withEntitiesAndFindings(resumeCtx.entities().getAll(),
+                    resumeCtx.redFlags().stream().map(RedFlag::message).toList());
         }
 
-        // 简历深度分析：画像 + 质量评分
-        if (profile != null || !entities.isEmpty()) {
-            Map<String, Integer> llmQualityDims = result.qualityScore() != null
-                    ? result.qualityScore().dimensions() : null;
-            QualityScore fullScore = qualityScorer.score(entities, llmQualityDims);
-            result = result.withResumeDeepAnalysis(
-                    profile, fullScore,
-                    result.actionableSuggestions(),
-                    result.enhancedKeyPoints(),
-                    result.enhancedRisks());
-        }
+        // P12 漏斗结论：红旗 + 方向画像 + LLM 五角度输出 → FunnelVerdict
+        if (!resumeCtx.entities().isEmpty()) {
+            FunnelVerdict verdict = assembleVerdict(resumeCtx, funnelFields);
+            result = result.withResumeDeepAnalysis(resumeCtx.profile(), null,
+                            result.actionableSuggestions(), result.enhancedKeyPoints(), result.enhancedRisks())
+                    .withFunnelVerdict(verdict);
 
-        // 评分明细写入（优化证据链）
-        if (result.qualityScore() != null) {
-            run.setScoreOverall(result.qualityScore().overall());
+            // 兼容映射：DB 列表排序仍用 score_overall，明细记录各角度档位
+            run.setScoreOverall(verdict.legacyOverall());
             try {
-                run.setScoreDimensions(objectMapper.writeValueAsString(result.qualityScore().dimensions()));
+                Map<String, Object> dims = new LinkedHashMap<>();
+                dims.put("strengthBand", verdict.strength() != null ? verdict.strength().band().name() : null);
+                dims.put("presentation", verdict.presentation() != null ? verdict.presentation().score() : null);
+                dims.put("matchBand", verdict.matchBand().name());
+                dims.put("matchMode", verdict.matchMode());
+                dims.put("highRedFlag", verdict.hasHighRedFlag());
+                dims.put("degraded", verdict.analysisDegraded());
+                run.setScoreDimensions(objectMapper.writeValueAsString(dims));
             } catch (Exception ignored) {
                 // 序列化失败不影响主流程
             }
@@ -539,10 +602,17 @@ public class DocumentAnalysisService {
         tracer.end(step, "sections=" + doc.sections().size() + ", chars=" + doc.totalChars(), null);
     }
 
-    private record LoopOutcome(AnalysisResult result, List<AgentLoop.ObservedFragment> observations, Long tokensUsed) {
+    /** 解析产物：稳定结果 + 五角度漏斗字段（后者只进 FunnelVerdict，不进 AnalysisResult）。 */
+    private record ParsedAnalysis(AnalysisResult analysis, LlmFunnelFields funnel) {
+        static ParsedAnalysis empty() {
+            return new ParsedAnalysis(null, LlmFunnelFields.empty());
+        }
     }
 
-    private record LlmOutcome(AnalysisResult result, Long tokensUsed) {
+    private record LoopOutcome(ParsedAnalysis parsed, List<AgentLoop.ObservedFragment> observations, Long tokensUsed) {
+    }
+
+    private record LlmOutcome(ParsedAnalysis parsed, Long tokensUsed) {
     }
 
     /** 技能实际暴露的工具（压测等场景可关掉 DANGER 导出）。 */
@@ -579,22 +649,22 @@ public class DocumentAnalysisService {
                     enrichedUserMessage != null ? enrichedUserMessage : buildUserMessage(run, doc),
                     doc, tracer, stepId, resumeFrom));
             if (loopResult.success()) {
-                AnalysisResult result = parseResult(loopResult.finalAnswer());
+                ParsedAnalysis parsed = parseResult(loopResult.finalAnswer());
                 tracer.end(stepId, "loop completed: rounds=" + loopResult.rounds()
                         + ", toolCalls=" + loopResult.toolCalls()
                         + ", tokens=" + loopResult.tokensUsed()
-                        + ", citations=" + result.citations().size(), null);
-                return new LoopOutcome(result, loopResult.observations(), loopResult.tokensUsed());
+                        + ", citations=" + parsed.analysis().citations().size(), null);
+                return new LoopOutcome(parsed, loopResult.observations(), loopResult.tokensUsed());
             }
             log.warn("Loop stopped, runId={}, reason={}, observations={}",
                     runId, loopResult.stopReason(), loopResult.observations().size());
             tracer.end(stepId, "loop stopped(" + loopResult.stopReason() + "), carrying "
                     + loopResult.observations().size() + " fragments → fallback", loopResult.stopReason());
-            return new LoopOutcome(null, loopResult.observations(), loopResult.tokensUsed());
+            return new LoopOutcome(ParsedAnalysis.empty(), loopResult.observations(), loopResult.tokensUsed());
         } catch (Exception ex) {
             log.warn("Loop analysis failed, falling back, runId={}: {}", runId, ex.getMessage());
             tracer.end(stepId, "loop failed → fallback direct LLM", ex.getMessage());
-            return new LoopOutcome(null, List.of(), null);
+            return new LoopOutcome(ParsedAnalysis.empty(), List.of(), null);
         } finally {
             ReActContextHolder.clear();
             ToolExecutionHolder.clear();
@@ -608,7 +678,7 @@ public class DocumentAnalysisService {
                                     String enrichedUserMessage) {
         LlmGateway llmGateway = llmGatewayProvider.getIfAvailable();
         if (llmGateway == null) {
-            return new LlmOutcome(null, null);
+            return new LlmOutcome(ParsedAnalysis.empty(), null);
         }
         String stepId = tracer.begin("DIRECT_LLM", null);
         tracer.recordMeta(stepId, true, "SpringAI");
@@ -619,15 +689,15 @@ public class DocumentAnalysisService {
                     + "\n\n文档内容（[节ID] 标记了各节，引用时使用节ID）：\n" + renderWithSectionIds(doc);
             LlmResponse response = llmGateway.invoke(
                     "llm." + skill.name(), skill.directPromptFile(), userContent, runId);
-            AnalysisResult result = parseResult(response.content());
+            ParsedAnalysis parsed = parseResult(response.content());
             long tokens = response.promptTokens() + response.completionTokens();
             tracer.end(stepId, "direct llm completed, tokens=" + tokens
                     + (carried.isEmpty() ? "" : ", carried=" + observations.size() + " fragments"), null);
-            return new LlmOutcome(result, tokens);
+            return new LlmOutcome(parsed, tokens);
         } catch (Exception ex) {
             log.warn("Direct LLM failed, falling back to rule, runId={}: {}", runId, ex.getMessage());
             tracer.end(stepId, "direct LLM failed → fallback rule", ex.getMessage());
-            return new LlmOutcome(null, null);
+            return new LlmOutcome(ParsedAnalysis.empty(), null);
         }
     }
 
@@ -682,7 +752,7 @@ public class DocumentAnalysisService {
                 List.of("规则模式不做推断，未识别文档中的风险"),
                 List.of("LLM 当前不可用，建议配置 LLM_API_KEY 后重新分析以获得针对性建议"),
                 citations, null, null, null, null, null,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
         tracer.end(stepId, "rule fallback completed", null);
         return result;
     }
@@ -721,7 +791,7 @@ public class DocumentAnalysisService {
     // --- 结果解析 ---
 
     /** 容错解析 LLM 输出：剥代码围栏、截取最外层 JSON 对象。 */
-    AnalysisResult parseResult(String content) {
+    ParsedAnalysis parseResult(String content) {
         if (content == null || content.isBlank()) {
             throw new IllegalArgumentException("empty llm content");
         }
@@ -744,7 +814,7 @@ public class DocumentAnalysisService {
                     }
                 }
             }
-            return new AnalysisResult(
+            AnalysisResult analysis = new AnalysisResult(
                     raw.summary,
                     raw.keyPoints == null ? List.of() : raw.keyPoints,
                     raw.risks == null ? List.of() : raw.risks,
@@ -757,7 +827,16 @@ public class DocumentAnalysisService {
                     null, parseQualityScore(raw.qualityScore),
                     parseActionableSuggestions(raw.actionableSuggestions),
                     parseEnhancedKeyPoints(raw.enhancedKeyPoints),
-                    parseEnhancedRisks(raw.enhancedRisks));
+                    parseEnhancedRisks(raw.enhancedRisks),
+                    null);
+            LlmFunnelFields funnel = new LlmFunnelFields(
+                    parsePresentation(raw.presentation),
+                    parseExperienceStrength(raw.experienceStrength),
+                    parseLeverageCards(raw.leverageCards),
+                    parseCoverage(raw.mustHaveCoverage),
+                    parseVariantFit(raw.variantFit),
+                    parsePositioning(raw.positioning));
+            return new ParsedAnalysis(analysis, funnel);
         } catch (IllegalArgumentException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -805,11 +884,83 @@ public class DocumentAnalysisService {
         public List<RawMatchDimension> matchDimensions;
         public List<RawGap> gaps;
         public List<RawInterviewQuestion> interviewQuestions;
-        // 简历深度分析
+        // 简历深度分析（P11 兼容）
         public RawQualityScore qualityScore;
         public List<RawActionableSuggestion> actionableSuggestions;
         public List<RawEnhancedKeyPoint> enhancedKeyPoints;
         public List<RawEnhancedRisk> enhancedRisks;
+        // P12 五角度漏斗字段
+        public RawPresentation presentation;
+        public List<RawExperienceStrength> experienceStrength;
+        public List<RawLeverageCard> leverageCards;
+        public List<RawCoverage> mustHaveCoverage;
+        public List<RawVariantFit> variantFit;
+        public RawPositioning positioning;
+    }
+
+    /** P12 LLM 五角度输出——只进 FunnelVerdict，不进 AnalysisResult。 */
+    private record LlmFunnelFields(
+            Presentation presentation,
+            List<ExperienceStrength> experienceStrength,
+            List<LeverageCard> leverageCards,
+            List<MustHaveCoverage> mustHaveCoverage,
+            List<VariantFit> variantFit,
+            PositioningCheck positioning
+    ) {
+        static LlmFunnelFields empty() {
+            return new LlmFunnelFields(null, List.of(), List.of(), List.of(), List.of(), null);
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawPresentation {
+        public Integer score;
+        public List<String> issues;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawExperienceStrength {
+        public String sectionId;
+        public String entryRef;
+        public Map<String, Boolean> star;
+        public String resultQuality;
+        public String attribution;
+        public String concern;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawLeverageCard {
+        public String kind;
+        public String point;
+        public String sectionId;
+        public String likelyQuestion;
+        public String prepHint;
+        public String defenseStrategy;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawCoverage {
+        public String requirementId;
+        public String requirement;
+        public String status;
+        public String evidence;
+        public String sectionId;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawVariantFit {
+        public String variantId;
+        public String name;
+        public String fit;
+        public String reason;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawPositioning {
+        public Boolean anchored;
+        public String currentAnchor;
+        public String suggestedAnchor;
+        public String comment;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -877,6 +1028,139 @@ public class DocumentAnalysisService {
         if (raw.professionalism != null) dims.put(QualityScore.DIM_PROFESSIONALISM, raw.professionalism);
         if (dims.isEmpty()) return null;
         return new QualityScore(QualityScore.computeOverall(dims), dims);
+    }
+
+    private static Presentation parsePresentation(RawPresentation raw) {
+        if (raw == null || raw.score == null) return null;
+        return Presentation.of(raw.score, raw.issues);
+    }
+
+    private static List<ExperienceStrength> parseExperienceStrength(List<RawExperienceStrength> raw) {
+        if (raw == null) return List.of();
+        List<ExperienceStrength> out = new ArrayList<>();
+        for (RawExperienceStrength r : raw) {
+            if (r == null || r.star == null) continue;
+            try {
+                out.add(new ExperienceStrength(
+                        r.sectionId, r.entryRef, r.star,
+                        r.resultQuality == null ? ExperienceStrength.ResultQuality.NONE
+                                : ExperienceStrength.ResultQuality.valueOf(r.resultQuality.toUpperCase()),
+                        r.attribution == null ? ExperienceStrength.Attribution.PARTICIPANT
+                                : ExperienceStrength.Attribution.valueOf(r.attribution.toUpperCase()),
+                        r.concern));
+            } catch (IllegalArgumentException ignored) {
+                // 枚举值非法的条目丢弃，不影响其余
+            }
+        }
+        return out;
+    }
+
+    private static List<LeverageCard> parseLeverageCards(List<RawLeverageCard> raw) {
+        if (raw == null) return List.of();
+        List<LeverageCard> out = new ArrayList<>();
+        for (RawLeverageCard r : raw) {
+            if (r == null || r.point == null || r.point.isBlank()) continue;
+            LeverageCard.Kind kind;
+            try {
+                kind = r.kind == null ? LeverageCard.Kind.STRENGTH
+                        : LeverageCard.Kind.valueOf(r.kind.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                kind = "RISK".equalsIgnoreCase(r.kind) ? LeverageCard.Kind.RISK : LeverageCard.Kind.STRENGTH;
+            }
+            out.add(new LeverageCard(kind, r.point, r.sectionId,
+                    r.likelyQuestion, r.prepHint, r.defenseStrategy));
+        }
+        return out;
+    }
+
+    private static List<MustHaveCoverage> parseCoverage(List<RawCoverage> raw) {
+        if (raw == null) return List.of();
+        List<MustHaveCoverage> out = new ArrayList<>();
+        for (RawCoverage r : raw) {
+            if (r == null || r.requirementId == null || r.status == null) continue;
+            try {
+                out.add(new MustHaveCoverage(r.requirementId, r.requirement,
+                        MustHaveCoverage.Status.valueOf(r.status.toUpperCase()),
+                        r.evidence, r.sectionId));
+            } catch (IllegalArgumentException ignored) {
+                // 非法状态值丢弃
+            }
+        }
+        return out;
+    }
+
+    private static List<VariantFit> parseVariantFit(List<RawVariantFit> raw) {
+        if (raw == null) return List.of();
+        List<VariantFit> out = new ArrayList<>();
+        for (RawVariantFit r : raw) {
+            if (r == null || r.variantId == null || r.fit == null) continue;
+            try {
+                out.add(new VariantFit(r.variantId, r.name,
+                        VariantFit.Fit.valueOf(r.fit.toUpperCase()), r.reason));
+            } catch (IllegalArgumentException ignored) {
+                // 非法适配值丢弃
+            }
+        }
+        return out;
+    }
+
+    private static PositioningCheck parsePositioning(RawPositioning raw) {
+        if (raw == null || raw.anchored == null) return null;
+        return new PositioningCheck(raw.anchored, raw.currentAnchor, raw.suggestedAnchor, raw.comment);
+    }
+
+    /** 组装漏斗结论：LLM 输出 + 代码事实（红旗/词汇diff/画像定义）合成，抽取降级时不可信。 */
+    private static FunnelVerdict assembleVerdict(ResumeContext ctx, LlmFunnelFields fields) {
+        if (ctx.degraded()) {
+            return FunnelVerdict.degraded(ctx.redFlags());
+        }
+        List<MustHaveCoverage> coverage = mergeCoverage(ctx.archetype(), fields.mustHaveCoverage());
+        List<VariantFit> variantFit = mergeVariants(ctx.archetype(), fields.variantFit());
+        List<VocabularyGap> vocabGaps = ctx.archetype() != null
+                ? ctx.archetype().findVocabularyGaps(ctx.fullText()) : List.of();
+        return new FunnelVerdict(
+                ctx.redFlags(),
+                ctx.matchMode(),
+                ctx.archetype() != null ? ctx.archetype().getId() : null,
+                coverage, variantFit, vocabGaps, fields.positioning(),
+                fields.experienceStrength(),
+                StrengthStats.from(fields.experienceStrength()),
+                fields.presentation(),
+                fields.leverageCards(),
+                false);
+    }
+
+    /** 要求文本以画像定义为准（LLM 只给 id/status/evidence），防转录走样。 */
+    private static List<MustHaveCoverage> mergeCoverage(Archetype archetype, List<MustHaveCoverage> llm) {
+        if (archetype == null) {
+            return llm;
+        }
+        var byId = archetype.getMustHaves().stream()
+                .collect(java.util.stream.Collectors.toMap(Archetype.MustHave::getId, m -> m, (a, b) -> a));
+        List<MustHaveCoverage> merged = new ArrayList<>();
+        for (MustHaveCoverage c : llm) {
+            Archetype.MustHave def = byId.get(c.requirementId());
+            merged.add(new MustHaveCoverage(c.requirementId(),
+                    def != null ? def.getRequirement() : c.requirement(),
+                    c.status(), c.evidence(), c.sectionId()));
+        }
+        return merged;
+    }
+
+    private static List<VariantFit> mergeVariants(Archetype archetype, List<VariantFit> llm) {
+        if (archetype == null) {
+            return llm;
+        }
+        var byId = archetype.getVariants().stream()
+                .collect(java.util.stream.Collectors.toMap(Archetype.Variant::getId, v -> v, (a, b) -> a));
+        List<VariantFit> merged = new ArrayList<>();
+        for (VariantFit v : llm) {
+            Archetype.Variant def = byId.get(v.variantId());
+            merged.add(new VariantFit(v.variantId(),
+                    def != null ? def.getName() : v.name(),
+                    v.fit(), v.reason()));
+        }
+        return merged;
     }
 
     private static List<ActionableSuggestion> parseActionableSuggestions(List<RawActionableSuggestion> raw) {

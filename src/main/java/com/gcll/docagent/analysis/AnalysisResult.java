@@ -8,8 +8,8 @@ import java.util.List;
  * 文档分析的结构化结果（ReAct / 直连 LLM / 规则兜底三条路径统一产出此模型）。
  * <p>P10 起支持岗位匹配模式：提供 JD 时产出 matchDimensions / gaps / interviewQuestions。
  * <p>P11 起携带语义实体和模式检查结果，支撑简历深度分析。
- * <p>简历深度分析字段：profile（结构化画像）、qualityScore（质量评分）、
- * actionableSuggestions（精准建议）、enhancedKeyPoints/enhancedRisks（增强亮点与风险）。
+ * <p>P12 起主结果为 funnelVerdict（漏斗式五角度结论）；P11 的 qualityScore 等
+ * 字段保留为兼容（新 run 为 null，历史 run 仍可渲染）。
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AnalysisResult(
@@ -30,7 +30,9 @@ public record AnalysisResult(
         QualityScore qualityScore,
         List<ActionableSuggestion> actionableSuggestions,
         List<EnhancedKeyPoint> enhancedKeyPoints,
-        List<EnhancedRisk> enhancedRisks
+        List<EnhancedRisk> enhancedRisks,
+        // ---- P12 漏斗式结论（新主结果） ----
+        FunnelVerdict funnelVerdict
 ) {
 
     /**
@@ -65,19 +67,21 @@ public record AnalysisResult(
     public static AnalysisResult empty() {
         return new AnalysisResult("", List.of(), List.of(), List.of(), List.of(),
                 null, null, null, null, null,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     public AnalysisResult withCitations(List<Citation> newCitations) {
         return new AnalysisResult(summary, keyPoints, risks, suggestions, newCitations,
                 matchDimensions, gaps, interviewQuestions, entities, patternFindings,
-                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks);
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
+                funnelVerdict);
     }
 
     public AnalysisResult withEntitiesAndFindings(List<ResumeEntity> newEntities, List<String> newFindings) {
         return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
                 matchDimensions, gaps, interviewQuestions, newEntities, newFindings,
-                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks);
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
+                funnelVerdict);
     }
 
     public AnalysisResult withResumeDeepAnalysis(ResumeProfile newProfile, QualityScore newQualityScore,
@@ -86,6 +90,14 @@ public record AnalysisResult(
                                                   List<EnhancedRisk> newRisks) {
         return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
                 matchDimensions, gaps, interviewQuestions, entities, patternFindings,
-                newProfile, newQualityScore, newSuggestions, newKeyPoints, newRisks);
+                newProfile, newQualityScore, newSuggestions, newKeyPoints, newRisks,
+                funnelVerdict);
+    }
+
+    public AnalysisResult withFunnelVerdict(FunnelVerdict verdict) {
+        return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
+                matchDimensions, gaps, interviewQuestions, entities, patternFindings,
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
+                verdict);
     }
 }

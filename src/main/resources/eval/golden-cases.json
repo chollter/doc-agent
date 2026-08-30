@@ -24,8 +24,8 @@
         "minKeyPoints": 1,
         "minCitations": 1,
         "minActionableSuggestions": 2,
-        "minEnhancedKeyPoints": 2,
-        "hasQualityScore": true,
+        "hasFunnelVerdict": true,
+        "minLeverageCards": 2,
         "hasProfile": true
       }
     },
@@ -56,6 +56,63 @@
         "minMatchDimensions": 3,
         "minInterviewQuestions": 2,
         "mustContainGapKeywords": ["Kubernetes", "团队", "英语"]
+      }
+    },
+    {
+      "name": "funnel-base",
+      "file": "eval-docs/funnel-base.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "minLeverageCards": 3,
+        "minActionableSuggestions": 2,
+        "matchMode": "DIRECTION",
+        "minCoverageMet": 3,
+        "mustNotHaveRedFlagTypes": ["TIMELINE_GAP", "JOB_HOPPING", "CONTACT_MISSING"]
+      }
+    },
+    {
+      "name": "funnel-defect-gap",
+      "file": "eval-docs/funnel-defect-gap.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": ["TIMELINE_GAP"]
+      }
+    },
+    {
+      "name": "funnel-defect-strength",
+      "file": "eval-docs/funnel-defect-strength.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "strengthBandAtMost": "MIXED",
+        "expectWorseThan": "funnel-base"
+      }
+    },
+    {
+      "name": "funnel-defect-vocab",
+      "file": "eval-docs/funnel-defect-vocab.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustContainVocabularyTerms": ["RAG", "Function Calling", "Agent"]
       }
     }
   ]

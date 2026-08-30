@@ -66,9 +66,12 @@ public class DocumentAnalysisController {
             @RequestParam(required = false) String instruction,
             @RequestParam(required = false) String skill,
             @RequestParam(required = false) String jobDescription,
+            @RequestParam(required = false) String targetDirection,
+            @RequestParam(required = false) String persona,
             @RequestParam(required = false) String promptVersion,
             @RequestParam(required = false) String optimizationNote) {
-        AgentRun run = analysisService.start(file, instruction, skill, jobDescription, promptVersion, optimizationNote);
+        AgentRun run = analysisService.start(file, instruction, skill, jobDescription,
+                targetDirection, persona, promptVersion, optimizationNote);
         return new Start(run.getId(), run.getStatus().name());
     }
 

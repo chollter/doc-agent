@@ -23,6 +23,8 @@ public class AgentRunEntity {
     private String skill;
     private String instruction;
     private String jobDescription;
+    private String targetDirection;
+    private String persona;
     private Integer sectionCount;
     private String executionMode;
     private String resultJson;
@@ -109,6 +111,12 @@ public class AgentRunEntity {
     public String getInstruction() { return instruction; }
     public String getJobDescription() { return jobDescription; }
     public void setJobDescription(String jobDescription) { this.jobDescription = jobDescription; }
+
+    public String getTargetDirection() { return targetDirection; }
+    public void setTargetDirection(String targetDirection) { this.targetDirection = targetDirection; }
+
+    public String getPersona() { return persona; }
+    public void setPersona(String persona) { this.persona = persona; }
     public void setInstruction(String instruction) { this.instruction = instruction; }
 
     public Integer getSectionCount() { return sectionCount; }
