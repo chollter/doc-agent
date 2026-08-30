@@ -28,6 +28,10 @@ public class AgentRunEntity {
     private String resultJson;
     private String claimedBy;
     private Long tokensUsed;
+    private String promptVersion;
+    private String optimizationNote;
+    private Integer scoreOverall;
+    private String scoreDimensions;
     private Instant startedAt;
     private Instant finishedAt;
     private String idempotencyKey;
@@ -121,6 +125,18 @@ public class AgentRunEntity {
 
     public Long getTokensUsed() { return tokensUsed; }
     public void setTokensUsed(Long tokensUsed) { this.tokensUsed = tokensUsed; }
+
+    public String getPromptVersion() { return promptVersion; }
+    public void setPromptVersion(String promptVersion) { this.promptVersion = promptVersion; }
+
+    public String getOptimizationNote() { return optimizationNote; }
+    public void setOptimizationNote(String optimizationNote) { this.optimizationNote = optimizationNote; }
+
+    public Integer getScoreOverall() { return scoreOverall; }
+    public void setScoreOverall(Integer scoreOverall) { this.scoreOverall = scoreOverall; }
+
+    public String getScoreDimensions() { return scoreDimensions; }
+    public void setScoreDimensions(String scoreDimensions) { this.scoreDimensions = scoreDimensions; }
 
     public Instant getStartedAt() { return startedAt; }
     public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }

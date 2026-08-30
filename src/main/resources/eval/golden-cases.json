@@ -22,7 +22,11 @@
       "assertions": {
         "status": "COMPLETED",
         "minKeyPoints": 1,
-        "minCitations": 1
+        "minCitations": 1,
+        "minActionableSuggestions": 2,
+        "minEnhancedKeyPoints": 2,
+        "hasQualityScore": true,
+        "hasProfile": true
       }
     },
     {

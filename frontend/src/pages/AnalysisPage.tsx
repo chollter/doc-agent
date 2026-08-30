@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileUp, Loader2, Play, RotateCcw, ShieldAlert, Upload } from 'lucide-react';
+import { FileUp, Loader2, MessageSquare, Play, RotateCcw, ShieldAlert, Upload } from 'lucide-react';
 import {
   analysisApi,
   subscribeSteps,
@@ -10,6 +10,8 @@ import {
 } from '../api/analysis';
 import StepTimeline from '../components/StepTimeline';
 import ReportCard from '../components/ReportCard';
+import ResumeReportCard from '../components/ResumeReportCard';
+import InterviewChat from '../components/InterviewChat';
 import DocumentPanel from '../components/DocumentPanel';
 import { durationSeconds } from '../utils/format';
 
@@ -46,6 +48,8 @@ export default function AnalysisPage() {
   const [doc, setDoc] = useState<DocumentView | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [jobDescription, setJobDescription] = useState('');
+  const [interviewMode, setInterviewMode] = useState(false);
 
   const closeStreamRef = useRef<(() => void) | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -105,7 +109,10 @@ export default function AnalysisPage() {
     setElapsed(0);
     startedAtRef.current = Date.now();
     try {
-      const { runId } = await analysisApi.submit(file, instruction, skill);
+      const { runId } = await analysisApi.submit(
+        file, instruction, skill,
+        skill === 'resume-review' && jobDescription.trim() ? jobDescription.trim() : undefined
+      );
       analysisApi.getDocument(runId).then(setDoc).catch(() => setDoc(null));
       closeStreamRef.current = subscribeSteps(runId, mergeStep);
       pollRef.current = window.setInterval(() => {
@@ -138,6 +145,7 @@ export default function AnalysisPage() {
     setDetail(null);
     setDoc(null);
     setError(null);
+    setInterviewMode(false);
   };
 
   const decideAction = async (approve: boolean) => {
@@ -261,6 +269,30 @@ export default function AnalysisPage() {
           </div>
         </div>
 
+        {skill === 'resume-review' && (
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500">目标岗位 JD（可选）</span>
+              {jobDescription && (
+                <button
+                  type="button"
+                  onClick={() => setJobDescription('')}
+                  className="text-xs text-slate-400 hover:text-slate-600"
+                >
+                  清空
+                </button>
+              )}
+            </div>
+            <textarea
+              value={jobDescription}
+              onChange={(e) => setJobDescription(e.target.value)}
+              rows={4}
+              className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400"
+              placeholder="粘贴岗位 JD，Agent 将逐条对照简历进行匹配分析..."
+            />
+          </div>
+        )}
+
         <div className="flex gap-2">
           <button
             type="button"
@@ -331,10 +363,28 @@ export default function AnalysisPage() {
           <StepTimeline steps={steps} />
         </div>
         {detail?.result && (
-          <ReportCard
-            result={detail.result}
-            mode={detail.executionMode}
-            onCitation={setHighlight}
+          detail.skill === 'resume-review'
+            ? <ResumeReportCard result={detail.result} mode={detail.executionMode} onCitation={setHighlight} />
+            : <ReportCard result={detail.result} mode={detail.executionMode} onCitation={setHighlight} />
+        )}
+
+        {/* 面试模拟入口 */}
+        {detail?.skill === 'resume-review' && detail.status === 'COMPLETED' && !interviewMode && (
+          <button
+            type="button"
+            onClick={() => setInterviewMode(true)}
+            className="flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-sky-300 bg-sky-50/50 py-3 text-sm font-medium text-sky-600 transition-colors hover:border-sky-400 hover:bg-sky-50"
+          >
+            <MessageSquare size={16} />
+            开始面试模拟
+          </button>
+        )}
+
+        {/* 面试模拟对话 */}
+        {interviewMode && detail?.runId && (
+          <InterviewChat
+            runId={detail.runId}
+            onEnd={() => setInterviewMode(false)}
           />
         )}
       </div>

@@ -2,6 +2,8 @@ package com.gcll.docagent.llm;
 
 import com.gcll.docagent.llm.context.ContextWindowManager;
 import com.gcll.docagent.llm.routing.ModelRouter;
+import com.gcll.docagent.persistence.entity.LlmInteractionEntity;
+import com.gcll.docagent.persistence.mapper.LlmInteractionMapper;
 import com.gcll.docagent.resilience.LlmResponse;
 import com.gcll.docagent.resilience.NonRetryableCallException;
 import com.gcll.docagent.resilience.RetryableCallException;
@@ -16,6 +18,8 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.util.UUID;
 
 /**
  * LLM 纯执行器：负责 prompt 加载、系统提示拼装、结构化调用与 token 解析。
@@ -54,15 +58,18 @@ public class LlmGateway {
     private final String systemBasePrompt;
     private final ModelRouter modelRouter;
     private final ContextWindowManager contextWindowManager;
+    private final LlmInteractionMapper interactionMapper;
 
     public LlmGateway(ChatClient.Builder chatClientBuilder,
                       ModelRouter modelRouter,
-                      ContextWindowManager contextWindowManager) throws IOException {
+                      ContextWindowManager contextWindowManager,
+                      LlmInteractionMapper interactionMapper) throws IOException {
         this.chatClient = chatClientBuilder.build();
         this.systemBasePrompt = new ClassPathResource("prompts/system-base.txt")
                 .getContentAsString(StandardCharsets.UTF_8);
         this.modelRouter = modelRouter;
         this.contextWindowManager = contextWindowManager;
+        this.interactionMapper = interactionMapper;
     }
 
     /**
@@ -116,6 +123,9 @@ public class LlmGateway {
             Usage usage = chatResponse.getMetadata().getUsage();
             int promptTokens = usage.getPromptTokens() != null ? usage.getPromptTokens().intValue() : 0;
             int completionTokens = usage.getCompletionTokens() != null ? usage.getCompletionTokens().intValue() : 0;
+            // 记录 LLM 交互日志（优化证据链）
+            recordInteraction(runId, promptFile, model, promptTokens, completionTokens,
+                    promptTemplate + "\n\n工单内容：\n" + safeContent, content, true);
             return LlmResponse.of(content, promptTokens, completionTokens, model);
         } catch (IOException ex) {
             // prompt 文件加载失败 = 确定性错误，不可重试
@@ -127,6 +137,40 @@ public class LlmGateway {
             log.debug("LLM invoke failed, classified as retryable, error={}", ex.getMessage());
             throw new RetryableCallException("LLM call failed", ex);
         }
+    }
+
+    /**
+     * 记录 LLM 交互日志——用于构建优化证据链。
+     * 失败不影响主流程。
+     */
+    private void recordInteraction(String runId, String promptFile, String model,
+                                    int promptTokens, int completionTokens,
+                                    String fullPrompt, String fullResponse, boolean success) {
+        try {
+            LlmInteractionEntity entity = new LlmInteractionEntity();
+            entity.setId(UUID.randomUUID().toString());
+            entity.setRunId(runId != null ? runId : "no-run");
+            entity.setCallSite(deriveCallSite(promptFile));
+            entity.setModel(model);
+            entity.setPromptTokens(promptTokens);
+            entity.setCompletionTokens(completionTokens);
+            entity.setFullPrompt(fullPrompt);
+            entity.setFullResponse(fullResponse);
+            entity.setSuccess(success);
+            entity.setCreatedAt(LocalDateTime.now());
+            interactionMapper.insert(entity);
+        } catch (Exception ex) {
+            log.debug("Failed to record LLM interaction: {}", ex.getMessage());
+        }
+    }
+
+    /** 从 prompt 文件名推导调用点标识。 */
+    private static String deriveCallSite(String promptFile) {
+        if (promptFile == null) return "UNKNOWN";
+        if (promptFile.contains("entity-extract")) return "ENTITY_EXTRACT";
+        if (promptFile.contains("review-react") || promptFile.contains("analysis-react")) return "REACT";
+        if (promptFile.contains("review") || promptFile.contains("analysis")) return "DIRECT_LLM";
+        return promptFile.replace(".txt", "").toUpperCase();
     }
 
     private String loadPrompt(String promptFile) throws IOException {

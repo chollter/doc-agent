@@ -7,6 +7,9 @@ import java.util.List;
 /**
  * 文档分析的结构化结果（ReAct / 直连 LLM / 规则兜底三条路径统一产出此模型）。
  * <p>P10 起支持岗位匹配模式：提供 JD 时产出 matchDimensions / gaps / interviewQuestions。
+ * <p>P11 起携带语义实体和模式检查结果，支撑简历深度分析。
+ * <p>简历深度分析字段：profile（结构化画像）、qualityScore（质量评分）、
+ * actionableSuggestions（精准建议）、enhancedKeyPoints/enhancedRisks（增强亮点与风险）。
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AnalysisResult(
@@ -18,7 +21,16 @@ public record AnalysisResult(
         // ---- 岗位匹配模式（resume-review skill + JD 时产出） ----
         List<MatchDimension> matchDimensions,
         List<Gap> gaps,
-        List<InterviewQuestion> interviewQuestions
+        List<InterviewQuestion> interviewQuestions,
+        // ---- 语义实体和模式检查（简历分析时产出） ----
+        List<ResumeEntity> entities,
+        List<String> patternFindings,
+        // ---- 简历深度分析（resume-review skill 产出） ----
+        ResumeProfile profile,
+        QualityScore qualityScore,
+        List<ActionableSuggestion> actionableSuggestions,
+        List<EnhancedKeyPoint> enhancedKeyPoints,
+        List<EnhancedRisk> enhancedRisks
 ) {
 
     /**
@@ -42,12 +54,38 @@ public record AnalysisResult(
     public record InterviewQuestion(String question, String intent, String suggestedAnswer, boolean isGapPrep) {
     }
 
+    /** 增强亮点——带原文证据和面试价值判断。 */
+    public record EnhancedKeyPoint(String point, String evidence, String sectionId, String interviewValue) {
+    }
+
+    /** 增强风险——带具体细节和面试官挑战角度。 */
+    public record EnhancedRisk(String risk, String detail, String sectionId, String challengeAngle) {
+    }
+
     public static AnalysisResult empty() {
-        return new AnalysisResult("", List.of(), List.of(), List.of(), List.of(), null, null, null);
+        return new AnalysisResult("", List.of(), List.of(), List.of(), List.of(),
+                null, null, null, null, null,
+                null, null, null, null, null);
     }
 
     public AnalysisResult withCitations(List<Citation> newCitations) {
         return new AnalysisResult(summary, keyPoints, risks, suggestions, newCitations,
-                matchDimensions, gaps, interviewQuestions);
+                matchDimensions, gaps, interviewQuestions, entities, patternFindings,
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks);
+    }
+
+    public AnalysisResult withEntitiesAndFindings(List<ResumeEntity> newEntities, List<String> newFindings) {
+        return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
+                matchDimensions, gaps, interviewQuestions, newEntities, newFindings,
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks);
+    }
+
+    public AnalysisResult withResumeDeepAnalysis(ResumeProfile newProfile, QualityScore newQualityScore,
+                                                  List<ActionableSuggestion> newSuggestions,
+                                                  List<EnhancedKeyPoint> newKeyPoints,
+                                                  List<EnhancedRisk> newRisks) {
+        return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
+                matchDimensions, gaps, interviewQuestions, entities, patternFindings,
+                newProfile, newQualityScore, newSuggestions, newKeyPoints, newRisks);
     }
 }

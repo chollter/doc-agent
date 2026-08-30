@@ -2,6 +2,7 @@ package com.gcll.docagent.llm;
 
 import com.gcll.docagent.llm.context.ContextWindowManager;
 import com.gcll.docagent.llm.routing.ModelRouter;
+import com.gcll.docagent.persistence.mapper.LlmInteractionMapper;
 import com.gcll.docagent.resilience.RetryableCallException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,8 @@ class LlmGatewayRetryTest {
     private ModelRouter modelRouter;
     @Mock
     private ContextWindowManager contextWindowManager;
+    @Mock
+    private LlmInteractionMapper interactionMapper;
 
     private LlmGateway llmGateway;
 
@@ -41,7 +44,7 @@ class LlmGatewayRetryTest {
         when(chatClientBuilder.build()).thenReturn(chatClient);
         // 阶段1/4：构造器新增 ModelRouter + ContextWindowManager 依赖；truncate 透传不截断
         lenient().when(contextWindowManager.truncate(anyString())).thenAnswer(inv -> inv.getArgument(0));
-        llmGateway = new LlmGateway(chatClientBuilder, modelRouter, contextWindowManager);
+        llmGateway = new LlmGateway(chatClientBuilder, modelRouter, contextWindowManager, interactionMapper);
     }
 
     @Test

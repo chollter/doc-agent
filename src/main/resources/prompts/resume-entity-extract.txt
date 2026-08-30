@@ -1,0 +1,25 @@
+从简历内容中提取语义实体。只提取简历中明确出现的信息，不做推断。
+
+实体类型：
+- SKILL：技能名称（如 Java、Spring Boot、Kubernetes）。附加 proficiency 属性："精通"/"熟悉"/"了解"（根据上下文推断，如"精通Java"→精通，"熟悉Spring"→熟悉，无修饰词→熟悉）
+- TIME_PERIOD：时间段（如 2022.03-2024.08）
+- ORGANIZATION：组织/公司
+- ROLE：职位/角色
+- METRIC：量化指标（如 QPS 提升 5 倍、日活 10 万）
+- CLAIM：可验证的声明（如 主导订单系统重构）
+- ACHIEVEMENT：成就/荣誉
+- CERTIFICATION：证书/认证
+- EDUCATION：教育经历（附加属性：school/degree/major/year）
+- GAP：时间空窗
+- WORK_ENTRY：聚合工作经历（公司+角色+时间段+核心产出一行描述）
+
+输出 JSON 格式：
+{
+  "entities": [
+    {"type": "SKILL", "value": "Java", "context": "5年 Java 开发经验", "attributes": {"proficiency": "精通"}},
+    {"type": "TIME_PERIOD", "value": "2022.03-2024.08", "context": "XX公司 高级工程师"},
+    {"type": "METRIC", "value": "QPS 提升 5 倍", "context": "优化订单系统性能"},
+    {"type": "EDUCATION", "value": "XX大学 计算机科学与技术 本科 2018", "context": "教育经历", "attributes": {"school": "XX大学", "degree": "本科", "major": "计算机科学与技术", "year": "2018"}},
+    {"type": "WORK_ENTRY", "value": "XX公司 高级工程师 2022.03-2024.08 主导订单系统重构", "context": "工作经历"}
+  ]
+}

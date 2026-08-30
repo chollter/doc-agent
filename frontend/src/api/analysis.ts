@@ -8,12 +8,105 @@ export interface Citation {
   quote: string;
 }
 
+// ---- 简历深度分析类型 ----
+
+export interface SkillMatrix {
+  languages: string[];
+  frameworks: string[];
+  infrastructure: string[];
+  databases: string[];
+  others: string[];
+}
+
+export interface WorkEntry {
+  company: string;
+  role: string | null;
+  period: string | null;
+  durationMonths: number;
+  highlights: string[];
+}
+
+export interface EducationEntry {
+  school: string;
+  degree: string | null;
+  major: string | null;
+  year: string | null;
+}
+
+export interface ResumeProfile {
+  name: string | null;
+  yearsOfExperience: number;
+  currentRole: string | null;
+  workTimeline: WorkEntry[];
+  skillMatrix: SkillMatrix;
+  education: EducationEntry[];
+}
+
+export interface QualityScore {
+  overall: number;
+  dimensions: Record<string, number>;
+}
+
+export interface ActionableSuggestion {
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  target: string;
+  sectionId: string | null;
+  before: string;
+  after: string;
+  reason: string;
+}
+
+export interface EnhancedKeyPoint {
+  point: string;
+  evidence: string;
+  sectionId: string | null;
+  interviewValue: string;
+}
+
+export interface EnhancedRisk {
+  risk: string;
+  detail: string;
+  sectionId: string | null;
+  challengeAngle: string;
+}
+
+// ---- JD 匹配类型 ----
+
+export interface MatchDimension {
+  name: string;
+  level: '高' | '中' | '低';
+  reason: string;
+}
+
+export interface Gap {
+  requirement: string;
+  gap: string;
+  suggestion: string;
+}
+
+export interface InterviewQuestion {
+  question: string;
+  intent: string;
+  suggestedAnswer: string;
+  isGapPrep: boolean;
+}
+
 export interface AnalysisResult {
   summary: string;
   keyPoints: string[];
   risks: string[];
   suggestions: string[];
   citations: Citation[];
+  // JD 匹配（resume-review + JD 时产出）
+  matchDimensions?: MatchDimension[] | null;
+  gaps?: Gap[] | null;
+  interviewQuestions?: InterviewQuestion[] | null;
+  // 简历深度分析（resume-review skill 产出）
+  profile?: ResumeProfile | null;
+  qualityScore?: QualityScore | null;
+  actionableSuggestions?: ActionableSuggestion[] | null;
+  enhancedKeyPoints?: EnhancedKeyPoint[] | null;
+  enhancedRisks?: EnhancedRisk[] | null;
 }
 
 export interface RunStart {
@@ -67,6 +160,14 @@ export interface DocumentView {
   sections: DocSection[];
 }
 
+/** 追问消息 DTO */
+export interface MessageDto {
+  turn: number;
+  role: string;
+  content: string;
+  createdAt: string;
+}
+
 export interface AuditStep {
   id: string;
   parentStepId: string | null;
@@ -92,11 +193,12 @@ export interface StepEvent {
 }
 
 export const analysisApi = {
-  submit(file: File, instruction: string, skill?: string): Promise<RunStart> {
+  submit(file: File, instruction: string, skill?: string, jobDescription?: string): Promise<RunStart> {
     const form = new FormData();
     form.append('file', file);
     form.append('instruction', instruction);
     if (skill) form.append('skill', skill);
+    if (jobDescription) form.append('jobDescription', jobDescription);
     return request.upload('/api/analysis/runs', form);
   },
 
@@ -122,6 +224,16 @@ export const analysisApi = {
 
   getAudit(runId: string): Promise<AuditStep[]> {
     return request.get(`/api/audit/agent-runs/${runId}`);
+  },
+
+  /** 追问（面试模拟核心通道） */
+  followUp(runId: string, message: string): Promise<RunStart> {
+    return request.post(`/api/analysis/runs/${runId}/messages`, { message });
+  },
+
+  /** 消息历史（面试对话回放） */
+  getMessages(runId: string): Promise<MessageDto[]> {
+    return request.get(`/api/analysis/runs/${runId}/messages`);
   },
 };
 

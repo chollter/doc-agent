@@ -97,7 +97,7 @@ public class EvalRunner {
         try {
             byte[] bytes = new ClassPathResource(evalCase.file()).getInputStream().readAllBytes();
             AgentRun run = analysisService.start(
-                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(), evalCase.jobDescription());
+                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(), evalCase.jobDescription(), null, null);
             runId = run.getId();
 
             int timeoutSeconds = evalCase.timeoutSeconds() > 0 ? evalCase.timeoutSeconds() : DEFAULT_TIMEOUT_SECONDS;
@@ -225,6 +225,26 @@ public class EvalRunner {
                 }
             }
         }
+
+        // ---- 简历深度分析断言 ----
+        if (a.hasProfile() != null && a.hasProfile()) {
+            if (result.profile() == null || result.profile().isEmpty()) {
+                failures.add("缺少候选人画像 (profile)");
+            }
+        }
+        if (a.hasQualityScore() != null && a.hasQualityScore()) {
+            if (result.qualityScore() == null || result.qualityScore().isEmpty()) {
+                failures.add("缺少质量评分 (qualityScore)");
+            }
+        }
+        int actionableSuggestions = result.actionableSuggestions() == null ? 0 : result.actionableSuggestions().size();
+        if (a.minActionableSuggestions() != null && actionableSuggestions < a.minActionableSuggestions()) {
+            failures.add("actionableSuggestions=" + actionableSuggestions + " 少于下限 " + a.minActionableSuggestions());
+        }
+        int enhancedKeyPoints = result.enhancedKeyPoints() == null ? 0 : result.enhancedKeyPoints().size();
+        if (a.minEnhancedKeyPoints() != null && enhancedKeyPoints < a.minEnhancedKeyPoints()) {
+            failures.add("enhancedKeyPoints=" + enhancedKeyPoints + " 少于下限 " + a.minEnhancedKeyPoints());
+        }
     }
 
     private ResultJson parseResult(String json) {
@@ -247,7 +267,13 @@ public class EvalRunner {
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ResultJson(String summary, List<String> keyPoints, List<Map<String, String>> citations,
             List<Map<String, String>> gaps, List<Map<String, String>> matchDimensions,
-            List<Map<String, String>> interviewQuestions, List<String> risks) {
+            List<Map<String, String>> interviewQuestions, List<String> risks,
+            // 简历深度分析
+            Map<String, Object> qualityScore,
+            List<Map<String, String>> actionableSuggestions,
+            List<Map<String, String>> enhancedKeyPoints,
+            List<Map<String, String>> enhancedRisks,
+            Map<String, Object> profile) {
     }
 
     public record CaseResult(

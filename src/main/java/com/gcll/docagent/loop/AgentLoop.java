@@ -3,6 +3,8 @@ package com.gcll.docagent.loop;
 import com.gcll.docagent.langchain4j.ReActContextHolder;
 import com.gcll.docagent.observability.trace.TraceRecorder;
 import com.gcll.docagent.parsing.ParsedDocument;
+import com.gcll.docagent.persistence.entity.LlmInteractionEntity;
+import com.gcll.docagent.persistence.mapper.LlmInteractionMapper;
 import com.gcll.docagent.tool.ToolExecutionHolder;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
@@ -17,8 +19,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -44,6 +48,7 @@ public class AgentLoop {
     private final LoopCheckpointStore checkpointStore;
     private final LoopBudget budget;
     private final boolean parallelTools;
+    private final LlmInteractionMapper interactionMapper;
 
     /** 工具并行执行池（一轮内多个调用并发发出，如同时读 3 个节）。 */
     private final ExecutorService toolExecutor = Executors.newFixedThreadPool(4, r -> {
@@ -55,6 +60,7 @@ public class AgentLoop {
     public AgentLoop(ChatModel chatModel,
                      LoopToolSpecs toolSpecs,
                      LoopCheckpointStore checkpointStore,
+                     LlmInteractionMapper interactionMapper,
                      @Value("${docagent.analysis.loop.max-rounds:10}") int maxRounds,
                      @Value("${docagent.analysis.loop.max-tool-calls:16}") int maxToolCalls,
                      @Value("${docagent.analysis.loop.max-total-tokens:60000}") long maxTotalTokens,
@@ -62,6 +68,7 @@ public class AgentLoop {
         this.chatModel = chatModel;
         this.toolSpecs = toolSpecs;
         this.checkpointStore = checkpointStore;
+        this.interactionMapper = interactionMapper;
         this.budget = new LoopBudget(maxRounds, maxToolCalls, maxTotalTokens);
         this.parallelTools = parallelTools;
     }
@@ -139,6 +146,9 @@ public class AgentLoop {
             AiMessage ai = response.aiMessage();
             boolean hasToolCalls = ai.hasToolExecutionRequests();
             traceLlmRound(ctx, hasToolCalls, usage, state);
+
+            // 记录 ReAct 循环每轮交互（优化证据链）
+            recordLoopInteraction(ctx.runId(), state.round(), usage, ai.text(), hasToolCalls);
 
             // 3. 追加 ASSISTANT 消息
             List<LoopMessage> messages = new ArrayList<>(state.messages());
@@ -231,6 +241,26 @@ public class AgentLoop {
             }
         }
         return results;
+    }
+
+    /** 记录 ReAct 循环每轮交互——用于优化证据链。失败不影响主流程。 */
+    private void recordLoopInteraction(String runId, int round, TokenUsage usage,
+                                       String responseText, boolean hasToolCalls) {
+        try {
+            LlmInteractionEntity entity = new LlmInteractionEntity();
+            entity.setId(UUID.randomUUID().toString());
+            entity.setRunId(runId);
+            entity.setCallSite("REACT_ROUND_" + round);
+            entity.setPromptTokens(0); // TokenUsage 不提供拆分，记 0
+            entity.setCompletionTokens(usage != null && usage.totalTokenCount() != null
+                    ? usage.totalTokenCount().intValue() : 0);
+            entity.setFullResponse(responseText != null ? responseText : "[tool_calls]");
+            entity.setSuccess(true);
+            entity.setCreatedAt(LocalDateTime.now());
+            interactionMapper.insert(entity);
+        } catch (Exception ex) {
+            log.debug("Failed to record loop interaction: {}", ex.getMessage());
+        }
     }
 
     private List<ChatMessage> toFrameworkMessages(LoopState state) {

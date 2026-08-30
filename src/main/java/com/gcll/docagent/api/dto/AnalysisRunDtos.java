@@ -68,4 +68,35 @@ public final class AnalysisRunDtos {
         public record SectionDto(String id, String heading, Integer page, int charCount, String text) {
         }
     }
+
+    /** 优化历史列表条目（含评分明细 + 交互数量）。 */
+    public record OptimizationHistoryItem(
+            String runId,
+            String fileName,
+            String skill,
+            String promptVersion,
+            String optimizationNote,
+            Integer scoreOverall,
+            String scoreDimensions,
+            String executionMode,
+            Long tokensUsed,
+            int interactionCount,
+            Instant createdAt
+    ) {
+    }
+
+    /** LLM 交互详情。 */
+    public record LlmInteractionDto(
+            String id,
+            String callSite,
+            String model,
+            Integer promptTokens,
+            Integer completionTokens,
+            String fullPrompt,
+            String fullResponse,
+            Long durationMs,
+            Boolean success,
+            String createdAt
+    ) {
+    }
 }

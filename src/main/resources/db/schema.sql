@@ -124,3 +124,25 @@ CREATE TABLE IF NOT EXISTS SPRING_AI_CHAT_MEMORY (
 
 CREATE INDEX IF NOT EXISTS SPRING_AI_CHAT_MEMORY_CONVERSATION_ID_TIMESTAMP_IDX
 ON SPRING_AI_CHAT_MEMORY (conversation_id, "timestamp");
+
+-- LLM 交互日志：记录每次 LLM 调用的完整输入输出（优化证据链）
+CREATE TABLE IF NOT EXISTS llm_interaction (
+    id                VARCHAR(64)  PRIMARY KEY,
+    run_id            VARCHAR(64)  NOT NULL,
+    call_site         VARCHAR(32)  NOT NULL,
+    model             VARCHAR(128),
+    prompt_tokens     INT,
+    completion_tokens INT,
+    full_prompt       TEXT,
+    full_response     TEXT,
+    duration_ms       BIGINT,
+    success           BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_llm_interaction_run ON llm_interaction (run_id);
+
+-- agent_run 扩展：版本标记 + 评分明细（优化过程可追溯）
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS prompt_version VARCHAR(64);
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS optimization_note TEXT;
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS score_overall INT;
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS score_dimensions TEXT;

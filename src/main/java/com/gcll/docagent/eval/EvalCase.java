@@ -42,7 +42,12 @@ public record EvalCase(
             Integer minMatchDimensions,
             Integer minInterviewQuestions,
             List<String> mustContainGapKeywords,
-            List<String> mustNotContainGapKeywords
+            List<String> mustNotContainGapKeywords,
+            // ---- 简历深度分析断言 ----
+            Integer minActionableSuggestions,
+            Integer minEnhancedKeyPoints,
+            Boolean hasQualityScore,
+            Boolean hasProfile
     ) {
     }
 }

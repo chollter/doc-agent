@@ -34,6 +34,10 @@ public final class DomainEntityConverter {
         entity.setResultJson(run.getResultJson());
         entity.setClaimedBy(run.getClaimedBy());
         entity.setTokensUsed(run.getTokensUsed());
+        entity.setPromptVersion(run.getPromptVersion());
+        entity.setOptimizationNote(run.getOptimizationNote());
+        entity.setScoreOverall(run.getScoreOverall());
+        entity.setScoreDimensions(run.getScoreDimensions());
         entity.setStartedAt(run.getStartedAt());
         entity.setFinishedAt(run.getFinishedAt());
         entity.setIdempotencyKey(run.getIdempotencyKey());
@@ -64,6 +68,10 @@ public final class DomainEntityConverter {
         run.setResultJson(entity.getResultJson());
         run.setClaimedBy(entity.getClaimedBy());
         run.setTokensUsed(entity.getTokensUsed());
+        run.setPromptVersion(entity.getPromptVersion());
+        run.setOptimizationNote(entity.getOptimizationNote());
+        run.setScoreOverall(entity.getScoreOverall());
+        run.setScoreDimensions(entity.getScoreDimensions());
         run.setFinishedAt(entity.getFinishedAt());
         run.setIdempotencyKey(entity.getIdempotencyKey());
         run.setRequestId(entity.getRequestId());

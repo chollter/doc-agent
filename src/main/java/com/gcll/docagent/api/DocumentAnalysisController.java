@@ -7,10 +7,14 @@ import com.gcll.docagent.analysis.DocumentAnalysisService;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Detail;
 import com.gcll.docagent.api.dto.HumanActionDto;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.DocumentView;
+import com.gcll.docagent.api.dto.AnalysisRunDtos.LlmInteractionDto;
+import com.gcll.docagent.api.dto.AnalysisRunDtos.OptimizationHistoryItem;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Start;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Summary;
 import com.gcll.docagent.domain.AgentRun;
 import com.gcll.docagent.human.PendingAction;
+import com.gcll.docagent.persistence.entity.LlmInteractionEntity;
+import com.gcll.docagent.persistence.mapper.LlmInteractionMapper;
 import com.gcll.docagent.persistence.repository.AgentRunRepository;
 import com.gcll.docagent.persistence.repository.PendingActionRepository;
 import org.springframework.http.HttpStatus;
@@ -38,17 +42,20 @@ public class DocumentAnalysisController {
     private final DocumentStore documentStore;
     private final ObjectMapper objectMapper;
     private final PendingActionRepository pendingActionRepository;
+    private final LlmInteractionMapper interactionMapper;
 
     public DocumentAnalysisController(DocumentAnalysisService analysisService,
                                       AgentRunRepository agentRunRepository,
                                       DocumentStore documentStore,
                                       ObjectMapper objectMapper,
-                                      PendingActionRepository pendingActionRepository) {
+                                      PendingActionRepository pendingActionRepository,
+                                      LlmInteractionMapper interactionMapper) {
         this.analysisService = analysisService;
         this.agentRunRepository = agentRunRepository;
         this.documentStore = documentStore;
         this.objectMapper = objectMapper;
         this.pendingActionRepository = pendingActionRepository;
+        this.interactionMapper = interactionMapper;
     }
 
     /** 提交分析：同步解析建档（解析错误直接 400），异步执行（SSE/轮询获取进度）。 */
@@ -58,8 +65,10 @@ public class DocumentAnalysisController {
             @RequestPart("file") MultipartFile file,
             @RequestParam(required = false) String instruction,
             @RequestParam(required = false) String skill,
-            @RequestParam(required = false) String jobDescription) {
-        AgentRun run = analysisService.start(file, instruction, skill, jobDescription);
+            @RequestParam(required = false) String jobDescription,
+            @RequestParam(required = false) String promptVersion,
+            @RequestParam(required = false) String optimizationNote) {
+        AgentRun run = analysisService.start(file, instruction, skill, jobDescription, promptVersion, optimizationNote);
         return new Start(run.getId(), run.getStatus().name());
     }
 
@@ -139,5 +148,45 @@ public class DocumentAnalysisController {
     private AgentRun requireRun(String runId) {
         return agentRunRepository.findById(runId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.AGENT_RUN_NOT_FOUND, "run 不存在: " + runId));
+    }
+
+    // --- 优化历史与交互详情（优化证据链） ---
+
+    /** 优化历史：按时间排序的运行列表，含评分明细 + 交互数量。 */
+    @GetMapping("/optimization-history")
+    public List<OptimizationHistoryItem> optimizationHistory() {
+        return agentRunRepository.findAll().stream()
+                .sorted(Comparator.comparing(AgentRun::getCreatedAt).reversed())
+                .limit(100)
+                .map(run -> {
+                    int interactionCount = interactionMapper.selectCount(
+                            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<LlmInteractionEntity>()
+                                    .eq(LlmInteractionEntity::getRunId, run.getId())
+                    ).intValue();
+                    return new OptimizationHistoryItem(
+                            run.getId(), run.getFileName(), run.getSkill(),
+                            run.getPromptVersion(), run.getOptimizationNote(),
+                            run.getScoreOverall(), run.getScoreDimensions(),
+                            run.getExecutionMode(), run.getTokensUsed(),
+                            interactionCount, run.getCreatedAt());
+                })
+                .toList();
+    }
+
+    /** 单次运行的全部 LLM 交互详情。 */
+    @GetMapping("/runs/{runId}/interactions")
+    public List<LlmInteractionDto> getInteractions(@PathVariable String runId) {
+        requireRun(runId);
+        return interactionMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<LlmInteractionEntity>()
+                        .eq(LlmInteractionEntity::getRunId, runId)
+                        .orderByAsc(LlmInteractionEntity::getCreatedAt)
+        ).stream().map(e -> new LlmInteractionDto(
+                e.getId(), e.getCallSite(), e.getModel(),
+                e.getPromptTokens(), e.getCompletionTokens(),
+                e.getFullPrompt(), e.getFullResponse(),
+                e.getDurationMs(), e.getSuccess(),
+                e.getCreatedAt() != null ? e.getCreatedAt().toString() : null
+        )).toList();
     }
 }
