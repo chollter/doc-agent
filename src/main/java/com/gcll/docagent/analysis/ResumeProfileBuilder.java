@@ -5,14 +5,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 从 ResumeEntities 聚合出结构化 ResumeProfile（纯代码，不依赖 LLM）。
@@ -23,7 +20,6 @@ import java.util.regex.Pattern;
 public class ResumeProfileBuilder {
 
     private static final Logger log = LoggerFactory.getLogger(ResumeProfileBuilder.class);
-    private static final Pattern DATE_PATTERN = Pattern.compile("(\\d{4})[./-](\\d{1,2})");
 
     /**
      * 从实体列表构建候选人画像。
@@ -168,23 +164,6 @@ public class ResumeProfileBuilder {
     }
 
     private LocalDate[] parseDateRange(String dateRange) {
-        if (dateRange == null) return null;
-        Matcher matcher = DATE_PATTERN.matcher(dateRange);
-        List<LocalDate> dates = new ArrayList<>();
-        while (matcher.find()) {
-            int year = Integer.parseInt(matcher.group(1));
-            int month = Integer.parseInt(matcher.group(2));
-            try {
-                dates.add(LocalDate.of(year, month, 1));
-            } catch (Exception e) {
-                // ignore invalid dates
-            }
-        }
-        if (dates.size() >= 2) {
-            return new LocalDate[]{dates.get(0), dates.get(1)};
-        } else if (dates.size() == 1) {
-            return new LocalDate[]{dates.get(0), dates.get(0)};
-        }
-        return null;
+        return ResumeDateParser.parseRange(dateRange);
     }
 }

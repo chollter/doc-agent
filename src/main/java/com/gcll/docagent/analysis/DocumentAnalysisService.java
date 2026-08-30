@@ -346,6 +346,7 @@ public class DocumentAnalysisService {
             ResumeEntities entities = new ResumeEntities(List.of());
             List<String> patternFindings = List.of();
             ResumeProfile profile = null;
+            boolean extractionDegraded = false;
             if (state.turn() == 0 && state.round() == 0 && "resume-review".equals(skill.name())) {
                 String extractStep = tracer.begin("ENTITY_EXTRACT", null);
                 tracer.recordMeta(extractStep, true, "LLM");
@@ -354,8 +355,11 @@ public class DocumentAnalysisService {
                             .map(DocSection::text)
                             .reduce((a, b) -> a + "\n" + b)
                             .orElse("");
-                    entities = entityExtractor.extract(fullText, doc.fileName());
-                    tracer.end(extractStep, "extracted " + entities.getAll().size() + " entities", null);
+                    ExtractionOutcome outcome = entityExtractor.extract(fullText, doc.fileName());
+                    entities = outcome.entities();
+                    extractionDegraded = outcome.degraded();
+                    tracer.end(extractStep, "extracted " + entities.getAll().size()
+                            + " entities" + (extractionDegraded ? " (DEGRADED)" : ""), null);
 
                     String checkStep = tracer.begin("PATTERN_CHECK", null);
                     tracer.recordMeta(checkStep, false, null);

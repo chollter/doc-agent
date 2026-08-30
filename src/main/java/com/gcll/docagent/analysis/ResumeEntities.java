@@ -1,11 +1,8 @@
 package com.gcll.docagent.analysis;
 
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 语义实体聚合：从任意格式简历中提取的所有实体。
@@ -40,10 +37,14 @@ public class ResumeEntities {
     }
 
     /**
-     * 检测时间线空窗：解析时间实体，计算相邻时间段的间隔。
+     * 检测时间线空窗：解析工作时间段，计算相邻时间段的间隔。
+     * <p>P12：教育时间段（kind=education）不参与职业空窗计算——
+     * P11 把教育与工作时间混排求间隔，升学间隔会被误报为职业空窗。
      */
     public List<String> detectTimelineGaps() {
-        List<ResumeEntity> periods = getByType(ResumeEntity.EntityType.TIME_PERIOD);
+        List<ResumeEntity> periods = getByType(ResumeEntity.EntityType.TIME_PERIOD).stream()
+                .filter(p -> !"education".equals(p.kind()))
+                .toList();
         if (periods.size() < 2) {
             return List.of();
         }
@@ -52,7 +53,7 @@ public class ResumeEntities {
         List<LocalDate[]> parsed = new ArrayList<>();
 
         for (ResumeEntity period : periods) {
-            LocalDate[] dates = parseDateRange(period.value());
+            LocalDate[] dates = ResumeDateParser.parseRange(period.value());
             if (dates != null) {
                 parsed.add(dates);
             }
@@ -124,29 +125,6 @@ public class ResumeEntities {
             return "有高级职位但缺少领导力信号（主导/设计/架构/带领等）";
         }
 
-        return null;
-    }
-
-    private LocalDate[] parseDateRange(String dateRange) {
-        Pattern pattern = Pattern.compile("(\\d{4})[./-](\\d{1,2})");
-        Matcher matcher = pattern.matcher(dateRange);
-
-        List<LocalDate> dates = new ArrayList<>();
-        while (matcher.find()) {
-            int year = Integer.parseInt(matcher.group(1));
-            int month = Integer.parseInt(matcher.group(2));
-            try {
-                dates.add(LocalDate.of(year, month, 1));
-            } catch (Exception e) {
-                // ignore invalid dates
-            }
-        }
-
-        if (dates.size() >= 2) {
-            return new LocalDate[]{dates.get(0), dates.get(1)};
-        } else if (dates.size() == 1) {
-            return new LocalDate[]{dates.get(0), dates.get(0)};
-        }
         return null;
     }
 }

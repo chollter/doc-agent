@@ -28,6 +28,11 @@ public record ResumeEntity(
         WORK_ENTRY
     }
 
+    /** 时间段归属流（work/education/project），由抽取 prompt 标注；缺失时视为未知。 */
+    public String kind() {
+        return attributes != null ? attributes.get("kind") : null;
+    }
+
     public static ResumeEntity of(EntityType type, String value, String context) {
         return new ResumeEntity(type, value, context, Map.of());
     }

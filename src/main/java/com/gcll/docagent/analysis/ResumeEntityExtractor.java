@@ -26,34 +26,38 @@ public class ResumeEntityExtractor {
 
     private final ObjectProvider<LlmGateway> llmGatewayProvider;
     private final ObjectMapper objectMapper;
+    private final EntityNormalizer entityNormalizer;
 
     public ResumeEntityExtractor(ObjectProvider<LlmGateway> llmGatewayProvider,
-                                  ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 EntityNormalizer entityNormalizer) {
         this.llmGatewayProvider = llmGatewayProvider;
         this.objectMapper = objectMapper;
+        this.entityNormalizer = entityNormalizer;
     }
 
     /**
      * 从简历文本中提取语义实体。
-     * LLM 不可用时返回基础实体（降级）。
+     * 返回携带来源标记——LLM 不可用时降级（仅文件名），调用方据此决定是否出分。
      */
-    public ResumeEntities extract(String resumeText, String fileName) {
+    public ExtractionOutcome extract(String resumeText, String fileName) {
         if (resumeText == null || resumeText.isBlank()) {
-            return new ResumeEntities(List.of());
+            return ExtractionOutcome.fallback(new ResumeEntities(List.of()));
         }
 
         LlmGateway llmGateway = llmGatewayProvider.getIfAvailable();
         if (llmGateway == null) {
             log.warn("LLM not available, falling back to basic entity extraction");
-            return fallbackExtract(resumeText, fileName);
+            return ExtractionOutcome.fallback(fallbackExtract(resumeText, fileName));
         }
 
         try {
             LlmResponse response = llmGateway.invoke(PROMPT_FILE, resumeText);
-            return parseEntities(response.content());
+            return ExtractionOutcome.llm(
+                    entityNormalizer.normalize(parseEntities(response.content())));
         } catch (Exception ex) {
             log.warn("Entity extraction failed, using fallback: {}", ex.getMessage());
-            return fallbackExtract(resumeText, fileName);
+            return ExtractionOutcome.fallback(fallbackExtract(resumeText, fileName));
         }
     }
 
