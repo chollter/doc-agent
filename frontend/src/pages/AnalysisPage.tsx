@@ -49,6 +49,8 @@ export default function AnalysisPage() {
   const [highlight, setHighlight] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [jobDescription, setJobDescription] = useState('');
+  const [targetDirection, setTargetDirection] = useState('');
+  const [persona, setPersona] = useState('');
   const [interviewMode, setInterviewMode] = useState(false);
 
   const closeStreamRef = useRef<(() => void) | null>(null);
@@ -111,7 +113,9 @@ export default function AnalysisPage() {
     try {
       const { runId } = await analysisApi.submit(
         file, instruction, skill,
-        skill === 'resume-review' && jobDescription.trim() ? jobDescription.trim() : undefined
+        skill === 'resume-review' && jobDescription.trim() ? jobDescription.trim() : undefined,
+        skill === 'resume-review' && !jobDescription.trim() && targetDirection.trim() ? targetDirection.trim() : undefined,
+        skill === 'resume-review' && persona ? persona : undefined
       );
       analysisApi.getDocument(runId).then(setDoc).catch(() => setDoc(null));
       closeStreamRef.current = subscribeSteps(runId, mergeStep);
@@ -290,6 +294,60 @@ export default function AnalysisPage() {
               className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400"
               placeholder="粘贴岗位 JD，Agent 将逐条对照简历进行匹配分析..."
             />
+          </div>
+        )}
+
+        {skill === 'resume-review' && !jobDescription.trim() && (
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500">
+                求职方向（广撒网模式，可选）——没有具体 JD 时按方向画像分析
+              </span>
+              {targetDirection && (
+                <button
+                  type="button"
+                  onClick={() => setTargetDirection('')}
+                  className="text-xs text-slate-400 hover:text-slate-600"
+                >
+                  清空
+                </button>
+              )}
+            </div>
+            <input
+              value={targetDirection}
+              onChange={(e) => setTargetDirection(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400"
+              placeholder="如：AI 应用开发 / Agent 开发 / LLM 应用"
+            />
+          </div>
+        )}
+
+        {skill === 'resume-review' && (
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold text-slate-500">
+              候选人画像（可选）——影响红旗阈值与建议侧重
+            </span>
+            <div className="flex gap-1.5">
+              {[
+                { value: '', label: '自动推断' },
+                { value: 'NEW_GRAD', label: '应届/初级' },
+                { value: 'SENIOR', label: '资深' },
+                { value: 'CAREER_SWITCH', label: '转行' },
+              ].map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setPersona(p.value)}
+                  className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                    persona === p.value
+                      ? 'bg-indigo-600 text-white'
+                      : 'border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:bg-indigo-50'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

@@ -1,5 +1,5 @@
-import { AlertTriangle, Award, Bookmark, Briefcase, CheckCircle, ClipboardList, GraduationCap, HelpCircle, Lightbulb, Target, TrendingUp, User, XCircle } from 'lucide-react';
-import type { AnalysisResult, ActionableSuggestion, EnhancedKeyPoint, EnhancedRisk, ResumeProfile, QualityScore, SkillMatrix } from '../api/analysis';
+import { AlertTriangle, Award, Bookmark, Briefcase, CheckCircle, ClipboardList, GraduationCap, HelpCircle, Lightbulb, ShieldAlert, Sparkles, Target, TrendingUp, User, XCircle } from 'lucide-react';
+import type { AnalysisResult, ActionableSuggestion, EnhancedKeyPoint, EnhancedRisk, ResumeProfile, QualityScore, SkillMatrix, FunnelVerdict, LeverageCard as LeverageCardType } from '../api/analysis';
 
 function ModeBadge({ mode }: { mode: string | null | undefined }) {
   if (!mode) return null;
@@ -284,6 +284,245 @@ function EnhancedRisksSection({ risks, onCitation }: {
   );
 }
 
+/** P12 漏斗式结论——按"会死在哪一关"的顺序渲染 */
+function FunnelVerdictSection({ verdict, onCitation }: {
+  verdict: FunnelVerdict;
+  onCitation?: (sectionId: string) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      {verdict.analysisDegraded && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-700">
+          实体抽取降级运行，本结论不完整——建议配置 LLM 后重新分析。
+        </div>
+      )}
+
+      {/* 第一关：红旗筛查（一票否决层，置顶） */}
+      {verdict.redFlags && verdict.redFlags.length > 0 && (
+        <div>
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-rose-600">
+            <ShieldAlert size={15} />
+            红旗筛查（先解决这些，再谈其他）
+          </div>
+          <div className="space-y-2">
+            {verdict.redFlags.map((flag, i) => {
+              const color = flag.severity === 'HIGH'
+                ? 'border-rose-300 bg-rose-50 text-rose-700'
+                : flag.severity === 'MEDIUM'
+                  ? 'border-amber-300 bg-amber-50 text-amber-700'
+                  : 'border-slate-200 bg-slate-50 text-slate-600';
+              return (
+                <div key={i} className={`rounded-lg border px-3 py-2 text-xs leading-5 ${color}`}>
+                  <span className="mr-1.5 font-semibold">[{flag.severity}]</span>
+                  {flag.message}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 第二关：岗位匹配（JD 对照 / 方向画像广撒网） */}
+      {verdict.matchMode === 'DIRECTION' && (
+        <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-4">
+          <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-sky-700">
+            <Target size={15} />
+            方向匹配（广撒网模式：{verdict.archetypeId}）
+          </div>
+
+          {verdict.mustHaveCoverage && verdict.mustHaveCoverage.length > 0 && (
+            <div className="mb-3">
+              <div className="mb-1.5 text-xs font-semibold text-slate-500">共性要求（缺失时广撒网救不了）</div>
+              <div className="space-y-1.5">
+                {verdict.mustHaveCoverage.map((c, i) => {
+                  const badge = c.status === 'MET'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : c.status === 'PARTIAL'
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-rose-100 text-rose-700';
+                  return (
+                    <div key={i} className="rounded-lg bg-white/80 px-3 py-2 text-xs">
+                      <div className="flex items-start gap-2">
+                        <span className="font-medium text-slate-700">{c.requirement}</span>
+                        <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${badge}`}>
+                          {c.status === 'MET' ? '满足' : c.status === 'PARTIAL' ? '部分' : '缺失'}
+                        </span>
+                      </div>
+                      {c.evidence && (
+                        <button
+                          type="button"
+                          className="mt-1 text-left text-[11px] text-sky-600 hover:underline"
+                          onClick={() => c.sectionId && onCitation?.(c.sectionId)}
+                        >
+                          证据：{c.evidence}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {verdict.variantFit && verdict.variantFit.length > 0 && (
+            <div className="mb-3">
+              <div className="mb-1.5 text-xs font-semibold text-slate-500">子方向适配（你最适合投哪类）</div>
+              <div className="flex flex-wrap gap-1.5">
+                {verdict.variantFit.map((v, i) => {
+                  const badge = v.fit === 'HIGH'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : v.fit === 'MEDIUM'
+                      ? 'bg-sky-100 text-sky-700'
+                      : 'bg-slate-100 text-slate-500';
+                  return (
+                    <span key={i} className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${badge}`} title={v.reason}>
+                      {v.name} · {v.fit === 'HIGH' ? '最像' : v.fit === 'MEDIUM' ? '可投' : '不建议'}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {verdict.vocabularyGaps && verdict.vocabularyGaps.length > 0 && (
+            <div className="mb-3">
+              <div className="mb-1.5 text-xs font-semibold text-slate-500">搜索词汇覆盖（做了但没用行业术语，检索命中损失）</div>
+              {verdict.vocabularyGaps.map((v, i) => (
+                <div key={i} className="rounded-lg bg-white/80 px-3 py-1.5 text-xs text-slate-600">
+                  <span className="font-medium text-slate-700">「{v.usedSynonym}」</span>→ 建议补充术语
+                  <span className="font-semibold text-sky-700">「{v.term}」</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {verdict.positioning && (
+            <div className={`rounded-lg px-3 py-2 text-xs leading-5 ${verdict.positioning.anchored ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+              {verdict.positioning.anchored
+                ? `定位清晰：${verdict.positioning.currentAnchor ?? ''}`
+                : `定位模糊：当前锚定「${verdict.positioning.currentAnchor ?? '无'}」，建议改为「${verdict.positioning.suggestedAnchor ?? ''}」`}
+              {verdict.positioning.comment && <div className="mt-0.5 opacity-80">{verdict.positioning.comment}</div>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 第三关：内容强度 */}
+      {verdict.strength && verdict.strength.entryCount > 0 && (
+        <div className="rounded-xl border border-violet-100 bg-violet-50/50 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-violet-700">
+              <TrendingUp size={15} />
+              内容强度（成就的证据质量）
+            </div>
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+              verdict.strength.band === 'STRONG' ? 'bg-emerald-100 text-emerald-700'
+                : verdict.strength.band === 'MIXED' ? 'bg-amber-100 text-amber-700'
+                : 'bg-rose-100 text-rose-700'}`}>
+              {verdict.strength.band === 'STRONG' ? '强' : verdict.strength.band === 'MIXED' ? '混合' : '弱'}
+            </span>
+          </div>
+          <div className="mb-3 grid grid-cols-4 gap-2 text-center text-xs">
+            <div className="rounded-lg bg-white/80 py-2">
+              <div className="font-bold text-slate-700">{Math.round(verdict.strength.resultRate * 100)}%</div>
+              <div className="text-[11px] text-slate-400">有结果佐证</div>
+            </div>
+            <div className="rounded-lg bg-white/80 py-2">
+              <div className="font-bold text-slate-700">{Math.round(verdict.strength.strongResultRate * 100)}%</div>
+              <div className="text-[11px] text-slate-400">项目/业务级结果</div>
+            </div>
+            <div className="rounded-lg bg-white/80 py-2">
+              <div className="font-bold text-slate-700">{Math.round(verdict.strength.ownerRate * 100)}%</div>
+              <div className="text-[11px] text-slate-400">主导/负责归因</div>
+            </div>
+            <div className="rounded-lg bg-white/80 py-2">
+              <div className="font-bold text-slate-700">{verdict.strength.entryCount}</div>
+              <div className="text-[11px] text-slate-400">评估经历数</div>
+            </div>
+          </div>
+          {verdict.experienceStrength && verdict.experienceStrength.length > 0 && (
+            <div className="space-y-1.5">
+              {verdict.experienceStrength.map((e, i) => (
+                <div key={i} className="rounded-lg bg-white/80 px-3 py-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="line-clamp-1 font-medium text-slate-700">{e.entryRef}</span>
+                    {e.attribution && (
+                      <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        e.attribution === 'LEAD' || e.attribution === 'OWNER' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                        {e.attribution}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px]">
+                    {['situation', 'task', 'action', 'result'].map((k) => (
+                      <span key={k} className={`rounded px-1.5 py-0.5 ${e.star?.[k] ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                        {k.toUpperCase()}
+                      </span>
+                    ))}
+                    {e.resultQuality && (
+                      <span className="ml-auto text-slate-400">结果：{e.resultQuality}</span>
+                    )}
+                  </div>
+                  {e.concern && <div className="mt-1 text-[11px] text-rose-500">⚠ {e.concern}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 第四关：表达质量 */}
+      {verdict.presentation && (
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-indigo-700">
+              <Sparkles size={15} />
+              表达质量
+            </div>
+            <span className="text-xs font-semibold text-slate-600">
+              {verdict.presentation.score} 分 · {verdict.presentation.band} 档
+            </span>
+          </div>
+          {verdict.presentation.issues.map((issue, i) => (
+            <div key={i} className="rounded-lg bg-white/80 px-3 py-1.5 text-xs text-slate-600">{issue}</div>
+          ))}
+        </div>
+      )}
+
+      {/* 面试杠杆：简历是面试的剧本 */}
+      {verdict.leverageCards && verdict.leverageCards.length > 0 && (
+        <div>
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-amber-600">
+            <HelpCircle size={15} />
+            面试预演（面试官会问什么、怎么接）
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {verdict.leverageCards.map((card: LeverageCardType, i) => (
+              <div key={i} className={`rounded-xl border p-3 text-xs ${card.kind === 'STRENGTH' ? 'border-emerald-200 bg-emerald-50/60' : 'border-rose-200 bg-rose-50/60'}`}>
+                <div className="flex items-center gap-1.5 font-semibold text-slate-700">
+                  {card.kind === 'STRENGTH' ? <CheckCircle size={13} className="text-emerald-500" /> : <AlertTriangle size={13} className="text-rose-500" />}
+                  <span className="line-clamp-1">{card.point}</span>
+                </div>
+                {card.likelyQuestion && (
+                  <div className="mt-2 rounded-lg bg-white/80 px-2.5 py-1.5 text-slate-600">
+                    <span className="font-medium text-slate-700">Q：</span>{card.likelyQuestion}
+                  </div>
+                )}
+                {card.kind === 'STRENGTH' && card.prepHint && (
+                  <div className="mt-1 text-slate-500">准备：{card.prepHint}</div>
+                )}
+                {card.kind === 'RISK' && card.defenseStrategy && (
+                  <div className="mt-1 text-slate-500">应答：{card.defenseStrategy}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 简历专属分析报告 */
 export default function ResumeReportCard({ result, mode, onCitation }: {
   result: AnalysisResult;
@@ -307,7 +546,10 @@ export default function ResumeReportCard({ result, mode, onCitation }: {
       {/* 候选人画像 */}
       {hasProfile && <ProfileBar profile={result.profile!} />}
 
-      {/* 质量评分 */}
+      {/* P12 漏斗式结论（新主结果，按"会死在哪一关"排序） */}
+      {result.funnelVerdict && <FunnelVerdictSection verdict={result.funnelVerdict} onCitation={onCitation} />}
+
+      {/* 质量评分（P11 历史 run 兼容） */}
       {hasQualityScore && <QualityScoreCard score={result.qualityScore!} />}
 
       {/* 总结 */}

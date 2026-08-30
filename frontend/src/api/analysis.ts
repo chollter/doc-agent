@@ -70,6 +70,90 @@ export interface EnhancedRisk {
   challengeAngle: string;
 }
 
+// ---- P12 漏斗式结论类型 ----
+
+export interface RedFlag {
+  type: string;
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  message: string;
+}
+
+export interface MustHaveCoverage {
+  requirementId: string;
+  requirement: string;
+  status: 'MET' | 'PARTIAL' | 'MISSING';
+  evidence: string | null;
+  sectionId: string | null;
+}
+
+export interface VariantFit {
+  variantId: string;
+  name: string;
+  fit: 'HIGH' | 'MEDIUM' | 'LOW';
+  reason: string;
+}
+
+export interface VocabularyGap {
+  term: string;
+  usedSynonym: string;
+  suggestion: string;
+}
+
+export interface PositioningCheck {
+  anchored: boolean;
+  currentAnchor: string | null;
+  suggestedAnchor: string | null;
+  comment: string | null;
+}
+
+export interface ExperienceStrength {
+  sectionId: string | null;
+  entryRef: string | null;
+  star: Record<string, boolean> | null;
+  resultQuality: 'NONE' | 'TASK' | 'PROJECT' | 'BUSINESS' | null;
+  attribution: 'OBSERVER' | 'PARTICIPANT' | 'OWNER' | 'LEAD' | null;
+  concern: string | null;
+}
+
+export interface StrengthStats {
+  entryCount: number;
+  resultRate: number;
+  strongResultRate: number;
+  ownerRate: number;
+  starCompleteRate: number;
+  band: 'WEAK' | 'MIXED' | 'STRONG';
+}
+
+export interface Presentation {
+  score: number;
+  band: 'A' | 'B' | 'C' | 'D';
+  issues: string[];
+}
+
+export interface LeverageCard {
+  kind: 'STRENGTH' | 'RISK';
+  point: string;
+  sectionId: string | null;
+  likelyQuestion: string | null;
+  prepHint: string | null;
+  defenseStrategy: string | null;
+}
+
+export interface FunnelVerdict {
+  redFlags: RedFlag[] | null;
+  matchMode: 'JD' | 'DIRECTION' | 'NONE';
+  archetypeId: string | null;
+  mustHaveCoverage: MustHaveCoverage[] | null;
+  variantFit: VariantFit[] | null;
+  vocabularyGaps: VocabularyGap[] | null;
+  positioning: PositioningCheck | null;
+  experienceStrength: ExperienceStrength[] | null;
+  strength: StrengthStats | null;
+  presentation: Presentation | null;
+  leverageCards: LeverageCard[] | null;
+  analysisDegraded: boolean;
+}
+
 // ---- JD 匹配类型 ----
 
 export interface MatchDimension {
@@ -107,6 +191,8 @@ export interface AnalysisResult {
   actionableSuggestions?: ActionableSuggestion[] | null;
   enhancedKeyPoints?: EnhancedKeyPoint[] | null;
   enhancedRisks?: EnhancedRisk[] | null;
+  // P12 漏斗式结论（新主结果；历史 run 为 null）
+  funnelVerdict?: FunnelVerdict | null;
 }
 
 export interface RunStart {
@@ -193,12 +279,21 @@ export interface StepEvent {
 }
 
 export const analysisApi = {
-  submit(file: File, instruction: string, skill?: string, jobDescription?: string): Promise<RunStart> {
+  submit(
+    file: File,
+    instruction: string,
+    skill?: string,
+    jobDescription?: string,
+    targetDirection?: string,
+    persona?: string,
+  ): Promise<RunStart> {
     const form = new FormData();
     form.append('file', file);
     form.append('instruction', instruction);
     if (skill) form.append('skill', skill);
     if (jobDescription) form.append('jobDescription', jobDescription);
+    if (targetDirection) form.append('targetDirection', targetDirection);
+    if (persona) form.append('persona', persona);
     return request.upload('/api/analysis/runs', form);
   },
 
