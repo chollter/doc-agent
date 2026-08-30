@@ -21,6 +21,7 @@ import java.util.List;
  * @param instruction 分析指令
  * @param jobDescription 目标岗位JD（可选；提供时启用匹配分析）
  * @param targetDirection 求职方向短语（可选；无JD时启用方向画像模式）
+ * @param calibrationRuns 方差控制：>1 时该用例重复运行并取中位 run 做断言（校准用例建议 3）
  * @param timeoutSeconds 单用例超时
  * @param assertions  结果断言
  */
@@ -32,6 +33,7 @@ public record EvalCase(
         String instruction,
         String jobDescription,
         String targetDirection,
+        int calibrationRuns,
         int timeoutSeconds,
         Assertions assertions
 ) {

@@ -43,19 +43,22 @@ public class DocumentAnalysisController {
     private final ObjectMapper objectMapper;
     private final PendingActionRepository pendingActionRepository;
     private final LlmInteractionMapper interactionMapper;
+    private final com.gcll.docagent.analysis.CalibrationService calibrationService;
 
     public DocumentAnalysisController(DocumentAnalysisService analysisService,
                                       AgentRunRepository agentRunRepository,
                                       DocumentStore documentStore,
                                       ObjectMapper objectMapper,
                                       PendingActionRepository pendingActionRepository,
-                                      LlmInteractionMapper interactionMapper) {
+                                      LlmInteractionMapper interactionMapper,
+                                      com.gcll.docagent.analysis.CalibrationService calibrationService) {
         this.analysisService = analysisService;
         this.agentRunRepository = agentRunRepository;
         this.documentStore = documentStore;
         this.objectMapper = objectMapper;
         this.pendingActionRepository = pendingActionRepository;
         this.interactionMapper = interactionMapper;
+        this.calibrationService = calibrationService;
     }
 
     /** 提交分析：同步解析建档（解析错误直接 400），异步执行（SSE/轮询获取进度）。 */
@@ -77,8 +80,7 @@ public class DocumentAnalysisController {
 
     /** 历史列表（新→旧）。 */
     @GetMapping("/runs")
-    public List<Summary> listRuns() {
-        return agentRunRepository.findAll().stream()
+    public List<Summary> listRuns() {        return agentRunRepository.findAll().stream()
                 .sorted(Comparator.comparing(AgentRun::getCreatedAt).reversed())
                 .limit(50)
                 .map(run -> new Summary(
@@ -174,6 +176,24 @@ public class DocumentAnalysisController {
                             interactionCount, run.getCreatedAt());
                 })
                 .toList();
+    }
+
+    /**
+     * 校准对照（53→75 的结构化证据）：同一份简历 v1 vs v2 的漏斗角度并排 diff。
+     * 传 runA/runB 直接对比两个 run；或传 fileName+baselineVersion+candidateVersion
+     * 自动取各版本最新 COMPLETED run。
+     */
+    @GetMapping("/optimization-compare")
+    public com.gcll.docagent.analysis.CalibrationService.Comparison optimizationCompare(
+            @RequestParam(required = false) String runA,
+            @RequestParam(required = false) String runB,
+            @RequestParam(required = false) String fileName,
+            @RequestParam(required = false) String baselineVersion,
+            @RequestParam(required = false) String candidateVersion) {
+        if (runA != null && runB != null) {
+            return calibrationService.compareRuns(runA, runB);
+        }
+        return calibrationService.compareVersions(fileName, baselineVersion, candidateVersion);
     }
 
     /** 单次运行的全部 LLM 交互详情。 */

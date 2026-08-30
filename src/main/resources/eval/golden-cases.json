@@ -64,6 +64,7 @@
       "skill": "resume-review",
       "instruction": "按方向画像分析这份简历",
       "targetDirection": "AI应用开发",
+      "calibrationRuns": 3,
       "timeoutSeconds": 180,
       "assertions": {
         "status": "COMPLETED",

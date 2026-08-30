@@ -96,27 +96,40 @@ public class EvalRunner {
         String runId = null;
         String status = "NOT_RUN";
         String mode = null;
+        List<Integer> calibrationSamples = null;
         try {
-            byte[] bytes = new ClassPathResource(evalCase.file()).getInputStream().readAllBytes();
-            AgentRun run = analysisService.start(
-                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(),
-                    evalCase.jobDescription(), evalCase.targetDirection(), null, null, null);
-            runId = run.getId();
+            // 方差控制：calibrationRuns>1 时重复运行，取中位 run 做断言——
+            // 单次 LLM 判断的运气不进入断言，样本记录进结果供人工复核波动
+            int runCount = Math.max(1, evalCase.calibrationRuns());
+            List<AgentRun> finishedRuns = new ArrayList<>();
+            for (int i = 0; i < runCount; i++) {
+                byte[] bytes = new ClassPathResource(evalCase.file()).getInputStream().readAllBytes();
+                AgentRun submitted = analysisService.start(
+                        new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(),
+                        evalCase.jobDescription(), evalCase.targetDirection(), null, null, null);
+                int timeoutSeconds = evalCase.timeoutSeconds() > 0 ? evalCase.timeoutSeconds() : DEFAULT_TIMEOUT_SECONDS;
+                finishedRuns.add(awaitTerminal(submitted.getId(), timeoutSeconds));
+            }
+            AgentRun representative = finishedRuns.size() == 1
+                    ? finishedRuns.get(0) : pickMedianRun(finishedRuns);
+            runId = representative.getId();
+            status = representative.getStatus().name();
+            mode = representative.getExecutionMode();
+            if (finishedRuns.size() > 1) {
+                calibrationSamples = finishedRuns.stream()
+                        .map(r -> r.getScoreOverall() == null ? 0 : r.getScoreOverall())
+                        .toList();
+            }
 
-            int timeoutSeconds = evalCase.timeoutSeconds() > 0 ? evalCase.timeoutSeconds() : DEFAULT_TIMEOUT_SECONDS;
-            AgentRun finished = awaitTerminal(run.getId(), timeoutSeconds);
-            status = finished.getStatus().name();
-            mode = finished.getExecutionMode();
-
-            Instant started = Optional.ofNullable(finished.getStartedAt()).orElse(finished.getCreatedAt());
-            Instant ended = Optional.ofNullable(finished.getFinishedAt()).orElse(Instant.now());
+            Instant started = Optional.ofNullable(representative.getStartedAt()).orElse(representative.getCreatedAt());
+            Instant ended = Optional.ofNullable(representative.getFinishedAt()).orElse(Instant.now());
             metrics = TrajectoryMetrics.of(
-                    agentStepRepository.findByRunId(run.getId()),
-                    toolExecutionLogRepository.findByRunId(run.getId()),
+                    agentStepRepository.findByRunId(representative.getId()),
+                    toolExecutionLogRepository.findByRunId(representative.getId()),
                     Duration.between(started, ended).toMillis());
 
-            checkAssertions(evalCase, finished, failures, verdictsByName);
-            ResultJson result = parseResult(finished.getResultJson());
+            checkAssertions(evalCase, representative, failures, verdictsByName);
+            ResultJson result = parseResult(representative.getResultJson());
             if (result != null && result.funnelVerdict() != null) {
                 verdictsByName.put(evalCase.name(), result.funnelVerdict());
             }
@@ -124,8 +137,19 @@ public class EvalRunner {
             failures.add("执行异常: " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
         }
         boolean pass = failures.isEmpty();
-        log.info("Eval case [{}] {} (status={}, mode={})", evalCase.name(), pass ? "PASS" : "FAIL", status, mode);
-        return new CaseResult(evalCase.name(), evalCase.file(), evalCase.skill(), runId, status, mode, pass, failures, metrics);
+        log.info("Eval case [{}] {} (status={}, mode={}, runs={}, samples={})",
+                evalCase.name(), pass ? "PASS" : "FAIL", status, mode,
+                evalCase.calibrationRuns() > 1 ? evalCase.calibrationRuns() : 1, calibrationSamples);
+        return new CaseResult(evalCase.name(), evalCase.file(), evalCase.skill(), runId, status, mode, pass,
+                failures, metrics, calibrationSamples);
+    }
+
+    /** 中位代表：按 legacyOverall 排序取中位 run。包内可见供单测。 */
+    static AgentRun pickMedianRun(List<AgentRun> runs) {
+        List<AgentRun> sorted = runs.stream()
+                .sorted(java.util.Comparator.comparingInt(r -> r.getScoreOverall() == null ? 0 : r.getScoreOverall()))
+                .toList();
+        return sorted.get(sorted.size() / 2);
     }
 
     private void autoConfirmPending(String runId) {
@@ -391,7 +415,8 @@ public class EvalRunner {
     public record CaseResult(
             String name, String file, String skill, String runId,
             String status, String mode, boolean pass,
-            List<String> failures, TrajectoryMetrics metrics
+            List<String> failures, TrajectoryMetrics metrics,
+            List<Integer> calibrationSamples
     ) {
     }
 
