@@ -4,11 +4,13 @@ import {
   analysisApi,
   subscribeSteps,
   getErrorMessage,
+  type AuditStep,
   type DocumentView,
   type RunDetail,
   type StepEvent,
 } from '../api/analysis';
 import StepTimeline from '../components/StepTimeline';
+import ExecutionChain from '../components/ExecutionChain';
 import ReportCard from '../components/ReportCard';
 import ResumeReportCard from '../components/ResumeReportCard';
 import InterviewChat from '../components/InterviewChat';
@@ -51,6 +53,9 @@ export default function AnalysisPage() {
   const [jobDescription, setJobDescription] = useState('');
   const [targetDirection, setTargetDirection] = useState('');
   const [persona, setPersona] = useState('');
+  const [promptVersion, setPromptVersion] = useState('');
+  const [optimizationNote, setOptimizationNote] = useState('');
+  const [chainSteps, setChainSteps] = useState<AuditStep[]>([]);
   const [interviewMode, setInterviewMode] = useState(false);
 
   const closeStreamRef = useRef<(() => void) | null>(null);
@@ -94,10 +99,13 @@ export default function AnalysisPage() {
     if (d.status === 'COMPLETED') {
       setPhase('done');
       cleanup();
+      // 终态拉取执行链路——出问题时不用去别处挖，现场就在报告旁边
+      analysisApi.getAudit(runId).then(setChainSteps).catch(() => setChainSteps([]));
     } else if (d.status === 'FAILED') {
       setPhase('failed');
       setError(d.lastError ?? '分析失败');
       cleanup();
+      analysisApi.getAudit(runId).then(setChainSteps).catch(() => setChainSteps([]));
     }
   }, [cleanup]);
 
@@ -105,6 +113,7 @@ export default function AnalysisPage() {
     if (!file || phase === 'running') return;
     setError(null);
     setSteps([]);
+    setChainSteps([]);
     setDetail(null);
     setHighlight(null);
     setPhase('running');
@@ -115,7 +124,9 @@ export default function AnalysisPage() {
         file, instruction, skill,
         skill === 'resume-review' && jobDescription.trim() ? jobDescription.trim() : undefined,
         skill === 'resume-review' && !jobDescription.trim() && targetDirection.trim() ? targetDirection.trim() : undefined,
-        skill === 'resume-review' && persona ? persona : undefined
+        skill === 'resume-review' && persona ? persona : undefined,
+        promptVersion.trim() || undefined,
+        optimizationNote.trim() || undefined
       );
       analysisApi.getDocument(runId).then(setDoc).catch(() => setDoc(null));
       closeStreamRef.current = subscribeSteps(runId, mergeStep);
@@ -146,6 +157,7 @@ export default function AnalysisPage() {
     cleanup();
     setPhase('idle');
     setSteps([]);
+    setChainSteps([]);
     setDetail(null);
     setDoc(null);
     setError(null);
@@ -351,6 +363,29 @@ export default function AnalysisPage() {
           </div>
         )}
 
+        {/* 校准标注——测出来不准时，改完重跑同一份文件，版本+说明让前后可比 */}
+        <details className="rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-semibold text-slate-500">
+            校准标注（可选）——评测/调优迭代时填写
+          </summary>
+          <div className="mt-2 grid grid-cols-[120px_1fr] items-center gap-2 text-xs">
+            <span className="text-slate-500">版本标签</span>
+            <input
+              value={promptVersion}
+              onChange={(e) => setPromptVersion(e.target.value)}
+              placeholder="如 resume-v2（对应 prompt 文件的 git 版本）"
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-indigo-400"
+            />
+            <span className="text-slate-500">优化说明</span>
+            <input
+              value={optimizationNote}
+              onChange={(e) => setOptimizationNote(e.target.value)}
+              placeholder="这次改了什么、为什么——校准工作台里会显示在这条运行旁边"
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 outline-none focus:border-indigo-400"
+            />
+          </div>
+        </details>
+
         <div className="flex gap-2">
           <button
             type="button"
@@ -420,6 +455,9 @@ export default function AnalysisPage() {
           </div>
           <StepTimeline steps={steps} />
         </div>
+        {detail?.result && (
+          <ExecutionChain steps={chainSteps} defaultCollapsed={chainSteps.every((s) => s.status !== 'FAILED')} />
+        )}
         {detail?.result && (
           detail.skill === 'resume-review'
             ? <ResumeReportCard result={detail.result} mode={detail.executionMode} onCitation={setHighlight} />

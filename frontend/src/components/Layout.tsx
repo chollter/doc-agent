@@ -1,9 +1,10 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { FileSearch, History, Sparkles } from 'lucide-react';
+import { FileSearch, History, Sparkles, GitCompareArrows } from 'lucide-react';
 
 const navItems = [
   { to: '/', label: '分析工作台', icon: FileSearch },
   { to: '/history', label: '历史记录', icon: History },
+  { to: '/calibration', label: '校准工作台', icon: GitCompareArrows },
 ];
 
 export default function Layout() {

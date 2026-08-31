@@ -154,6 +154,53 @@ export interface FunnelVerdict {
   analysisDegraded: boolean;
 }
 
+// ---- 校准对照类型（53→75 的证据链） ----
+
+export interface OptimizationHistoryItem {
+  runId: string;
+  fileName: string | null;
+  skill: string | null;
+  promptVersion: string | null;
+  optimizationNote: string | null;
+  scoreOverall: number | null;
+  scoreDimensions: string | null;
+  executionMode: string | null;
+  tokensUsed: number | null;
+  interactionCount: number;
+  createdAt: string;
+}
+
+export interface CalibrationSnapshot {
+  runId: string;
+  promptVersion: string | null;
+  optimizationNote: string | null;
+  scoreOverall: number | null;
+  strengthBand: string | null;
+  presentationScore: number | null;
+  presentationBand: string | null;
+  matchBand: string | null;
+  matchMode: string | null;
+  highRedFlagCount: number;
+  coverageMet: number;
+  leverageCards: number;
+  degraded: boolean;
+}
+
+export interface AngleDelta {
+  angle: string;
+  baseline: string;
+  candidate: string;
+  direction: 'IMPROVED' | 'REGRESSED' | 'UNCHANGED' | 'MISSING';
+}
+
+export interface OptimizationCompare {
+  fileName: string;
+  baseline: CalibrationSnapshot;
+  candidate: CalibrationSnapshot;
+  deltas: AngleDelta[];
+  conclusion: string;
+}
+
 // ---- JD 匹配类型 ----
 
 export interface MatchDimension {
@@ -286,6 +333,8 @@ export const analysisApi = {
     jobDescription?: string,
     targetDirection?: string,
     persona?: string,
+    promptVersion?: string,
+    optimizationNote?: string,
   ): Promise<RunStart> {
     const form = new FormData();
     form.append('file', file);
@@ -294,6 +343,8 @@ export const analysisApi = {
     if (jobDescription) form.append('jobDescription', jobDescription);
     if (targetDirection) form.append('targetDirection', targetDirection);
     if (persona) form.append('persona', persona);
+    if (promptVersion) form.append('promptVersion', promptVersion);
+    if (optimizationNote) form.append('optimizationNote', optimizationNote);
     return request.upload('/api/analysis/runs', form);
   },
 
@@ -319,6 +370,25 @@ export const analysisApi = {
 
   getAudit(runId: string): Promise<AuditStep[]> {
     return request.get(`/api/audit/agent-runs/${runId}`);
+  },
+
+  /** 优化历史（校准记录链） */
+  getOptimizationHistory(): Promise<OptimizationHistoryItem[]> {
+    return request.get('/api/analysis/optimization-history');
+  },
+
+  /** 校准对照：同文件两个版本（或两个 runId）的分角度 diff */
+  compareOptimization(params: {
+    fileName?: string;
+    baselineVersion?: string;
+    candidateVersion?: string;
+    runA?: string;
+    runB?: string;
+  }): Promise<OptimizationCompare> {
+    const qs = new URLSearchParams(
+      Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== '')) as Record<string, string>,
+    );
+    return request.get(`/api/analysis/optimization-compare?${qs.toString()}`);
   },
 
   /** 追问（面试模拟核心通道） */
