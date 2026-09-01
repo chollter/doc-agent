@@ -167,4 +167,42 @@ class RedFlagCheckerTest {
             assertThat(f.message()).contains("粗查");
         });
     }
+
+    @Test
+    void textFallbackShouldIgnoreBirthDateAndEducationLines() {
+        // 线上真实缺陷回归：单点日期（出生）与教育行不得入时间线——
+        // 旧实现扫全文所有日期逐对算间隔，产出 231/52 个月垃圾红旗；
+        // 本例工作区间实际无缝衔接，粗查必须零空窗红旗（联系方式在，无其他红旗）
+        String text = """
+                出生 1995.06，电话 13800138000
+                ## 教育经历
+                华南理工大学 本科 2014.09-2019.01 软件工程（五年制）
+                ## 工作经历
+                ### 甲公司 · 后端工程师 2019.01-2020.03
+                - 负责订单系统
+                """;
+
+        List<RedFlag> flags = checker.checkFromText(text);
+
+        assertThat(flags).noneMatch(f -> f.type().equals(RedFlag.TIMELINE_GAP));
+    }
+
+    @Test
+    void textFallbackShouldDetectOnlyRealWorkGap() {
+        // 混合噪声（出生日期 + 教育区间 + 两段工作）中只报工作区间间的真实空窗：
+        // 2020.03→2022.06 = 27 个月，且只报这一条，不得报 231/52/14 个月
+        String text = """
+                出生 1995.06，电话 13800138000
+                华东师范大学 硕士 2014.09-2019.01 计算机技术（学制四年半）
+                2019.01-2020.03 甲公司 Java 开发工程师（应届入职）
+                2022.06-至今 乙公司 高级开发工程师（主导重构）
+                """;
+
+        List<RedFlag> flags = checker.checkFromText(text);
+
+        List<RedFlag> gaps = flags.stream()
+                .filter(f -> f.type().equals(RedFlag.TIMELINE_GAP)).toList();
+        assertThat(gaps).hasSize(1);
+        assertThat(gaps.get(0).message()).contains("27 个月");
+    }
 }

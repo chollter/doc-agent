@@ -1,5 +1,5 @@
-import { AlertTriangle, Award, Bookmark, Briefcase, CheckCircle, ClipboardList, GraduationCap, HelpCircle, Lightbulb, ShieldAlert, Sparkles, Target, TrendingUp, User, XCircle } from 'lucide-react';
-import type { AnalysisResult, ActionableSuggestion, EnhancedKeyPoint, EnhancedRisk, ResumeProfile, QualityScore, SkillMatrix, FunnelVerdict, LeverageCard as LeverageCardType } from '../api/analysis';
+import { AlertTriangle, Award, Bookmark, Briefcase, CheckCircle, ClipboardList, GraduationCap, HelpCircle, Lightbulb, ShieldAlert, Sparkles, Target, TrendingUp, User } from 'lucide-react';
+import type { AnalysisResult, EnhancedKeyPoint, EnhancedRisk, ResumeProfile, QualityScore, SkillMatrix, FunnelVerdict, LeverageCard as LeverageCardType } from '../api/analysis';
 
 function ModeBadge({ mode }: { mode: string | null | undefined }) {
   if (!mode) return null;
@@ -146,62 +146,6 @@ function QualityScoreCard({ score }: { score: QualityScore }) {
   );
 }
 
-/** 精准建议区 */
-function ActionableSuggestionsSection({ suggestions, onCitation }: {
-  suggestions: ActionableSuggestion[];
-  onCitation?: (sectionId: string) => void;
-}) {
-  if (!suggestions || suggestions.length === 0) return null;
-
-  const severityConfig = {
-    HIGH: { bg: 'bg-rose-50', border: 'border-rose-200', badge: 'bg-rose-100 text-rose-700', label: '高优' },
-    MEDIUM: { bg: 'bg-amber-50', border: 'border-amber-200', badge: 'bg-amber-100 text-amber-700', label: '中优' },
-    LOW: { bg: 'bg-sky-50', border: 'border-sky-200', badge: 'bg-sky-100 text-sky-700', label: '低优' },
-  };
-
-  return (
-    <div>
-      <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
-        <Target size={15} />
-        精准改进建议
-      </div>
-      <div className="space-y-3">
-        {suggestions.map((s, i) => {
-          const cfg = severityConfig[s.severity] ?? severityConfig.LOW;
-          return (
-            <div key={i} className={`rounded-xl border ${cfg.border} ${cfg.bg} p-4`}>
-              <div className="mb-2 flex items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${cfg.badge}`}>{cfg.label}</span>
-                <span className="text-sm font-medium text-slate-700">{s.target}</span>
-                {s.sectionId && (
-                  <button
-                    type="button"
-                    onClick={() => onCitation?.(s.sectionId!)}
-                    className="ml-auto text-xs text-indigo-500 hover:underline"
-                  >
-                    定位 →
-                  </button>
-                )}
-              </div>
-              <div className="space-y-2">
-                <div className="rounded-lg bg-white/80 p-2.5">
-                  <div className="mb-1 text-xs font-semibold text-rose-500">原文</div>
-                  <p className="text-sm leading-6 text-slate-600 line-through decoration-rose-300">{s.before}</p>
-                </div>
-                <div className="rounded-lg bg-white/80 p-2.5">
-                  <div className="mb-1 text-xs font-semibold text-emerald-500">改写建议</div>
-                  <p className="text-sm leading-6 text-slate-700">{s.after}</p>
-                </div>
-              </div>
-              <p className="mt-2 text-xs leading-5 text-slate-500">💡 {s.reason}</p>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 /** 增强亮点 */
 function EnhancedKeyPointsSection({ keyPoints, onCitation }: {
   keyPoints: EnhancedKeyPoint[];
@@ -284,16 +228,49 @@ function EnhancedRisksSection({ risks, onCitation }: {
   );
 }
 
+/** 一句话裁决：从裁决字段纯代码推导（不依赖 LLM，不漂移），结论区第一行直接给判断。 */
+function verdictLine(verdict: FunnelVerdict): { text: string; alert: boolean } {
+  const high = (verdict.redFlags ?? []).filter((f) => f.severity === 'HIGH');
+  if (high.length > 0) {
+    const first = high[0].message.replace(/（.*$/, '');
+    return { text: `有 ${high.length} 项一票否决需先处理：${first}`, alert: true };
+  }
+  const parts: string[] = [];
+  if (verdict.strength) {
+    const bandText = verdict.strength.band === 'STRONG' ? '强'
+      : verdict.strength.band === 'MIXED' ? '混合' : '弱';
+    parts.push(`内容强度${bandText}`);
+  }
+  if (verdict.presentation) {
+    parts.push(`表达 ${verdict.presentation.score} 分（${verdict.presentation.band} 档）`);
+  }
+  if (verdict.matchMode === 'DIRECTION' && verdict.variantFit && verdict.variantFit.length > 0) {
+    const best = verdict.variantFit.find((v) => v.fit === 'HIGH') ?? verdict.variantFit[0];
+    parts.push(`最适方向「${best.name}」`);
+  } else if (verdict.matchMode === 'JD' && verdict.mustHaveCoverage && verdict.mustHaveCoverage.length > 0) {
+    const met = verdict.mustHaveCoverage.filter((c) => c.status === 'MET').length;
+    parts.push(`共性要求满足 ${met}/${verdict.mustHaveCoverage.length}`);
+  }
+  return { text: `无一票否决项；${parts.join(' · ')}`, alert: false };
+}
+
 /** P12 漏斗式结论——按"会死在哪一关"的顺序渲染 */
 function FunnelVerdictSection({ verdict, onCitation }: {
   verdict: FunnelVerdict;
   onCitation?: (sectionId: string) => void;
 }) {
+  const line = verdictLine(verdict);
   return (
     <div className="space-y-4">
+      {/* 一句话裁决（置顶，打开页面第一行就是判断） */}
+      <div className={`rounded-xl border px-4 py-3 text-sm font-semibold ${
+        line.alert ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-100 bg-emerald-50/70 text-slate-700'}`}>
+        {line.text}
+      </div>
+
       {verdict.analysisDegraded && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-700">
-          实体抽取降级（当时 LLM 调用失败）：红旗为文本级粗查（未区分教育/工作）、候选人画像缺失；其余角度由 LLM 直读原文产出，仍可参考。重试可获得完整分析。
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-xs leading-5 text-amber-700">
+          ⚠ 实体抽取降级：红旗仅粗查、候选人画像缺失；重试可获得完整分析。
         </div>
       )}
 
@@ -325,9 +302,11 @@ function FunnelVerdictSection({ verdict, onCitation }: {
                 : flag.severity === 'MEDIUM'
                   ? 'border-amber-300 bg-amber-50 text-amber-700'
                   : 'border-slate-200 bg-slate-50 text-slate-600';
+              const label = flag.severity === 'HIGH' ? '高危'
+                : flag.severity === 'MEDIUM' ? '中风险' : '提示';
               return (
                 <div key={i} className={`rounded-lg border px-3 py-2 text-xs leading-5 ${color}`}>
-                  <span className="mr-1.5 font-semibold">[{flag.severity}]</span>
+                  <span className="mr-1.5 font-semibold">{label}</span>
                   {flag.message}
                 </div>
               );
@@ -336,13 +315,16 @@ function FunnelVerdictSection({ verdict, onCitation }: {
         </div>
       )}
 
-      {/* 第二关：岗位匹配（JD 对照 / 方向画像广撒网） */}
+      {/* 第二关：岗位匹配（JD 对照 / 方向画像广撒网），默认折叠 */}
       {verdict.matchMode === 'DIRECTION' && (
-        <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-4">
-          <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-sky-700">
+        <details className="group rounded-xl border border-sky-100 bg-sky-50/50 p-4">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-semibold text-sky-700">
             <Target size={15} />
             方向匹配（广撒网模式：{verdict.archetypeId}）
-          </div>
+            <span className="ml-auto text-xs font-normal text-slate-400 group-open:hidden">展开</span>
+            <span className="ml-auto hidden text-xs font-normal text-slate-400 group-open:inline">收起</span>
+          </summary>
+          <div className="mt-3">
 
           {verdict.mustHaveCoverage && verdict.mustHaveCoverage.length > 0 && (
             <div className="mb-3">
@@ -418,24 +400,24 @@ function FunnelVerdictSection({ verdict, onCitation }: {
               {verdict.positioning.comment && <div className="mt-0.5 opacity-80">{verdict.positioning.comment}</div>}
             </div>
           )}
-        </div>
+          </div>
+        </details>
       )}
 
-      {/* 第三关：内容强度 */}
+      {/* 第三关：内容强度，默认折叠 */}
       {verdict.strength && verdict.strength.entryCount > 0 && (
-        <div className="rounded-xl border border-violet-100 bg-violet-50/50 p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-sm font-semibold text-violet-700">
-              <TrendingUp size={15} />
-              内容强度（成就的证据质量）
-            </div>
+        <details className="group rounded-xl border border-violet-100 bg-violet-50/50 p-4">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-semibold text-violet-700">
+            <TrendingUp size={15} />
+            内容强度（成就的证据质量）
             <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
               verdict.strength.band === 'STRONG' ? 'bg-emerald-100 text-emerald-700'
                 : verdict.strength.band === 'MIXED' ? 'bg-amber-100 text-amber-700'
                 : 'bg-rose-100 text-rose-700'}`}>
               {verdict.strength.band === 'STRONG' ? '强' : verdict.strength.band === 'MIXED' ? '混合' : '弱'}
             </span>
-          </div>
+          </summary>
+          <div className="mt-3">
           <div className="mb-3 grid grid-cols-4 gap-2 text-center text-xs">
             <div className="rounded-lg bg-white/80 py-2">
               <div className="font-bold text-slate-700">{Math.round(verdict.strength.resultRate * 100)}%</div>
@@ -482,35 +464,36 @@ function FunnelVerdictSection({ verdict, onCitation }: {
               ))}
             </div>
           )}
-        </div>
+          </div>
+        </details>
       )}
 
-      {/* 第四关：表达质量 */}
+      {/* 第四关：表达质量，默认折叠 */}
       {verdict.presentation && (
-        <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-sm font-semibold text-indigo-700">
-              <Sparkles size={15} />
-              表达质量
-            </div>
-            <span className="text-xs font-semibold text-slate-600">
+        <details className="group rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-semibold text-indigo-700">
+            <Sparkles size={15} />
+            表达质量
+            <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold text-slate-600">
               {verdict.presentation.score} 分 · {verdict.presentation.band} 档
             </span>
+          </summary>
+          <div className="mt-2 space-y-1.5">
+            {verdict.presentation.issues.map((issue, i) => (
+              <div key={i} className="rounded-lg bg-white/80 px-3 py-1.5 text-xs text-slate-600">{issue}</div>
+            ))}
           </div>
-          {verdict.presentation.issues.map((issue, i) => (
-            <div key={i} className="rounded-lg bg-white/80 px-3 py-1.5 text-xs text-slate-600">{issue}</div>
-          ))}
-        </div>
+        </details>
       )}
 
-      {/* 面试杠杆：简历是面试的剧本 */}
+      {/* 面试杠杆：简历是面试的剧本，默认折叠 */}
       {verdict.leverageCards && verdict.leverageCards.length > 0 && (
-        <div>
-          <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-amber-600">
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-semibold text-amber-600">
             <HelpCircle size={15} />
-            面试预演（面试官会问什么、怎么接）
-          </div>
-          <div className="grid gap-2 md:grid-cols-2">
+            面试预演（{verdict.leverageCards.length} 项：面试官会问什么、怎么接）
+          </summary>
+          <div className="mt-2 grid gap-2 md:grid-cols-2">
             {verdict.leverageCards.map((card: LeverageCardType, i) => (
               <div key={i} className={`rounded-xl border p-3 text-xs ${card.kind === 'STRENGTH' ? 'border-emerald-200 bg-emerald-50/60' : 'border-rose-200 bg-rose-50/60'}`}>
                 <div className="flex items-center gap-1.5 font-semibold text-slate-700">
@@ -531,7 +514,7 @@ function FunnelVerdictSection({ verdict, onCitation }: {
               </div>
             ))}
           </div>
-        </div>
+        </details>
       )}
     </div>
   );
@@ -545,10 +528,9 @@ export default function ResumeReportCard({ result, mode, onCitation }: {
 }) {
   const hasProfile = result.profile != null;
   const hasQualityScore = result.qualityScore != null;
-  const hasActionableSuggestions = result.actionableSuggestions && result.actionableSuggestions.length > 0;
   const hasEnhancedKeyPoints = result.enhancedKeyPoints && result.enhancedKeyPoints.length > 0;
   const hasEnhancedRisks = result.enhancedRisks && result.enhancedRisks.length > 0;
-  const hasDeepAnalysis = hasProfile || hasQualityScore || hasActionableSuggestions || hasEnhancedKeyPoints || hasEnhancedRisks;
+  const hasDeepAnalysis = hasProfile || hasQualityScore || hasEnhancedKeyPoints || hasEnhancedRisks;
 
   return (
     <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -566,23 +548,12 @@ export default function ResumeReportCard({ result, mode, onCitation }: {
       {/* 质量评分（P11 历史 run 兼容） */}
       {hasQualityScore && <QualityScoreCard score={result.qualityScore!} />}
 
-      {/* 总结 */}
-      {!hasDeepAnalysis && (
-        <div className="rounded-xl bg-gradient-to-br from-indigo-50 to-violet-50 p-4 text-sm leading-7 text-slate-800">
-          {result.summary}
+      {/* 候选人画像（LLM 总结；判断在结论区顶部的一句话裁决，不再混在一起） */}
+      {result.summary && (
+        <div className="rounded-xl bg-gradient-to-br from-indigo-50 to-violet-50 p-4">
+          <div className="mb-1 text-xs font-semibold text-indigo-400">候选人画像</div>
+          <div className="text-sm leading-7 text-slate-800">{result.summary}</div>
         </div>
-      )}
-
-      {/* 有深度分析时，summary 作为补充 */}
-      {hasDeepAnalysis && (
-        <div className="rounded-xl bg-gradient-to-br from-indigo-50 to-violet-50 p-4 text-sm leading-7 text-slate-800">
-          {result.summary}
-        </div>
-      )}
-
-      {/* 精准建议 */}
-      {hasActionableSuggestions && (
-        <ActionableSuggestionsSection suggestions={result.actionableSuggestions!} onCitation={onCitation} />
       )}
 
       {/* 增强亮点 */}
@@ -621,56 +592,7 @@ export default function ResumeReportCard({ result, mode, onCitation }: {
         </div>
       )}
 
-      {/* 差距分析 */}
-      {result.gaps && result.gaps.length > 0 && (
-        <div>
-          <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-rose-600">
-            <XCircle size={15} />
-            差距分析
-          </div>
-          <div className="space-y-2">
-            {result.gaps.map((gap, i) => (
-              <div key={i} className="rounded-lg bg-rose-50/60 p-3">
-                <div className="text-xs font-semibold text-slate-600">JD 要求</div>
-                <p className="text-sm text-slate-700">{gap.requirement}</p>
-                <div className="mt-1.5 text-xs font-semibold text-rose-500">简历差距</div>
-                <p className="text-sm text-slate-600">{gap.gap}</p>
-                <div className="mt-1.5 text-xs font-semibold text-emerald-500">改进建议</div>
-                <p className="text-sm text-slate-600">{gap.suggestion}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 面试题预测 */}
-      {result.interviewQuestions && result.interviewQuestions.length > 0 && (
-        <div>
-          <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-violet-600">
-            <HelpCircle size={15} />
-            面试题预测
-          </div>
-          <div className="space-y-2">
-            {result.interviewQuestions.map((q, i) => (
-              <div key={i} className="rounded-lg bg-violet-50/60 p-3">
-                <div className="flex items-start gap-2">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-200 text-xs font-bold text-violet-700">{i + 1}</span>
-                  <div>
-                    <p className="text-sm font-medium text-slate-700">{q.question}</p>
-                    <p className="mt-1 text-xs text-slate-500"><span className="font-semibold">考察点：</span>{q.intent}</p>
-                    <p className="mt-1 text-xs text-slate-500"><span className="font-semibold">回答建议：</span>{q.suggestedAnswer}</p>
-                    {q.isGapPrep && (
-                      <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">差距准备</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 降级到通用展示：如果没有深度分析数据，回退到 keyPoints/risks/suggestions */}
+      {/* 降级到通用展示：如果没有深度分析数据，回退到 keyPoints/risks */}
       {!hasDeepAnalysis && (
         <>
           {result.keyPoints?.length > 0 && (
@@ -694,19 +616,6 @@ export default function ResumeReportCard({ result, mode, onCitation }: {
               </div>
               <ul className="space-y-1.5">
                 {result.risks.map((item, i) => (
-                  <li key={i} className="rounded-lg bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">{item}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {result.suggestions?.length > 0 && (
-            <div>
-              <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
-                <Lightbulb size={15} />
-                建议
-              </div>
-              <ul className="space-y-1.5">
-                {result.suggestions.map((item, i) => (
                   <li key={i} className="rounded-lg bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">{item}</li>
                 ))}
               </ul>

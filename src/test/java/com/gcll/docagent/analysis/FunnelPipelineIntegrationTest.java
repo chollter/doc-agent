@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -109,9 +110,10 @@ class FunnelPipelineIntegrationTest {
 
     @Test
     void assemblesFunnelVerdictEndToEnd() throws Exception {
-        when(llmGateway.invoke(anyString(), anyString()))
+        // 抽取与主分析均走 4 参网关（按 prompt 文件分流）
+        when(llmGateway.invoke(anyString(), eq("resume-entity-extract.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ENTITIES_JSON, 200, 100, "qwen-plus"));
-        when(llmGateway.invoke(anyString(), anyString(), anyString(), anyString()))
+        when(llmGateway.invoke(anyString(), eq("resume-review.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
 
         String runId = submit(RESUME_MD, "按方向画像分析这份简历", "AI应用开发");
@@ -164,10 +166,10 @@ class FunnelPipelineIntegrationTest {
 
     @Test
     void marksDegradedAndSuppressesScoreWhenExtractionFails() throws Exception {
-        // 抽取挂掉（2 参 invoke 抛异常）→ 降级路径；主分析（4 参）正常返回
-        when(llmGateway.invoke(anyString(), anyString()))
+        // 抽取挂掉（4 参 invoke 的 entity-extract 分支抛异常）→ 降级路径；主分析正常返回
+        when(llmGateway.invoke(anyString(), eq("resume-entity-extract.txt"), anyString(), anyString()))
                 .thenThrow(new RuntimeException("extraction down"));
-        when(llmGateway.invoke(anyString(), anyString(), anyString(), anyString()))
+        when(llmGateway.invoke(anyString(), eq("resume-review.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
 
         String runId = submit(RESUME_MD, "按方向画像分析这份简历", "AI应用开发");
@@ -191,9 +193,9 @@ class FunnelPipelineIntegrationTest {
 
     @Test
     void appliesSuggestionToProduceRevisedMarkdown() throws Exception {
-        when(llmGateway.invoke(anyString(), anyString()))
+        when(llmGateway.invoke(anyString(), eq("resume-entity-extract.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ENTITIES_JSON, 200, 100, "qwen-plus"));
-        when(llmGateway.invoke(anyString(), anyString(), anyString(), anyString()))
+        when(llmGateway.invoke(anyString(), eq("resume-review.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
 
         String runId = submit(RESUME_MD, "按方向画像分析这份简历", "AI应用开发");

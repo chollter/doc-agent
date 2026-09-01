@@ -72,7 +72,9 @@ public record EvalCase(
             /** 落地性校验违规数上限（反编造不变量：编造数字/失锚引文必须为 0）。 */
             Integer maxGroundingFindings,
             /** 表达分数上限（排版混乱语料必须被压分）。 */
-            Integer presentationScoreAtMost
+            Integer presentationScoreAtMost,
+            /** summary 要素关键词组：每组内至少一个关键词出现在 summary 中（判断/风险/行动三要素，纯描述式失败）。 */
+            List<List<String>> summaryKeywordGroups
     ) {
     }
 }

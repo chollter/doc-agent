@@ -335,6 +335,15 @@ public class EvalRunner {
                 }
             }
         }
+        // summary 结论式三要素：判断/风险/行动各至少命中一组关键词（纯描述式复述=失败）
+        if (a.summaryKeywordGroups() != null) {
+            String sum = result.summary() == null ? "" : result.summary();
+            for (List<String> group : a.summaryKeywordGroups()) {
+                if (group != null && !group.isEmpty() && group.stream().noneMatch(sum::contains)) {
+                    failures.add("summary 缺少要素关键词组（表述退化为纯描述？）: " + group);
+                }
+            }
+        }
         // 落地性不变量：编造数字/失锚引文数必须不超上限（语料回归核心断言）
         int grounding = verdict.groundingFindings() == null ? 0 : verdict.groundingFindings().size();
         if (a.maxGroundingFindings() != null && grounding > a.maxGroundingFindings()) {

@@ -4,7 +4,7 @@
 如果用户消息中包含"预抽取的简历实体"和"红旗筛查结果"段落：
 - 直接使用这些实体进行分析，无需重新提取
 - 直接引用红旗筛查结果（如时间线空窗、跳槽频率），这些是代码已验证的稳定结论
-- 重点放在分析判断和建议上，而非信息提取
+- 重点放在分析判断上，而非信息提取
 
 ## 表达质量评分 rubric（锚定标准，必须使用整个区间）
 - 90+：结构清晰一致，bullet 动词开头、信息密度高，6 秒内抓住重点
@@ -15,7 +15,7 @@
 
 输出必须是合法 JSON 对象，不要包含 markdown 代码块：
 {
-  "summary": "候选人画像总结（150字以内，须包含：总工作年限、当前角色定位、核心技术栈、最突出的项目经验）",
+  "summary": "结论式总评（200字以内，判断先行，五要素缺一不可：①一句话水平判断——什么水准、这条简历能不能过目标方向的初筛；②最强证据——凭最硬的一条成就说话（带数字）；③最可能被追问/死在哪——1-2 处具体风险；④与目标方向（或JD）的匹配一句话；⑤若只改一处，先改什么。禁止纯描述式复述年限/技术栈/项目——读者是简历主人，复述他已知的信息没有价值",
 
   "presentation": {
     "score": 62,
@@ -38,31 +38,13 @@
     {"kind": "RISK", "point": "风险一句话", "sectionId": "sec-X", "likelyQuestion": "面试官会从什么角度挑战", "defenseStrategy": "怎么答（口径+证据）"}
   ],
 
-  "actionableSuggestions": [
-    {
-      "severity": "HIGH|MEDIUM|LOW",
-      "target": "定位到具体段落",
-      "sectionId": "sec-X",
-      "before": "简历原文引用（连续片段，禁止改写）",
-      "after": "仅基于 before 原文事实改写的版本；原文没有的量化成果用 [请补充：如提升幅度] 占位",
-      "reason": "为什么要这样改（面试官视角）"
-    }
-  ],
-
-  "suggestions": ["向后兼容的纯文本建议列表（从 actionableSuggestions 提取核心信息）"],
-  "keyPoints": ["向后兼容的纯文本亮点列表（从 leverageCards 的 STRENGTH 提取 point）"],
-  "risks": ["向后兼容的纯文本风险列表（从 leverageCards 的 RISK 提取 point）"],
+  "keyPoints": ["纯文本亮点列表（从 leverageCards 的 STRENGTH 提取 point）"],
+  "risks": ["纯文本风险列表（从 leverageCards 的 RISK 提取 point）"],
 
   "citations": [{"sectionId": "sec-1", "quote": "原文短句（30字以内）"}],
 
   "matchDimensions": [
     {"name": "JD要求项原文（如：精通Java）", "level": "STRONG|PARTIAL|WEAK", "reason": "判断依据（引用简历内容）"}
-  ],
-  "gaps": [
-    {"requirement": "JD要求项原文", "gap": "简历缺什么", "suggestion": "怎么补（可执行的）"}
-  ],
-  "interviewQuestions": [
-    {"question": "面试官会问的问题", "intent": "考察意图", "suggestedAnswer": "建议回答要点", "isGapPrep": false}
   ],
 
   "mustHaveCoverage": [
@@ -74,7 +56,7 @@
   "positioning": null
 }
 
-重要：matchDimensions、gaps、interviewQuestions、mustHaveCoverage、variantFit 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
+重要：matchDimensions、mustHaveCoverage、variantFit 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
 positioning 在方向画像模式下为对象：{"anchored": false, "currentAnchor": "当前定位", "suggestedAnchor": "建议定位", "comment": "理由"}；无画像时为 null。
 
 experienceStrength 评估标准：
@@ -83,18 +65,15 @@ experienceStrength 评估标准：
 - attribution：OBSERVER=提及 / PARTICIPANT=参与 / OWNER=负责模块 / LEAD=主导全局
 - 归因与结果不匹配必须写 concern；最多评估 6 条核心经历
 
-无JD且无方向画像时 matchDimensions/gaps/interviewQuestions/mustHaveCoverage/variantFit 设为空数组，positioning 为 null。
+无JD且无方向画像时 matchDimensions/mustHaveCoverage/variantFit 设为空数组，positioning 为 null。
 
 规则：
-- actionableSuggestions 3-6 条，severity HIGH 排前面，每条有 before/after
-- before 必须是原文连续片段，禁止改写或捏造（可用原文核对，citations 同样适用）
-- after 只能基于原文已有事实改写：禁止编造原文没有的数字、比例、时长、佐证材料（如"降至0.3%""附邮件截图"均为编造）；缺量化成果时用 [请补充：xx指标] 占位引导用户自填，不要替用户发明数据
+- 本轮只输出结论（诊断），不输出改写建议：不要给 before/after、不要给“怎么改”——具体建议由用户追问时另行生成，擅自输出会污染结论区
 - leverageCards 3-6 张，亮点与风险都要有，每张必须有 likelyQuestion
-- presentation.score 按 rubric 使用整个区间，issues 定位到 sectionId
+- presentation.score 按 rubric 使用整个区间，issues 定位到 sectionId（issues 是诊断，不是改写建议）
 - 引用 quote 必须是原文连续片段，禁止改写
 
-## 落地性铁律（程序会校验，违反会被标记）
-- after 中禁止编造简历中不存在的数字：只在简历有真实数据时引用；没有数据时必须用占位符，如"迁移中断率从【补充真实数据】降至【补充真实数据】"——把填空留给用户，不许替用户发明
-- before 必须是简历原文的连续片段（程序逐字校验）
-- 宁可指出"这里缺一个可验证的结果"，也不要用编造的数字填充
 
+
+
+- summary 必须是结论式：第一句就是判断（如「中上水准」「偏弱」「竞争力强」），不是「候选人工作年限X年，技术栈包括…」这种复述

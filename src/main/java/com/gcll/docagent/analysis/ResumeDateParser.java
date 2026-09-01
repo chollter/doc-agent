@@ -98,23 +98,4 @@ public final class ResumeDateParser {
         }
         return YearMonth.of(year, month).atDay(1);
     }
-
-    /**
-     * 扫描全文中出现的所有日期（升序去重）——实体抽取降级时的文本级兜底：
-     * 不区分教育/工作流，只保证"时间线空窗"这类硬伤检测不因抽取失败而静默缺失。
-     */
-    public static List<LocalDate> scanDates(String text) {
-        if (text == null || text.isBlank()) {
-            return List.of();
-        }
-        List<LocalDate> dates = new ArrayList<>();
-        Matcher matcher = DATE_PART.matcher(text);
-        while (matcher.find()) {
-            LocalDate d = safeDate(matcher.group(1), matcher.group(2));
-            if (d != null) {
-                dates.add(d);
-            }
-        }
-        return dates.stream().distinct().sorted().toList();
-    }
 }

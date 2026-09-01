@@ -243,7 +243,7 @@ public class DocumentAnalysisService {
         }
 
         if (run.getJobDescription() != null && !run.getJobDescription().isBlank()) {
-            sb.append("\n\n## 目标岗位JD（matchDimensions/gaps/interviewQuestions 必须逐条对照）\n")
+            sb.append("\n\n## 目标岗位JD（matchDimensions 必须逐条对照）\n")
               .append(run.getJobDescription());
         } else if (ctx.archetype() != null) {
             Archetype a = ctx.archetype();
@@ -259,7 +259,7 @@ public class DocumentAnalysisService {
                 sb.append("\n  - [").append(v.getId()).append("] ").append(v.getName())
                   .append("：").append(String.join("、", v.getDifferentiators()));
             }
-            sb.append("\n筛选题库（interviewQuestions 从中挑选最相关的 3-5 条）：");
+            sb.append("\n筛选题库（作 leverageCards 的 likelyQuestion 参考）：");
             for (String q : a.getScreeningQuestions()) {
                 sb.append("\n  - ").append(q);
             }
@@ -535,7 +535,7 @@ public class DocumentAnalysisService {
                                     ? sec.heading() + "\n" : "") + sec.text())
                             .reduce((a, b) -> a + "\n" + b)
                             .orElse("");
-                    ExtractionOutcome outcome = entityExtractor.extract(fullText, doc.fileName());
+                    ExtractionOutcome outcome = entityExtractor.extract(fullText, doc.fileName(), runId);
                     ResumeEntities entities = outcome.entities();
                     tracer.end(extractStep, "extracted " + entities.getAll().size()
                             + " entities" + (outcome.degraded() ? " (DEGRADED)" : ""), null);

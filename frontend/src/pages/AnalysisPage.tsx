@@ -20,7 +20,7 @@ import DocumentPanel from '../components/DocumentPanel';
 import { durationSeconds } from '../utils/format';
 
 const EXAMPLE_INSTRUCTIONS = [
-  '提炼核心内容，给出改进建议',
+  '按招聘漏斗分析这份简历，给出结论',
   '找出文档中的风险点并评估影响',
   '用三句话总结这份文档',
 ];
@@ -276,7 +276,7 @@ export default function AnalysisPage() {
             onChange={(e) => setInstruction(e.target.value)}
             rows={3}
             className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-indigo-400"
-            placeholder="例如：提炼亮点并给出改进建议"
+            placeholder="例如：按招聘漏斗分析这份简历（结论先行，改进建议可在分析完成后追问获取）"
           />
           <div className="mt-2 flex flex-wrap gap-1.5">
             {EXAMPLE_INSTRUCTIONS.map((text) => (

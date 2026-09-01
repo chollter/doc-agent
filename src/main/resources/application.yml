@@ -89,7 +89,7 @@ logging:
 docagent:
   # 当前 prompt/分析行为版本——校准对照的版本锚点；每次改 prompt 或分析行为后递增，
   # 提交时未手填版本标注的运行自动带上此值（手填优先）。
-  prompt-version: v4
+  prompt-version: v5
   analysis:
     # 短文档路由：字符数低于此值的文档跳过 ReAct 直接单轮分析（短文档迭代精读无信息增量，
     # 实测只烧 token 且易循环不收敛）；0=关闭阈值恢复全量走循环。

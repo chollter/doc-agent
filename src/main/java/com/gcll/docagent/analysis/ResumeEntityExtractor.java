@@ -17,12 +17,18 @@ import java.util.Map;
 /**
  * 简历语义实体抽取：从任意格式简历中提取结构化实体。
  * 不假设简历格式，只提取"简历里出现了什么"。
+ * <p>调用路径：走 LlmGateway 新路径（callName 路由 + 工厂自建 DashScopeChatModel），
+ * 与 DIRECT_LLM 同一客户端装配。旧路径（自动装配 ChatModel）在 spring-ai-alibaba
+ * M6.1 与 GA BOM 混用下反序列化必失败（content-type application/octet-stream），
+ * 曾导致实体抽取 100% 降级——禁止回迁。
  */
 @Service
 public class ResumeEntityExtractor {
 
     private static final Logger log = LoggerFactory.getLogger(ResumeEntityExtractor.class);
     private static final String PROMPT_FILE = "resume-entity-extract.txt";
+    /** ModelRouter 路由用调用点名（当前无映射，回落默认模型；留名供后续按调用点配模型）。 */
+    private static final String CALL_NAME = "llm.entity-extract";
 
     private final ObjectProvider<LlmGateway> llmGatewayProvider;
     private final ObjectMapper objectMapper;
@@ -38,9 +44,11 @@ public class ResumeEntityExtractor {
 
     /**
      * 从简历文本中提取语义实体。
-     * 返回携带来源标记——LLM 不可用时降级（仅文件名），调用方据此决定是否出分。
+     * 返回携带来源标记——LLM 不可用时降级，调用方据此决定是否出分。
+     *
+     * @param runId 运行 ID：透传给网关作交互留痕关联（不参与记忆，单轮调用）
      */
-    public ExtractionOutcome extract(String resumeText, String fileName) {
+    public ExtractionOutcome extract(String resumeText, String fileName, String runId) {
         if (resumeText == null || resumeText.isBlank()) {
             return ExtractionOutcome.fallback(new ResumeEntities(List.of()));
         }
@@ -52,7 +60,7 @@ public class ResumeEntityExtractor {
         }
 
         try {
-            LlmResponse response = llmGateway.invoke(PROMPT_FILE, resumeText);
+            LlmResponse response = llmGateway.invoke(CALL_NAME, PROMPT_FILE, resumeText, runId);
             return ExtractionOutcome.llm(
                     entityNormalizer.normalize(parseEntities(response.content())));
         } catch (Exception first) {
@@ -60,7 +68,7 @@ public class ResumeEntityExtractor {
             // 两次都失败才降级——降级标记机制本身保留（显式告知而非静默）。
             log.warn("Entity extraction failed once, retrying: {}", first.getMessage());
             try {
-                LlmResponse response = llmGateway.invoke(PROMPT_FILE, resumeText);
+                LlmResponse response = llmGateway.invoke(CALL_NAME, PROMPT_FILE, resumeText, runId);
                 return ExtractionOutcome.llm(
                         entityNormalizer.normalize(parseEntities(response.content())));
             } catch (Exception ex) {

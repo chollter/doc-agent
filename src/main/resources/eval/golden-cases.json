@@ -19,16 +19,40 @@
       "name": "resume-review-basic",
       "file": "samples/resume.pdf",
       "skill": "resume-review",
-      "instruction": "提炼这份简历的亮点，并给出改进建议",
+      "instruction": "按招聘漏斗分析这份简历",
       "timeoutSeconds": 180,
       "assertions": {
         "status": "COMPLETED",
         "minKeyPoints": 1,
         "minCitations": 1,
-        "minActionableSuggestions": 2,
         "hasFunnelVerdict": true,
         "minLeverageCards": 2,
-        "hasProfile": true
+        "hasProfile": true,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -47,21 +71,14 @@
       "name": "jd-match-defect-injection",
       "file": "eval-docs/defect-resume.md",
       "skill": "resume-review",
-      "instruction": "分析这份简历与目标岗位的匹配度，找出差距并给出改进建议",
+      "instruction": "分析这份简历与目标岗位的匹配度，逐条对照岗位要求给出诊断",
       "jobDescription": "高级Java后端工程师（AI方向）\n\n岗位要求：\n1. 精通Java/Spring Boot微服务架构，3年以上生产级经验\n2. 有AI/LLM应用工程化经验（RAG/Agent/向量检索），有实际落地案例\n3. 熟悉Kubernetes/Service Mesh等云原生技术，有生产级容器编排经验\n4. 有大团队（15人以上）技术方案主导经验\n5. 英语流利（CET-6或同等），能参与跨国技术讨论\n6. 有Python数据分析经验者优先",
       "timeoutSeconds": 180,
       "assertions": {
         "status": "COMPLETED",
         "minKeyPoints": 2,
         "minCitations": 2,
-        "minGaps": 3,
-        "minMatchDimensions": 3,
-        "minInterviewQuestions": 2,
-        "mustContainGapKeywords": [
-          "Kubernetes",
-          "团队",
-          "英语"
-        ]
+        "minMatchDimensions": 3
       }
     },
     {
@@ -76,13 +93,37 @@
         "status": "COMPLETED",
         "hasFunnelVerdict": true,
         "minLeverageCards": 3,
-        "minActionableSuggestions": 2,
         "matchMode": "DIRECTION",
         "minCoverageMet": 3,
         "mustNotHaveRedFlagTypes": [
           "TIMELINE_GAP",
           "JOB_HOPPING",
           "CONTACT_MISSING"
+        ],
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
         ]
       }
     },
@@ -98,6 +139,31 @@
         "hasFunnelVerdict": true,
         "mustHaveRedFlagTypes": [
           "TIMELINE_GAP"
+        ],
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
         ]
       }
     },
@@ -112,7 +178,32 @@
         "status": "COMPLETED",
         "hasFunnelVerdict": true,
         "strengthBandAtMost": "MIXED",
-        "expectWorseThan": "funnel-base"
+        "expectWorseThan": "funnel-base",
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -129,6 +220,31 @@
           "RAG",
           "Function Calling",
           "Agent"
+        ],
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
         ]
       }
     },
@@ -149,7 +265,32 @@
         ],
         "matchMode": "DIRECTION",
         "minCoverageMet": 3,
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -165,7 +306,32 @@
         "mustHaveRedFlagTypes": [
           "TIMELINE_GAP"
         ],
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -181,7 +347,32 @@
         "mustNotHaveRedFlagTypes": [
           "JOB_HOPPING"
         ],
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -197,7 +388,32 @@
         "mustHaveRedFlagTypes": [
           "JOB_HOPPING"
         ],
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -213,7 +429,32 @@
         "mustHaveRedFlagTypes": [
           "OVERLAP"
         ],
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -229,7 +470,32 @@
         "mustHaveRedFlagTypes": [
           "TENURE_TITLE_MISMATCH"
         ],
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -245,7 +511,32 @@
         "mustHaveRedFlagTypes": [
           "LOW_QUANTIFICATION"
         ],
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -263,7 +554,32 @@
           "Function Calling",
           "Agent"
         ],
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -276,7 +592,32 @@
       "assertions": {
         "status": "COMPLETED",
         "hasFunnelVerdict": true,
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     },
     {
@@ -291,7 +632,32 @@
         "hasFunnelVerdict": true,
         "presentationScoreAtMost": 70,
         "strengthBandAtMost": "MIXED",
-        "maxGroundingFindings": 0
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
       }
     }
   ]
