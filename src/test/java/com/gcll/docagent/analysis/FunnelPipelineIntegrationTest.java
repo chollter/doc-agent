@@ -189,6 +189,34 @@ class FunnelPipelineIntegrationTest {
         assertThat(verdict.get("redFlags").toString()).contains("TIMELINE_GAP").contains("粗查");
     }
 
+    @Test
+    void appliesSuggestionToProduceRevisedMarkdown() throws Exception {
+        when(llmGateway.invoke(anyString(), anyString()))
+                .thenReturn(LlmResponse.of(ENTITIES_JSON, 200, 100, "qwen-plus"));
+        when(llmGateway.invoke(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
+
+        String runId = submit(RESUME_MD, "按方向画像分析这份简历", "AI应用开发");
+        awaitStatus(runId, "COMPLETED");
+
+        // 采纳第 0 条建议：before="参与订单中心开发" → after="负责订单模块重构，QPS 800→2000"
+        MvcResult applied = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/analysis/runs/" + runId + "/apply-suggestions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"indices\":[0]}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        var revision = objectMapper.readTree(applied.getResponse().getContentAsString(StandardCharsets.UTF_8));
+
+        assertThat(revision.get("appliedCount").asInt()).isEqualTo(1);
+        assertThat(revision.get("missingBefores").size()).isZero();
+        String md = revision.get("revisedMarkdown").asText();
+        assertThat(md).contains("负责订单模块重构，QPS 800→2000");
+        assertThat(md).doesNotContain("参与订单中心开发");
+        // 变更节定位成功（前端据此高亮）
+        assertThat(revision.get("changedSectionIds").toString()).contains("sec-");
+    }
+
     // --- helpers ---
 
     private String submit(String content, String instruction, String direction) throws Exception {

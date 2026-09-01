@@ -25,6 +25,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -161,6 +162,17 @@ public class DocumentAnalysisController {
     private AgentRun requireRun(String runId) {
         return agentRunRepository.findById(runId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.AGENT_RUN_NOT_FOUND, "run 不存在: " + runId));
+    }
+
+    /** 采纳建议：对指定建议做 before→after 替换，返回修改稿（Markdown）与失锚明细。 */
+    @PostMapping("/runs/{runId}/apply-suggestions")
+    public com.gcll.docagent.analysis.DocumentAnalysisService.AppliedRevision applySuggestions(
+            @PathVariable String runId, @RequestBody ApplyRequest request) {
+        return analysisService.applySuggestions(runId, request.indices());
+    }
+
+    /** 采纳请求体。 */
+    public record ApplyRequest(java.util.List<Integer> indices) {
     }
 
     // --- 优化历史与交互详情（优化证据链） ---

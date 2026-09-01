@@ -208,6 +208,15 @@ export interface OptimizationCompare {
   conclusion: string;
 }
 
+/** 采纳建议的结果：修改稿 + 失锚明细 + 变更节。 */
+export interface AppliedRevision {
+  revisedMarkdown: string;
+  appliedCount: number;
+  requestedCount: number;
+  missingBefores: string[];
+  changedSectionIds: string[];
+}
+
 // ---- JD 匹配类型 ----
 
 export interface MatchDimension {
@@ -408,6 +417,11 @@ export const analysisApi = {
   /** 单次运行链路诊断：阶段状态条 + LLM 调用聚合 */
   getPipeline(runId: string): Promise<RunPipeline> {
     return request.get(`/api/analysis/runs/${runId}/pipeline`);
+  },
+
+  /** 采纳建议（before→after 替换），返回修改稿 */
+  applySuggestions(runId: string, indices: number[]): Promise<AppliedRevision> {
+    return request.post(`/api/analysis/runs/${runId}/apply-suggestions`, { indices });
   },
 
   /** 优化历史（校准记录链） */
