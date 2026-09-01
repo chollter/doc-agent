@@ -335,6 +335,16 @@ public class EvalRunner {
                 }
             }
         }
+        // 落地性不变量：编造数字/失锚引文数必须不超上限（语料回归核心断言）
+        int grounding = verdict.groundingFindings() == null ? 0 : verdict.groundingFindings().size();
+        if (a.maxGroundingFindings() != null && grounding > a.maxGroundingFindings()) {
+            failures.add("落地性违规=" + grounding + " 超过上限 " + a.maxGroundingFindings() + "（建议含编造数字或失锚引文）");
+        }
+        int presentationScore = verdict.presentation() == null || verdict.presentation().get("score") == null
+                ? -1 : (Integer) verdict.presentation().get("score");
+        if (a.presentationScoreAtMost() != null && presentationScore > a.presentationScoreAtMost()) {
+            failures.add("表达分数=" + presentationScore + " 超过上限 " + a.presentationScoreAtMost() + "（混乱排版未被压分）");
+        }
         // 配对单调性：注入缺陷后强度档位必须严格变差（WEAK=0 < MIXED=1 < STRONG=2）
         if (a.expectWorseThan() != null) {
             FunnelJson base = verdictsByName.get(a.expectWorseThan());
@@ -409,7 +419,8 @@ public class EvalRunner {
             List<Map<String, String>> mustHaveCoverage,
             List<Map<String, String>> variantFit,
             List<Map<String, String>> leverageCards,
-            Map<String, Object> positioning) {
+            Map<String, Object> positioning,
+            List<Map<String, String>> groundingFindings) {
     }
 
     public record CaseResult(

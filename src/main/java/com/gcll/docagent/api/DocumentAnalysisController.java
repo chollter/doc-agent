@@ -9,13 +9,16 @@ import com.gcll.docagent.api.dto.HumanActionDto;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.DocumentView;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.LlmInteractionDto;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.OptimizationHistoryItem;
+import com.gcll.docagent.api.dto.AnalysisRunDtos.RunPipelineDto;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Start;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Summary;
 import com.gcll.docagent.domain.AgentRun;
+import com.gcll.docagent.domain.AgentStep;
 import com.gcll.docagent.human.PendingAction;
 import com.gcll.docagent.persistence.entity.LlmInteractionEntity;
 import com.gcll.docagent.persistence.mapper.LlmInteractionMapper;
 import com.gcll.docagent.persistence.repository.AgentRunRepository;
+import com.gcll.docagent.persistence.repository.AgentStepRepository;
 import com.gcll.docagent.persistence.repository.PendingActionRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -32,6 +35,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/analysis")
@@ -43,6 +48,7 @@ public class DocumentAnalysisController {
     private final ObjectMapper objectMapper;
     private final PendingActionRepository pendingActionRepository;
     private final LlmInteractionMapper interactionMapper;
+    private final AgentStepRepository agentStepRepository;
     private final com.gcll.docagent.analysis.CalibrationService calibrationService;
 
     public DocumentAnalysisController(DocumentAnalysisService analysisService,
@@ -51,6 +57,7 @@ public class DocumentAnalysisController {
                                       ObjectMapper objectMapper,
                                       PendingActionRepository pendingActionRepository,
                                       LlmInteractionMapper interactionMapper,
+                                      AgentStepRepository agentStepRepository,
                                       com.gcll.docagent.analysis.CalibrationService calibrationService) {
         this.analysisService = analysisService;
         this.agentRunRepository = agentRunRepository;
@@ -58,6 +65,7 @@ public class DocumentAnalysisController {
         this.objectMapper = objectMapper;
         this.pendingActionRepository = pendingActionRepository;
         this.interactionMapper = interactionMapper;
+        this.agentStepRepository = agentStepRepository;
         this.calibrationService = calibrationService;
     }
 
@@ -194,6 +202,42 @@ public class DocumentAnalysisController {
             return calibrationService.compareRuns(runA, runB);
         }
         return calibrationService.compareVersions(fileName, baselineVersion, candidateVersion);
+    }
+
+    /**
+     * 单次运行链路诊断：阶段级状态条（哪里断了、为什么断）+ LLM 调用聚合。
+     * 数据源：agent_step（阶段）+ llm_interaction（含失败调用）+ run 元信息。
+     */
+    @GetMapping("/runs/{runId}/pipeline")
+    public RunPipelineDto getPipeline(@PathVariable String runId) {
+        AgentRun run = requireRun(runId);
+        boolean degraded = false;
+        if (run.getResultJson() != null) {
+            try {
+                degraded = objectMapper.readTree(run.getResultJson())
+                        .path("funnelVerdict").path("analysisDegraded").asBoolean(false);
+            } catch (IOException ignored) {
+                // 结果 JSON 损坏时降级标记不可知，保持 false
+            }
+        }
+        List<RunPipelineDto.PipelineStage> stages = agentStepRepository.findByRunId(runId).stream()
+                .sorted(Comparator.comparing(AgentStep::getStartedAt))
+                .map(s -> new RunPipelineDto.PipelineStage(
+                        s.getStepName(), s.getStatus(), s.getOutputSnapshot(),
+                        s.getCostMs(), s.getErrorMessage()))
+                .toList();
+        Map<String, List<LlmInteractionEntity>> grouped = interactionMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<LlmInteractionEntity>()
+                        .eq(LlmInteractionEntity::getRunId, runId)
+        ).stream().collect(Collectors.groupingBy(LlmInteractionEntity::getCallSite));
+        List<RunPipelineDto.LlmCallGroup> llmCalls = grouped.entrySet().stream()
+                .map(e -> new RunPipelineDto.LlmCallGroup(e.getKey(), e.getValue().size(),
+                        (int) e.getValue().stream()
+                                .filter(i -> !Boolean.TRUE.equals(i.getSuccess())).count()))
+                .sorted(Comparator.comparing(RunPipelineDto.LlmCallGroup::callSite))
+                .toList();
+        return new RunPipelineDto(run.getId(), run.getStatus().name(), run.getExecutionMode(),
+                degraded, run.getLastError(), stages, llmCalls);
     }
 
     /** 单次运行的全部 LLM 交互详情。 */

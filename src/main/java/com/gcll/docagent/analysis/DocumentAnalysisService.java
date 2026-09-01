@@ -1,7 +1,11 @@
 package com.gcll.docagent.analysis;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.gcll.docagent.api.BusinessException;
 import com.gcll.docagent.api.ErrorCode;
 import com.gcll.docagent.domain.AgentRun;
@@ -27,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -44,8 +49,8 @@ import java.util.concurrent.Executors;
 /**
  * 文档分析编排——DB 队列驱动的多实例架构：
  * <pre>
- * start(): 同步解析 → checkpoint-0（消息+文档快照）→ run=QUEUED
- * RunQueueScheduler 认领循环: 空闲容量内 CAS 认领（多实例天然互斥）→ 本实例执行
+ * start(): 同步解析 → checkpoint-0（消息+文档快照）→ run=QUEUED → 发布 RunQueuedEvent
+ * RunQueueScheduler: 事件快路径即时认领 + 每秒轮询兜底（空闲容量内 CAS 认领，多实例天然互斥）→ 本实例执行
  * executeClaimed(): 统一执行路径——round=0 走 PARSE 起新循环，round>0 记 LOOP_RESUME 从断点续跑
  * 自愈循环: 超时未推进的 run 重新入队，任意实例续跑（崩溃恢复持续化，不只在启动时）
  * </pre>
@@ -77,10 +82,14 @@ public class DocumentAnalysisService {
     private final RedFlagChecker redFlagChecker;
     private final ResumeProfileBuilder profileBuilder;
     private final ArchetypeRegistry archetypeRegistry;
+    private final GroundingValidator groundingValidator;
+    private final ApplicationEventPublisher eventPublisher;
     private final boolean reactEnabled;
     private final boolean exportEnabled;
     private final int requeueStaleMinutes;
     private final String instanceId;
+    private final String defaultPromptVersion;
+    private final int reactMaxChars;
 
     private final ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(WORKER_THREADS, r -> {
         Thread t = new Thread(r, "doc-analysis");
@@ -103,9 +112,13 @@ public class DocumentAnalysisService {
             RedFlagChecker redFlagChecker,
             ResumeProfileBuilder profileBuilder,
             ArchetypeRegistry archetypeRegistry,
+            GroundingValidator groundingValidator,
+            ApplicationEventPublisher eventPublisher,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
             @Value("${docagent.analysis.export-enabled:true}") boolean exportEnabled,
             @Value("${docagent.analysis.dispatcher.requeue-stale-minutes:15}") int requeueStaleMinutes,
+            @Value("${docagent.prompt-version:}") String defaultPromptVersion,
+            @Value("${docagent.analysis.react-max-chars:0}") int reactMaxChars,
             @Value("${server.port:0}") int port) {
         this.parsingService = parsingService;
         this.documentStore = documentStore;
@@ -121,13 +134,18 @@ public class DocumentAnalysisService {
         this.redFlagChecker = redFlagChecker;
         this.profileBuilder = profileBuilder;
         this.archetypeRegistry = archetypeRegistry;
+        this.groundingValidator = groundingValidator;
+        this.eventPublisher = eventPublisher;
         this.reactEnabled = reactEnabled;
         this.exportEnabled = exportEnabled;
         this.requeueStaleMinutes = requeueStaleMinutes;
+        this.defaultPromptVersion = defaultPromptVersion;
+        this.reactMaxChars = reactMaxChars;
         this.instanceId = "p" + port + "-" + UUID.randomUUID().toString().substring(0, 6);
     }
 
-    /** 提交分析：同步解析 + checkpoint-0 + 入队（QUEUED）。执行由调度器异步认领。 */
+    /** 提交分析：同步解析 + checkpoint-0 + 入队（QUEUED）。
+     * 执行由 RunQueuedEvent 即时触发认领（快路径），RunQueueScheduler 轮询兜底。 */
     public AgentRun start(MultipartFile file, String instruction, String skillName, String jobDescription,
                           String targetDirection, String persona, String promptVersion, String optimizationNote) {
         SkillDefinition skill = skillRegistry.find(skillName)
@@ -163,6 +181,9 @@ public class DocumentAnalysisService {
         }
         if (promptVersion != null && !promptVersion.isBlank()) {
             run.setPromptVersion(promptVersion.trim());
+        } else if (defaultPromptVersion != null && !defaultPromptVersion.isBlank()) {
+            // 未手填时自动带上当前 prompt 版本，保证版本链不断裂（手填优先）
+            run.setPromptVersion(defaultPromptVersion.trim());
         }
         if (optimizationNote != null && !optimizationNote.isBlank()) {
             run.setOptimizationNote(optimizationNote.trim());
@@ -179,9 +200,11 @@ public class DocumentAnalysisService {
                 0, 0, 0, doc));
         agentRunRepository.save(run);
         documentStore.put(run.getId(), doc);
+        // 入队即触发认领（快路径）——提交到执行有显式链路，轮询仅作兜底
 
         log.info("Analysis run queued, runId={}, skill={}, file={}, sections={}",
                 run.getId(), skill.name(), fileName, doc.sections().size());
+        eventPublisher.publishEvent(new RunQueuedEvent(run.getId()));
         return run;
     }
 
@@ -273,11 +296,12 @@ public class DocumentAnalysisService {
             String matchMode,
             boolean degraded,
             String fullText,
-            Persona persona
+            Persona persona,
+            boolean ran
     ) {
         static ResumeContext empty() {
             return new ResumeContext(new ResumeEntities(List.of()), List.of(), null, null,
-                    FunnelVerdict.MODE_NONE, false, "", Persona.GENERAL);
+                    FunnelVerdict.MODE_NONE, false, "", Persona.GENERAL, false);
         }
     }
 
@@ -300,6 +324,7 @@ public class DocumentAnalysisService {
         run.setFinishedAt(null);
         agentRunRepository.save(run);
         log.info("Follow-up queued, runId={}, turn={}", runId, state.turn() + 1);
+        eventPublisher.publishEvent(new RunQueuedEvent(runId));
         return run;
     }
 
@@ -402,8 +427,12 @@ public class DocumentAnalysisService {
                 String extractStep = tracer.begin("ENTITY_EXTRACT", null);
                 tracer.recordMeta(extractStep, true, "LLM");
                 try {
+                    // 标题行必须并入全文：Markdown 解析把"### 公司·职位 2021.07-至今"存进
+                    // heading 而 section.text 只有正文——日期全在标题里，漏掉会让实体抽取、
+                    // 红旗扫描、落地校验、词汇 diff 全部拿不到关键信息（md 简历系统性受损）
                     String fullText = doc.sections().stream()
-                            .map(DocSection::text)
+                            .map(sec -> (sec.heading() != null && !sec.heading().isBlank()
+                                    ? sec.heading() + "\n" : "") + sec.text())
                             .reduce((a, b) -> a + "\n" + b)
                             .orElse("");
                     ExtractionOutcome outcome = entityExtractor.extract(fullText, doc.fileName());
@@ -418,7 +447,7 @@ public class DocumentAnalysisService {
 
                     Persona persona = resolvePersona(run, profile);
                     List<RedFlag> redFlags = outcome.degraded()
-                            ? List.of()
+                            ? redFlagChecker.checkFromText(fullText)
                             : redFlagChecker.check(entities, fullText, persona);
                     String checkStep = tracer.begin("RED_FLAG_CHECK", null);
                     tracer.recordMeta(checkStep, false, null);
@@ -429,7 +458,7 @@ public class DocumentAnalysisService {
                             : run.getJobDescription() != null ? FunnelVerdict.MODE_JD
                             : FunnelVerdict.MODE_NONE;
                     resumeCtx = new ResumeContext(entities, redFlags, profile, archetype,
-                            matchMode, outcome.degraded(), fullText, persona);
+                            matchMode, outcome.degraded(), fullText, persona, true);
                 } catch (Exception ex) {
                     tracer.end(extractStep, "extraction failed: " + ex.getMessage(), ex.getMessage());
                     log.warn("Entity extraction / profile build failed: {}", ex.getMessage());
@@ -458,7 +487,7 @@ public class DocumentAnalysisService {
         List<AgentLoop.ObservedFragment> observations = List.of();
         Long tokensUsed = null;
 
-        if (reactEnabled) {
+        if (reactEnabled && shouldUseReact(runId, doc, tracer)) {
             LoopOutcome outcome = runLoop(runId, run, doc, skill, resumeFrom, tracer, enrichedUserMessage);
             if (outcome.parsed() != null && outcome.parsed().analysis() != null) {
                 result = outcome.parsed().analysis();
@@ -493,8 +522,10 @@ public class DocumentAnalysisService {
         }
 
         // P12 漏斗结论：红旗 + 方向画像 + LLM 五角度输出 → FunnelVerdict
-        if (!resumeCtx.entities().isEmpty()) {
-            FunnelVerdict verdict = assembleVerdict(resumeCtx, funnelFields);
+        // 按技能判断而非实体非空：降级时空实体仍需组装（LLM 五角度输出基于直读原文，不该陪葬）
+        if ("resume-review".equals(skill.name())) {
+            FunnelVerdict verdict = assembleVerdict(resumeCtx, funnelFields,
+                    result.actionableSuggestions());
             result = result.withResumeDeepAnalysis(resumeCtx.profile(), null,
                             result.actionableSuggestions(), result.enhancedKeyPoints(), result.enhancedRisks())
                     .withFunnelVerdict(verdict);
@@ -671,6 +702,27 @@ public class DocumentAnalysisService {
         }
     }
 
+    /**
+     * 文档路由：短文档（低于阈值）迭代精读无信息增量——全文一次就能塞进 prompt，
+     * 实测反而烧大量 token 且易陷入循环不收敛（BUDGET_ROUNDS），故直接走单轮分析。
+     * 阈值 ≤0 表示关闭路由，恢复全量走循环。决策记入 trace，链路诊断可见。
+     */
+    private boolean shouldUseReact(String runId, ParsedDocument doc, TraceRecorder tracer) {
+        if (reactMaxChars <= 0) {
+            return true;
+        }
+        int chars = doc.totalChars();
+        if (chars >= reactMaxChars) {
+            return true;
+        }
+        String stepId = tracer.begin("ROUTING", null);
+        tracer.recordMeta(stepId, false, null);
+        tracer.end(stepId, "short doc direct: " + chars + " < " + reactMaxChars + " → skip ReAct", null);
+        log.info("Routing to direct LLM (short doc), runId={}, chars={}, threshold={}",
+                runId, chars, reactMaxChars);
+        return false;
+    }
+
     /** 降级 1：单次 LLM 调用。若循环已读片段则一并携带——降级不丢上下文。 */
     private LlmOutcome runDirectLlm(String runId, AgentRun run, ParsedDocument doc,
                                     SkillDefinition skill, TraceRecorder tracer,
@@ -802,7 +854,11 @@ public class DocumentAnalysisService {
             throw new IllegalArgumentException("no json object in llm content");
         }
         try {
-            RawResult raw = objectMapper.readValue(json.substring(start, end + 1), RawResult.class);
+            // 容错：先读树清洗（模型偶尔违反对象契约输出字符串数组），再映射为 RawResult，
+            // 避免单字段畸形导致整个结果作废落入规则兑底。
+            JsonNode tree = objectMapper.readTree(json.substring(start, end + 1));
+            sanitizeStringElements(tree);
+            RawResult raw = objectMapper.treeToValue(tree, RawResult.class);
             if (raw.summary == null || raw.summary.isBlank()) {
                 throw new IllegalArgumentException("missing summary field");
             }
@@ -872,6 +928,33 @@ public class DocumentAnalysisService {
     @PreDestroy
     void shutdown() {
         executor.shutdownNow();
+    }
+
+    /**
+     * 解析容错：模型偶尔把对象数组字段输出为字符串数组（违反 prompt 契约），
+     * 逐字段把字符串元素包成对象，让其余字段的分析结果幸存。
+     */
+    private static void sanitizeStringElements(JsonNode tree) {
+        if (tree == null || !tree.isObject()) return;
+        wrapStringElements(tree, "matchDimensions", "name");
+        wrapStringElements(tree, "gaps", "gap");
+        wrapStringElements(tree, "interviewQuestions", "question");
+        wrapStringElements(tree, "mustHaveCoverage", "requirement");
+        wrapStringElements(tree, "variantFit", "name");
+    }
+
+    private static void wrapStringElements(JsonNode root, String field, String targetKey) {
+        JsonNode arr = root.get(field);
+        if (arr == null || !arr.isArray()) return;
+        ArrayNode array = (ArrayNode) arr;
+        for (int i = 0; i < array.size(); i++) {
+            JsonNode el = array.get(i);
+            if (el.isTextual()) {
+                ObjectNode wrapped = new ObjectNode(JsonNodeFactory.instance);
+                wrapped.put(targetKey, el.asText());
+                array.set(i, wrapped);
+            }
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -1109,17 +1192,21 @@ public class DocumentAnalysisService {
         return new PositioningCheck(raw.anchored, raw.currentAnchor, raw.suggestedAnchor, raw.comment);
     }
 
-    /** 组装漏斗结论：LLM 输出 + 代码事实（红旗/词汇diff/画像定义）合成，抽取降级时不可信。 */
-    private static FunnelVerdict assembleVerdict(ResumeContext ctx, LlmFunnelFields fields) {
-        if (ctx.degraded()) {
-            return FunnelVerdict.degraded(ctx.redFlags());
-        }
+    /**
+     * 组装漏斗结论：LLM 输出 + 代码事实（红旗/词汇diff/画像定义）合成。
+     * 部分降级：实体抽取失败只损失实体级精度——红旗已切换为文本级粗查（executeClaimed）、
+     * 画像缺失，LLM 直读原文产出的五角度保留，degraded 标记显式告知。
+     * 落地性校验（反编造/引文锚定）无论降级与否都执行——不变量不允许豁免。
+     */
+    private FunnelVerdict assembleVerdict(ResumeContext ctx, LlmFunnelFields fields,
+                                          List<ActionableSuggestion> suggestions) {
+        List<RedFlag> redFlags = ctx.redFlags();
         List<MustHaveCoverage> coverage = mergeCoverage(ctx.archetype(), fields.mustHaveCoverage());
         List<VariantFit> variantFit = mergeVariants(ctx.archetype(), fields.variantFit());
         List<VocabularyGap> vocabGaps = ctx.archetype() != null
                 ? ctx.archetype().findVocabularyGaps(ctx.fullText()) : List.of();
         return new FunnelVerdict(
-                ctx.redFlags(),
+                redFlags,
                 ctx.matchMode(),
                 ctx.archetype() != null ? ctx.archetype().getId() : null,
                 coverage, variantFit, vocabGaps, fields.positioning(),
@@ -1127,7 +1214,8 @@ public class DocumentAnalysisService {
                 StrengthStats.from(fields.experienceStrength()),
                 fields.presentation(),
                 fields.leverageCards(),
-                false);
+                ctx.degraded(),
+                groundingValidator.validate(suggestions, ctx.fullText()));
     }
 
     /** 要求文本以画像定义为准（LLM 只给 id/status/evidence），防转录走样。 */

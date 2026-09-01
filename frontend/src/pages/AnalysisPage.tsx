@@ -11,6 +11,8 @@ import {
 } from '../api/analysis';
 import StepTimeline from '../components/StepTimeline';
 import ExecutionChain from '../components/ExecutionChain';
+import ExecutionPanel from '../components/ExecutionPanel';
+import PipelineBar from '../components/PipelineBar';
 import ReportCard from '../components/ReportCard';
 import ResumeReportCard from '../components/ResumeReportCard';
 import InterviewChat from '../components/InterviewChat';
@@ -57,6 +59,8 @@ export default function AnalysisPage() {
   const [optimizationNote, setOptimizationNote] = useState('');
   const [chainSteps, setChainSteps] = useState<AuditStep[]>([]);
   const [interviewMode, setInterviewMode] = useState(false);
+  // 执行过程面板折叠态：运行中展开看进度，完成后自动收缩让主屏给结果，失败保持展开
+  const [processCollapsed, setProcessCollapsed] = useState(false);
 
   const closeStreamRef = useRef<(() => void) | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -98,11 +102,13 @@ export default function AnalysisPage() {
     setDetail(d);
     if (d.status === 'COMPLETED') {
       setPhase('done');
+      setProcessCollapsed(true);
       cleanup();
       // 终态拉取执行链路——出问题时不用去别处挖，现场就在报告旁边
       analysisApi.getAudit(runId).then(setChainSteps).catch(() => setChainSteps([]));
     } else if (d.status === 'FAILED') {
       setPhase('failed');
+      setProcessCollapsed(false);
       setError(d.lastError ?? '分析失败');
       cleanup();
       analysisApi.getAudit(runId).then(setChainSteps).catch(() => setChainSteps([]));
@@ -117,6 +123,7 @@ export default function AnalysisPage() {
     setDetail(null);
     setHighlight(null);
     setPhase('running');
+    setProcessCollapsed(false);
     setElapsed(0);
     startedAtRef.current = Date.now();
     try {
@@ -442,27 +449,45 @@ export default function AnalysisPage() {
         )}
       </div>
 
-      {/* 中：Agent 时间线 + 报告 */}
+      {/* 中：分析结果 + 执行过程（合并折叠） */}
       <div className="col-span-5 flex min-w-0 flex-col gap-4 overflow-y-auto">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-800">Agent 执行过程</h3>
-            {detail && (
-              <span className="text-xs text-slate-400">
-                {durationSeconds(detail.createdAt, detail.finishedAt)}
-              </span>
-            )}
-          </div>
-          <StepTimeline steps={steps} />
-        </div>
-        {detail?.result && (
-          <ExecutionChain steps={chainSteps} defaultCollapsed={chainSteps.every((s) => s.status !== 'FAILED')} />
-        )}
         {detail?.result && (
           detail.skill === 'resume-review'
             ? <ResumeReportCard result={detail.result} mode={detail.executionMode} onCitation={setHighlight} />
             : <ReportCard result={detail.result} mode={detail.executionMode} onCitation={setHighlight} />
         )}
+
+        <ExecutionPanel
+          collapsed={processCollapsed}
+          onToggle={() => setProcessCollapsed((c) => !c)}
+          stepCount={chainSteps.length}
+          failedCount={chainSteps.filter((s) => s.status === 'FAILED').length}
+          totalMs={chainSteps.reduce((acc, s) => acc + (s.costMs ?? 0), 0)}
+        >
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-500">实时步骤</span>
+              {detail && (
+                <span className="text-xs text-slate-400">
+                  {durationSeconds(detail.createdAt, detail.finishedAt)}
+                </span>
+              )}
+            </div>
+            <StepTimeline steps={steps} />
+          </div>
+          {detail?.status === 'COMPLETED' && (
+            <div>
+              <div className="mb-2 text-xs font-semibold text-slate-500">阶段状态</div>
+              <PipelineBar runId={detail.runId} />
+            </div>
+          )}
+          {chainSteps.length > 0 && (
+            <div>
+              <div className="mb-2 text-xs font-semibold text-slate-500">审计详情（输入/输出/错误现场）</div>
+              <ExecutionChain steps={chainSteps} defaultCollapsed={false} />
+            </div>
+          )}
+        </ExecutionPanel>
 
         {/* 面试模拟入口 */}
         {detail?.skill === 'resume-review' && detail.status === 'COMPLETED' && !interviewMode && (

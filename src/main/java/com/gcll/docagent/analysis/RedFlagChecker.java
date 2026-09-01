@@ -57,6 +57,31 @@ public class RedFlagChecker {
         return flags;
     }
 
+    /**
+     * 文本级兜底——实体抽取降级时直接对原文做日期扫描粗查。
+     * <p>降级不级联原则：抽取失败只损失"实体级精度"（教育/工作分流、跳槽、头衔），
+     * 硬伤检测（时间线空窗、联系方式）退化为文本粗查而不是静默消失。
+     * 粗查不分流，严重度封顶 MEDIUM 并在文案中注明不确定性。
+     */
+    public List<RedFlag> checkFromText(String resumeText) {
+        List<RedFlag> flags = new ArrayList<>();
+        if (resumeText != null && !resumeText.isBlank()) {
+            List<LocalDate> dates = ResumeDateParser.scanDates(resumeText);
+            for (int i = 1; i < dates.size(); i++) {
+                long gap = ChronoUnit.MONTHS.between(dates.get(i - 1), dates.get(i));
+                if (gap > GAP_MEDIUM_MONTHS) {
+                    RedFlag.Severity severity = gap > GAP_HIGH_MONTHS
+                            ? RedFlag.Severity.MEDIUM : RedFlag.Severity.LOW;
+                    flags.add(new RedFlag(RedFlag.TIMELINE_GAP, severity,
+                            String.format("时间线疑似有 %d 个月空窗（%s 至 %s，文本级粗查，未区分教育/工作）",
+                                    gap, dates.get(i - 1), dates.get(i))));
+                }
+            }
+            addIfPresent(flags, checkContact(resumeText));
+        }
+        return flags;
+    }
+
     private static void addIfPresent(List<RedFlag> flags, RedFlag flag) {
         if (flag != null) {
             flags.add(flag);

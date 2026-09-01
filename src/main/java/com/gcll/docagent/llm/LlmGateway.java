@@ -104,14 +104,16 @@ public class LlmGateway {
      * @param runId       非 null 时设 conversationId 启用记忆；null 走无 advisor 路径
      */
     private LlmResponse doInvoke(ChatClient client, String promptFile, String userContent, String runId) {
+        String fullPrompt = null;
         try {
             String promptTemplate = loadPrompt(promptFile);
             // 优化1：按目标模型窗口动态截断 userContent，而非固定字数。
             // 剩余空间 = 模型窗口 - 系统提示已用 - prompt模板已用 - 安全余量(给输出和误差留)
             String safeContent = truncateByModelWindow(promptTemplate, userContent, runId);
+            fullPrompt = promptTemplate + "\n\n工单内容：\n" + safeContent;
             ChatClient.ChatClientRequestSpec request = client.prompt()
                     .system(systemBasePrompt)
-                    .user(promptTemplate + "\n\n工单内容：\n" + safeContent);
+                    .user(fullPrompt);
             if (runId != null) {
                 // 设 conversationId：advisor 据此隔离各工单对话历史
                 request = request.advisors(spec -> spec.param(MEMORY_CONVERSATION_ID_KEY, runId));
@@ -125,14 +127,18 @@ public class LlmGateway {
             int completionTokens = usage.getCompletionTokens() != null ? usage.getCompletionTokens().intValue() : 0;
             // 记录 LLM 交互日志（优化证据链）
             recordInteraction(runId, promptFile, model, promptTokens, completionTokens,
-                    promptTemplate + "\n\n工单内容：\n" + safeContent, content, true);
+                    fullPrompt, content, true);
             return LlmResponse.of(content, promptTokens, completionTokens, model);
         } catch (IOException ex) {
-            // prompt 文件加载失败 = 确定性错误，不可重试
+            // prompt 文件加载失败 = 确定性错误，不可重试（此时 fullPrompt 尚未拼出，仍留痕）
+            recordInteraction(runId, promptFile, null, 0, 0, null, "ERROR: " + ex.getMessage(), false);
             throw new NonRetryableCallException("Failed to load prompt: " + promptFile, ex);
         } catch (NonRetryableCallException | RetryableCallException ex) {
+            // 失败调用同样留痕：链路诊断时能看到“哪里断了、为什么断”
+            recordInteraction(runId, promptFile, null, 0, 0, fullPrompt, "ERROR: " + ex.getMessage(), false);
             throw ex; // 已分类，透传
         } catch (Exception ex) {
+            recordInteraction(runId, promptFile, null, 0, 0, fullPrompt, "ERROR: " + ex.getMessage(), false);
             // 其他异常默认按可重试处理（网络抖动 / 5xx / 超时等）
             log.debug("LLM invoke failed, classified as retryable, error={}", ex.getMessage());
             throw new RetryableCallException("LLM call failed", ex);

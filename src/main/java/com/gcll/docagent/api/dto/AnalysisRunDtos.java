@@ -85,6 +85,25 @@ public final class AnalysisRunDtos {
     ) {
     }
 
+    /** 单次运行链路诊断：阶段状态 + LLM 调用聚合，定位“哪里断了、为什么断”。 */
+    public record RunPipelineDto(
+            String runId,
+            String runStatus,
+            String executionMode,
+            boolean analysisDegraded,
+            String lastError,
+            java.util.List<PipelineStage> stages,
+            java.util.List<LlmCallGroup> llmCalls
+    ) {
+        /** 阶段：agent_step 顶层步骤。status 取 SUCCESS/FAILED；detail 为输出摘要。 */
+        public record PipelineStage(String stage, String status, String detail, Long costMs, String error) {
+        }
+
+        /** 按调用点聚合的 LLM 调用（含失败次数——失败也留痕）。 */
+        public record LlmCallGroup(String callSite, int total, int failures) {
+        }
+    }
+
     /** LLM 交互详情。 */
     public record LlmInteractionDto(
             String id,

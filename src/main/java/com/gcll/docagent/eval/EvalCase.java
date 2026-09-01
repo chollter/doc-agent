@@ -67,7 +67,12 @@ public record EvalCase(
             Integer minCoverageMet,
             Integer maxCoverageMet,
             /** 配对单调性：本用例的强度档位必须严格差于指定基线用例。 */
-            String expectWorseThan
+            String expectWorseThan,
+            // ---- P12c: 语料回归断言（不变量层） ----
+            /** 落地性校验违规数上限（反编造不变量：编造数字/失锚引文必须为 0）。 */
+            Integer maxGroundingFindings,
+            /** 表达分数上限（排版混乱语料必须被压分）。 */
+            Integer presentationScoreAtMost
     ) {
     }
 }

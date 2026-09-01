@@ -7,7 +7,8 @@ import java.util.List;
  * <p>为什么没有 overall：加权总分制造假精确（LLM 评分波动 ±10 时总分无意义），
  * 且把"一票否决的红旗"和"可改进的表达"压成一个数，丢失优先级。
  * 五个角度各自出档位，红旗层独立于评分；legacyOverall 仅用于 DB 列表排序兼容。
- * <p>analysisDegraded=true（实体抽取降级）时各档位不可信，前端应显式提示。
+ * <p>analysisDegraded=true（实体抽取降级）：红旗层缺失故不出总分（legacyOverall=0），
+ * 但 LLM 五角度输出基于直读原文，保留供参考；前端必须显式提示降级状态。
  */
 public record FunnelVerdict(
         List<RedFlag> redFlags,
@@ -21,7 +22,8 @@ public record FunnelVerdict(
         StrengthStats strength,
         Presentation presentation,
         List<LeverageCard> leverageCards,
-        boolean analysisDegraded
+        boolean analysisDegraded,
+        List<GroundingValidator.Finding> groundingFindings
 ) {
 
     /** 匹配模式：JD 对照 / 方向画像（广撒网）/ 未指定。 */
@@ -94,6 +96,6 @@ public record FunnelVerdict(
     public static FunnelVerdict degraded(List<RedFlag> redFlags) {
         return new FunnelVerdict(redFlags != null ? redFlags : List.of(),
                 MODE_NONE, null, List.of(), List.of(), List.of(), null,
-                List.of(), StrengthStats.from(List.of()), null, List.of(), true);
+                List.of(), StrengthStats.from(List.of()), null, List.of(), true, List.of());
     }
 }

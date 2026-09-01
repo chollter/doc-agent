@@ -32,7 +32,13 @@ public class ResumeProfileBuilder {
 
         String name = extractName(entities);
         List<LocalDate[]> periods = parseAllPeriods(entities);
-        int yearsOfExperience = computeYears(periods);
+        // 年限只算工作时间段：教育时段计入会把应届推断成资深（人群阈值随之失准）
+        List<LocalDate[]> workPeriods = entities.getByType(ResumeEntity.EntityType.TIME_PERIOD).stream()
+                .filter(tp -> !"education".equals(tp.kind()))
+                .map(tp -> ResumeDateParser.parseRange(tp.value()))
+                .filter(r -> r != null)
+                .toList();
+        int yearsOfExperience = computeYears(!workPeriods.isEmpty() ? workPeriods : periods);
         String currentRole = extractCurrentRole(entities);
         List<ResumeProfile.WorkEntry> workTimeline = buildWorkTimeline(entities, periods);
         SkillMatrix skillMatrix = SkillMatrix.fromSkillNames(entities.getSkillNames());

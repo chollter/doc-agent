@@ -149,4 +149,22 @@ class RedFlagCheckerTest {
         assertThat(flags).noneMatch(f -> f.severity() == RedFlag.Severity.HIGH);
         LocalDate.now(); // 时间锚：本用例依赖"至今"开放区间解析
     }
+
+    @Test
+    void textFallbackShouldDetectGapWithoutEntities() {
+        // 抽取降级场景：无实体，仅原文文本粗查——硬伤检测不静默消失
+        String text = """
+                ## 工作经历
+                ### 甲公司 2020.01-2021.02
+                ### 乙公司 2022.01-2023.06
+                电话 13800138000
+                """;
+        List<RedFlag> flags = checker.checkFromText(text);
+
+        assertThat(flags).anySatisfy(f -> {
+            assertThat(f.type()).isEqualTo(RedFlag.TIMELINE_GAP);
+            assertThat(f.severity()).isEqualTo(RedFlag.Severity.MEDIUM);
+            assertThat(f.message()).contains("粗查");
+        });
+    }
 }

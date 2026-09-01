@@ -10,7 +10,9 @@
         "status": "COMPLETED",
         "minKeyPoints": 2,
         "minCitations": 1,
-        "keywords": ["技术方案"]
+        "keywords": [
+          "技术方案"
+        ]
       }
     },
     {
@@ -55,7 +57,11 @@
         "minGaps": 3,
         "minMatchDimensions": 3,
         "minInterviewQuestions": 2,
-        "mustContainGapKeywords": ["Kubernetes", "团队", "英语"]
+        "mustContainGapKeywords": [
+          "Kubernetes",
+          "团队",
+          "英语"
+        ]
       }
     },
     {
@@ -73,7 +79,11 @@
         "minActionableSuggestions": 2,
         "matchMode": "DIRECTION",
         "minCoverageMet": 3,
-        "mustNotHaveRedFlagTypes": ["TIMELINE_GAP", "JOB_HOPPING", "CONTACT_MISSING"]
+        "mustNotHaveRedFlagTypes": [
+          "TIMELINE_GAP",
+          "JOB_HOPPING",
+          "CONTACT_MISSING"
+        ]
       }
     },
     {
@@ -86,7 +96,9 @@
       "assertions": {
         "status": "COMPLETED",
         "hasFunnelVerdict": true,
-        "mustHaveRedFlagTypes": ["TIMELINE_GAP"]
+        "mustHaveRedFlagTypes": [
+          "TIMELINE_GAP"
+        ]
       }
     },
     {
@@ -113,7 +125,173 @@
       "assertions": {
         "status": "COMPLETED",
         "hasFunnelVerdict": true,
-        "mustContainVocabularyTerms": ["RAG", "Function Calling", "Agent"]
+        "mustContainVocabularyTerms": [
+          "RAG",
+          "Function Calling",
+          "Agent"
+        ]
+      }
+    },
+    {
+      "name": "corpus-senior-clean",
+      "file": "eval-docs/corpus/corpus-senior-clean.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustNotHaveRedFlagTypes": [
+          "TIMELINE_GAP",
+          "JOB_HOPPING",
+          "CONTACT_MISSING"
+        ],
+        "matchMode": "DIRECTION",
+        "minCoverageMet": 3,
+        "maxGroundingFindings": 0
+      }
+    },
+    {
+      "name": "corpus-senior-gap-cn",
+      "file": "eval-docs/corpus/corpus-senior-gap-cn.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "TIMELINE_GAP"
+        ],
+        "maxGroundingFindings": 0
+      }
+    },
+    {
+      "name": "corpus-newgrad",
+      "file": "eval-docs/corpus/corpus-newgrad.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustNotHaveRedFlagTypes": [
+          "JOB_HOPPING"
+        ],
+        "maxGroundingFindings": 0
+      }
+    },
+    {
+      "name": "corpus-hopping",
+      "file": "eval-docs/corpus/corpus-hopping.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "JOB_HOPPING"
+        ],
+        "maxGroundingFindings": 0
+      }
+    },
+    {
+      "name": "corpus-overlap",
+      "file": "eval-docs/corpus/corpus-overlap.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "OVERLAP"
+        ],
+        "maxGroundingFindings": 0
+      }
+    },
+    {
+      "name": "corpus-title-mismatch",
+      "file": "eval-docs/corpus/corpus-title-mismatch.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "TENURE_TITLE_MISMATCH"
+        ],
+        "maxGroundingFindings": 0
+      }
+    },
+    {
+      "name": "corpus-no-quant",
+      "file": "eval-docs/corpus/corpus-no-quant.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "LOW_QUANTIFICATION"
+        ],
+        "maxGroundingFindings": 0
+      }
+    },
+    {
+      "name": "corpus-vocab",
+      "file": "eval-docs/corpus/corpus-vocab.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustContainVocabularyTerms": [
+          "RAG",
+          "Function Calling",
+          "Agent"
+        ],
+        "maxGroundingFindings": 0
+      }
+    },
+    {
+      "name": "corpus-fabrication-bait",
+      "file": "eval-docs/corpus/corpus-fabrication-bait.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "maxGroundingFindings": 0
+      }
+    },
+    {
+      "name": "corpus-messy",
+      "file": "eval-docs/corpus/corpus-messy.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "presentationScoreAtMost": 70,
+        "strengthBandAtMost": "MIXED",
+        "maxGroundingFindings": 0
       }
     }
   ]

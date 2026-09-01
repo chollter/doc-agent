@@ -293,7 +293,21 @@ function FunnelVerdictSection({ verdict, onCitation }: {
     <div className="space-y-4">
       {verdict.analysisDegraded && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-700">
-          实体抽取降级运行，本结论不完整——建议配置 LLM 后重新分析。
+          实体抽取降级（当时 LLM 调用失败）：红旗为文本级粗查（未区分教育/工作）、候选人画像缺失；其余角度由 LLM 直读原文产出，仍可参考。重试可获得完整分析。
+        </div>
+      )}
+
+      {/* 落地性校验（程序标记）：建议中的编造数字/失锚引文在此暴露 */}
+      {verdict.groundingFindings && verdict.groundingFindings.length > 0 && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-3">
+          <div className="mb-1.5 text-xs font-semibold text-rose-600">
+            落地性校验：{verdict.groundingFindings.length} 处建议未通过程序校验（数字无出处 / 引文失锚）
+          </div>
+          <ul className="space-y-1 text-[11px] leading-5 text-rose-500">
+            {verdict.groundingFindings.map((f, i) => (
+              <li key={i}>· {f.detail}</li>
+            ))}
+          </ul>
         </div>
       )}
 

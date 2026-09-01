@@ -176,11 +176,17 @@ class FunnelPipelineIntegrationTest {
 
         JsonNode verdict = result.get("result").get("funnelVerdict");
         assertThat(verdict).isNotNull();
-        // P11 缺陷回归锁：降级必须显式标记，且不出分——"看起来正常的低分"曾掩盖抽取故障
+        // P11 回归锁（演进）：降级必须显式标记且不出总分——红旗层缺失时总分掩盖故障；
+        // 但 LLM 五角度输出基于直读原文，不得整体作废（v1 缺陷：误杀后报告结论空白）
         assertThat(path(verdict, "analysisDegraded").asBoolean()).isTrue();
-        assertThat(path(path(verdict, "strength"), "band").asText()).isEqualTo("WEAK");
-        assertThat(path(verdict, "matchMode").asText()).isEqualTo("NONE");
         assertThat(scoreOverallOf(runId)).isEqualTo(0);
+        // 明细保留：强度 MIXED（1 条有结果 + 1 条无结果）/ 表达 62 分 / 杠杆卡 2 张
+        assertThat(path(path(verdict, "strength"), "band").asText()).isEqualTo("MIXED");
+        assertThat(path(path(verdict, "presentation"), "score").asInt()).isEqualTo(62);
+        assertThat(verdict.get("leverageCards").size()).isEqualTo(2);
+        // 红旗层退化为文本级粗查（降级不级联）：RESUME_MD 的 9 个月空窗仍被兜底检出，
+        // 消息注明粗查口径——不造假实体级红旗，也不静默丢掉硬伤
+        assertThat(verdict.get("redFlags").toString()).contains("TIMELINE_GAP").contains("粗查");
     }
 
     // --- helpers ---

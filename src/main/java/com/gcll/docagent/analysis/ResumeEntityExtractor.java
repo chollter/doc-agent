@@ -55,9 +55,18 @@ public class ResumeEntityExtractor {
             LlmResponse response = llmGateway.invoke(PROMPT_FILE, resumeText);
             return ExtractionOutcome.llm(
                     entityNormalizer.normalize(parseEntities(response.content())));
-        } catch (Exception ex) {
-            log.warn("Entity extraction failed, using fallback: {}", ex.getMessage());
-            return ExtractionOutcome.fallback(fallbackExtract(resumeText, fileName));
+        } catch (Exception first) {
+            // 瞬时故障（提供商响应异常/网络抖动）再试一次，减少误降级横幅；
+            // 两次都失败才降级——降级标记机制本身保留（显式告知而非静默）。
+            log.warn("Entity extraction failed once, retrying: {}", first.getMessage());
+            try {
+                LlmResponse response = llmGateway.invoke(PROMPT_FILE, resumeText);
+                return ExtractionOutcome.llm(
+                        entityNormalizer.normalize(parseEntities(response.content())));
+            } catch (Exception ex) {
+                log.warn("Entity extraction failed, using fallback: {}", ex.getMessage());
+                return ExtractionOutcome.fallback(fallbackExtract(resumeText, fileName));
+            }
         }
     }
 
@@ -105,16 +114,11 @@ public class ResumeEntityExtractor {
     }
 
     /**
-     * 降级抽取：LLM 不可用时，只提取基础信息。
+     * 降级抽取：LLM 不可用时不产出任何实体（旧实现把文件名当 ORGANIZATION，
+     * 导致画像工作时间线显示文件名这类垃圾数据）——空实体 + 降级标记，由调用方显式决策。
      */
     private ResumeEntities fallbackExtract(String resumeText, String fileName) {
-        List<ResumeEntity> entities = new ArrayList<>();
-        entities.add(ResumeEntity.of(
-                ResumeEntity.EntityType.ORGANIZATION,
-                fileName != null ? fileName : "unknown",
-                "fallback: file name only"
-        ));
-        return new ResumeEntities(entities);
+        return new ResumeEntities(List.of());
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -43,8 +43,8 @@
       "severity": "HIGH|MEDIUM|LOW",
       "target": "定位到具体段落",
       "sectionId": "sec-X",
-      "before": "简历原文引用",
-      "after": "改写后的版本（补 Result 与影响范围，归因动词与事实相符）",
+      "before": "简历原文引用（连续片段，禁止改写）",
+      "after": "仅基于 before 原文事实改写的版本；原文没有的量化成果用 [请补充：如提升幅度] 占位",
       "reason": "为什么要这样改（面试官视角）"
     }
   ],
@@ -55,14 +55,27 @@
 
   "citations": [{"sectionId": "sec-1", "quote": "原文短句（30字以内）"}],
 
-  "matchDimensions": [],
-  "gaps": [],
-  "interviewQuestions": [],
+  "matchDimensions": [
+    {"name": "JD要求项原文（如：精通Java）", "level": "STRONG|PARTIAL|WEAK", "reason": "判断依据（引用简历内容）"}
+  ],
+  "gaps": [
+    {"requirement": "JD要求项原文", "gap": "简历缺什么", "suggestion": "怎么补（可执行的）"}
+  ],
+  "interviewQuestions": [
+    {"question": "面试官会问的问题", "intent": "考察意图", "suggestedAnswer": "建议回答要点", "isGapPrep": false}
+  ],
 
-  "mustHaveCoverage": [],
-  "variantFit": [],
+  "mustHaveCoverage": [
+    {"requirementId": "画像共性要求id", "requirement": "要求描述", "status": "MET|PARTIAL|MISSING", "evidence": "简历原文证据（MET时必填）", "sectionId": "sec-X"}
+  ],
+  "variantFit": [
+    {"variantId": "子方向id", "name": "子方向名", "fit": "HIGH|MEDIUM|LOW", "reason": "适配理由"}
+  ],
   "positioning": null
 }
+
+重要：matchDimensions、gaps、interviewQuestions、mustHaveCoverage、variantFit 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
+positioning 在方向画像模式下为对象：{"anchored": false, "currentAnchor": "当前定位", "suggestedAnchor": "建议定位", "comment": "理由"}；无画像时为 null。
 
 experienceStrength 评估标准：
 - star.result 判断该条经历是否有可验证的结果（数字、规模、影响）
@@ -74,7 +87,14 @@ experienceStrength 评估标准：
 
 规则：
 - actionableSuggestions 3-6 条，severity HIGH 排前面，每条有 before/after
-- after 重点补 Result 与影响范围，归因动词与事实相符（不要教用户夸大）
+- before 必须是原文连续片段，禁止改写或捏造（可用原文核对，citations 同样适用）
+- after 只能基于原文已有事实改写：禁止编造原文没有的数字、比例、时长、佐证材料（如"降至0.3%""附邮件截图"均为编造）；缺量化成果时用 [请补充：xx指标] 占位引导用户自填，不要替用户发明数据
 - leverageCards 3-6 张，亮点与风险都要有，每张必须有 likelyQuestion
 - presentation.score 按 rubric 使用整个区间，issues 定位到 sectionId
 - 引用 quote 必须是原文连续片段，禁止改写
+
+## 落地性铁律（程序会校验，违反会被标记）
+- after 中禁止编造简历中不存在的数字：只在简历有真实数据时引用；没有数据时必须用占位符，如"迁移中断率从【补充真实数据】降至【补充真实数据】"——把填空留给用户，不许替用户发明
+- before 必须是简历原文的连续片段（程序逐字校验）
+- 宁可指出"这里缺一个可验证的结果"，也不要用编造的数字填充
+

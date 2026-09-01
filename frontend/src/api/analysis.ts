@@ -152,6 +152,13 @@ export interface FunnelVerdict {
   presentation: Presentation | null;
   leverageCards: LeverageCard[] | null;
   analysisDegraded: boolean;
+  groundingFindings?: GroundingFinding[] | null;
+}
+
+export interface GroundingFinding {
+  type: 'FABRICATED_NUMBER' | 'UNGROUNDED_BEFORE';
+  ref: string;
+  detail: string;
 }
 
 // ---- 校准对照类型（53→75 的证据链） ----
@@ -315,6 +322,32 @@ export interface AuditStep {
   createdAt: string;
 }
 
+// ---- 链路诊断类型（单次运行的阶段级状态） ----
+
+export interface PipelineStage {
+  stage: string;
+  status: string;
+  detail: string | null;
+  costMs: number | null;
+  error: string | null;
+}
+
+export interface LlmCallGroup {
+  callSite: string;
+  total: number;
+  failures: number;
+}
+
+export interface RunPipeline {
+  runId: string;
+  runStatus: string;
+  executionMode: string | null;
+  analysisDegraded: boolean;
+  lastError: string | null;
+  stages: PipelineStage[];
+  llmCalls: LlmCallGroup[];
+}
+
 /** SSE 步骤事件（实时 + 回放同构） */
 export interface StepEvent {
   runId: string;
@@ -370,6 +403,11 @@ export const analysisApi = {
 
   getAudit(runId: string): Promise<AuditStep[]> {
     return request.get(`/api/audit/agent-runs/${runId}`);
+  },
+
+  /** 单次运行链路诊断：阶段状态条 + LLM 调用聚合 */
+  getPipeline(runId: string): Promise<RunPipeline> {
+    return request.get(`/api/analysis/runs/${runId}/pipeline`);
   },
 
   /** 优化历史（校准记录链） */
