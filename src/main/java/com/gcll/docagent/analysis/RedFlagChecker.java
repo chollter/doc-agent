@@ -56,6 +56,7 @@ public class RedFlagChecker {
         flags.addAll(checkTimelineGaps(workPeriods));
         flags.addAll(checkJobHopping(workPeriods, persona));
         flags.addAll(checkOverlap(workPeriods));
+        addIfPresent(flags, checkTrailingEmployment(entities));
         addIfPresent(flags, checkTenureTitleMismatch(entities, workPeriods));
         addIfPresent(flags, checkContact(resumeText));
         flags.addAll(checkMissingSections(entities, persona));
@@ -82,21 +83,55 @@ public class RedFlagChecker {
         LocalDate prevEnd = null;
         for (LocalDate[] range : ranges) {
             if (prevEnd != null) {
-                long gap = ChronoUnit.MONTHS.between(prevEnd, range[0]);
+                // 含当月修正：空窗从上一段结束月的次月算起（同实体路径口径）
+                long gap = ChronoUnit.MONTHS.between(prevEnd.plusMonths(1), range[0]);
                 if (gap > GAP_MEDIUM_MONTHS) {
                     RedFlag.Severity severity = gap > GAP_HIGH_MONTHS
                             ? RedFlag.Severity.MEDIUM : RedFlag.Severity.LOW;
                     flags.add(new RedFlag(RedFlag.TIMELINE_GAP, severity,
                             String.format("时间线疑似有 %d 个月空窗（%s 至 %s，粗查）",
-                                    gap, prevEnd, range[0])));
+                                    gap, prevEnd.plusMonths(1), range[0])));
                 }
             }
             if (prevEnd == null || range[1].isAfter(prevEnd)) {
                 prevEnd = range[1];
             }
         }
+        // 尾部粗查：最后一行工作区间若非开放（无"至今"），距离现在超过阈值也提示
+        if (!ranges.isEmpty()) {
+            LocalDate[] last = ranges.get(ranges.size() - 1);
+            boolean lastLineOpen = ResumeDateParser.isOpenEnded(
+                    lastLineContaining(resumeText, last));
+            if (!lastLineOpen) {
+                long months = ChronoUnit.MONTHS.between(last[1].plusMonths(1), LocalDate.now().withDayOfMonth(1));
+                if (months > GAP_MEDIUM_MONTHS) {
+                    boolean covered = ranges.stream().anyMatch(r -> r != last
+                            && ResumeDateParser.isOpenEnded(lastLineContaining(resumeText, r)));
+                    if (covered) {
+                        flags.add(new RedFlag(RedFlag.EMPLOYMENT_GAP_COVERED, RedFlag.Severity.LOW,
+                                String.format("最后一段雇佣 %s 结束，至今约 %d 个月，粗查显示有开放经历覆盖"
+                                        + "——面试必问，备好口径", last[1], months)));
+                    } else {
+                        flags.add(new RedFlag(RedFlag.TRAILING_GAP, RedFlag.Severity.MEDIUM,
+                                String.format("最后一段经历 %s 结束至今约 %d 个月且无覆盖（粗查）——初筛必问",
+                                        last[1], months)));
+                    }
+                }
+            }
+        }
         addIfPresent(flags, checkContact(resumeText));
         return flags;
+    }
+
+    /** 找到包含该区间起点的原文行（用于开放区间判定）。 */
+    private static String lastLineContaining(String text, LocalDate[] range) {
+        String target = range[0].getYear() + "." + String.format("%02d", range[0].getMonthValue());
+        for (String line : text.split("\\R")) {
+            if (line.contains(target)) {
+                return line;
+            }
+        }
+        return "";
     }
     
     /**
@@ -130,29 +165,107 @@ public class RedFlagChecker {
         }
     }
 
-    /** 解析非教育时间段为 [start, end]，按开始时间排序。 */
+    /** 解析非教育时间段为 [start, end]，按开始时间排序。教育兜底：kind 缺失时按上下文教育词排除。 */
     private List<LocalDate[]> parseWorkPeriods(ResumeEntities entities) {
         return entities.getByType(ResumeEntity.EntityType.TIME_PERIOD).stream()
-                .filter(p -> !"education".equals(p.kind()))
+                .filter(p -> !isEducationEntity(p))
                 .map(p -> ResumeDateParser.parseRange(p.value()))
                 .filter(r -> r != null)
                 .sorted(Comparator.comparing(a -> a[0]))
                 .toList();
     }
 
-    /** 1. 时间线空窗：相邻工作时间段间隔 > 2 月。 */
+    /** 教育段判定：kind=education，或 kind 缺失但上下文/值含教育词（LLM 漏标兜底）。 */
+    private static boolean isEducationEntity(ResumeEntity p) {
+        if ("education".equals(p.kind())) {
+            return true;
+        }
+        if (p.kind() != null && !p.kind().isBlank()) {
+            return false;
+        }
+        String haystack = ((p.context() == null ? "" : p.context()) + " " + p.value()).toLowerCase();
+        return EDUCATION_LINE_MARKERS.stream().anyMatch(haystack::contains);
+    }
+
+    /**
+     * 1. 时间线空窗：相邻经历间隔 > 2 月（真实口径）。
+     * <p>含当月修正：简历惯例"2020.01-2020.03"的 3 月是干满的，空窗从结束月的次月
+     * 起算（prevEnd+1）——否则把最后一个在职月算成空窗，真实的 2 个月交接期
+     * 会被误报成 3 个月 MEDIUM（用户实测抓出的口径偏差）。
+     */
     private List<RedFlag> checkTimelineGaps(List<LocalDate[]> periods) {
         List<RedFlag> flags = new ArrayList<>();
         for (int i = 1; i < periods.size(); i++) {
-            long gap = ChronoUnit.MONTHS.between(periods.get(i - 1)[1], periods.get(i)[0]);
+            LocalDate prevEndExclusive = periods.get(i - 1)[1].plusMonths(1);
+            long gap = ChronoUnit.MONTHS.between(prevEndExclusive, periods.get(i)[0]);
             if (gap > GAP_MEDIUM_MONTHS) {
                 RedFlag.Severity severity = gap > GAP_HIGH_MONTHS ? RedFlag.Severity.HIGH : RedFlag.Severity.MEDIUM;
                 flags.add(new RedFlag(RedFlag.TIMELINE_GAP, severity,
                         String.format("时间线有 %d 个月空窗（%s 至 %s）", gap,
-                                periods.get(i - 1)[1], periods.get(i)[0])));
+                                prevEndExclusive, periods.get(i)[0])));
             }
         }
         return flags;
+    }
+
+    /**
+     * 1b. 尾部雇佣检查：最后一段<b>雇佣</b>（kind=work/未标注）结束至今的时长。
+     * <p>"至今"的项目经历不算在职——HR 视角下"从上份工作离职多久了"是初筛第一问。
+     * 有项目覆盖时不算空窗（有活动有产出），输出面试准备信号而非否决红旗；
+     * 无覆盖且超阈值才是真尾部空窗。注意：基准是"现在"，简历写就时间未知，
+     * 间隔会随分析时间虚增——文案不装精确。
+     */
+    private RedFlag checkTrailingEmployment(ResumeEntities entities) {
+        List<ResumeEntity> periods = entities.getByType(ResumeEntity.EntityType.TIME_PERIOD).stream()
+                .filter(p -> !isEducationEntity(p))
+                .toList();
+        if (periods.isEmpty()) {
+            return null;
+        }
+        // 最后一段雇佣：kind=project 的不算雇佣
+        ResumeEntity lastEmploymentRef = null;
+        LocalDate lastEmpEndRef = null;
+        for (ResumeEntity p : periods) {
+            if ("project".equals(p.kind())) {
+                continue;
+            }
+            LocalDate[] r = ResumeDateParser.parseRange(p.value());
+            if (r == null) {
+                continue;
+            }
+            if (lastEmpEndRef == null || r[1].isAfter(lastEmpEndRef)) {
+                lastEmpEndRef = r[1];
+                lastEmploymentRef = p;
+            }
+        }
+        final ResumeEntity lastEmployment = lastEmploymentRef;
+        final LocalDate lastEmpEnd = lastEmpEndRef;
+        if (lastEmployment == null || ResumeDateParser.isOpenEnded(lastEmployment.value())) {
+            return null;
+        }
+        LocalDate now = LocalDate.now().withDayOfMonth(1);
+        long months = ChronoUnit.MONTHS.between(lastEmpEnd.plusMonths(1), now);
+        if (months <= GAP_MEDIUM_MONTHS) {
+            return null;
+        }
+        // 覆盖判定：离职后 3 个月内开始、持续至今（或近期）的非教育经历
+        boolean covered = periods.stream().anyMatch(p -> p != lastEmployment
+                && ResumeDateParser.isOpenEnded(p.value())
+                && coversLeaving(p, lastEmpEnd));
+        if (covered) {
+            return new RedFlag(RedFlag.EMPLOYMENT_GAP_COVERED, RedFlag.Severity.LOW,
+                    String.format("最后一段雇佣 %s 结束，至今约 %d 个月，期间有项目/独立经历覆盖——不是空窗，"
+                            + "但面试必问：备好项目成果数据与回归就业的口径", lastEmpEnd, months));
+        }
+        RedFlag.Severity severity = months > GAP_HIGH_MONTHS ? RedFlag.Severity.HIGH : RedFlag.Severity.MEDIUM;
+        return new RedFlag(RedFlag.TRAILING_GAP, severity,
+                String.format("最后一段雇佣 %s 结束至今已约 %d 个月且无覆盖——初筛必问，简历或面试需备口径",
+                        lastEmpEnd, months));
+    }
+
+    private static boolean coversLeaving(ResumeEntity p, LocalDate leavingEnd) {
+        LocalDate[] r = ResumeDateParser.parseRange(p.value());
+        return r != null && !r[0].isAfter(leavingEnd.plusMonths(3));
     }
 
     /**

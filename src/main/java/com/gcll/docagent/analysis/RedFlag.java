@@ -18,4 +18,8 @@ public record RedFlag(String type, Severity severity, String message) {
     public static final String CONTACT_MISSING = "CONTACT_MISSING";
     public static final String SECTION_MISSING = "SECTION_MISSING";
     public static final String LOW_QUANTIFICATION = "LOW_QUANTIFICATION";
+    /** 尾部空窗：最后一段雇佣结束至今无覆盖。 */
+    public static final String TRAILING_GAP = "TRAILING_GAP";
+    /** 尾部有项目覆盖的离职期：不是空窗，但面试必问（准备信号，非否决项）。 */
+    public static final String EMPLOYMENT_GAP_COVERED = "EMPLOYMENT_GAP_COVERED";
 }

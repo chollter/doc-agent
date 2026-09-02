@@ -136,6 +136,39 @@ function ReportBubble({ verdict, summary, mode }: { verdict: FunnelVerdict; summ
     <div className="space-y-2.5 rounded-2xl rounded-tl-sm border border-slate-200 bg-white p-4 shadow-sm">
       <div className="text-sm leading-7 text-slate-800">{summary}</div>
 
+      {/* 定性评价（v6）：总评 + 强项/需注意——气泡里给结论级评价，不止指标标签 */}
+      {verdict.evaluation && (
+        <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+          {verdict.evaluation.overall && (
+            <div className="text-xs font-semibold leading-6 text-slate-800">{verdict.evaluation.overall}</div>
+          )}
+          {((verdict.evaluation.strengths?.length ?? 0) > 0 || (verdict.evaluation.weaknesses?.length ?? 0) > 0) && (
+            <div className="grid gap-2 md:grid-cols-2">
+              {(verdict.evaluation.strengths?.length ?? 0) > 0 && (
+                <div className="rounded-lg bg-emerald-50 p-2.5">
+                  <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                    <CheckCircle2 size={12} /> 强项
+                  </div>
+                  <ul className="space-y-0.5 text-[11px] leading-5 text-slate-700">
+                    {verdict.evaluation.strengths!.map((s, i) => <li key={i}>· {s}</li>)}
+                  </ul>
+                </div>
+              )}
+              {(verdict.evaluation.weaknesses?.length ?? 0) > 0 && (
+                <div className="rounded-lg bg-amber-50 p-2.5">
+                  <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-amber-700">
+                    <ShieldAlert size={12} /> 需注意
+                  </div>
+                  <ul className="space-y-0.5 text-[11px] leading-5 text-slate-700">
+                    {verdict.evaluation.weaknesses!.map((s, i) => <li key={i}>· {s}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {verdict.analysisDegraded && (
         <div className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-700">
           事实层抽取降级：红旗为文本级粗查、画像缺失；其余角度基于 LLM 直读原文。

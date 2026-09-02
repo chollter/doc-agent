@@ -991,7 +991,8 @@ public class DocumentAnalysisService {
                     parseLeverageCards(raw.leverageCards),
                     parseCoverage(raw.mustHaveCoverage),
                     parseVariantFit(raw.variantFit),
-                    parsePositioning(raw.positioning));
+                    parsePositioning(raw.positioning),
+                    parseEvaluation(raw.evaluation));
             return new ParsedAnalysis(analysis, funnel);
         } catch (IllegalArgumentException ex) {
             throw ex;
@@ -1079,6 +1080,7 @@ public class DocumentAnalysisService {
         public List<RawCoverage> mustHaveCoverage;
         public List<RawVariantFit> variantFit;
         public RawPositioning positioning;
+        public RawEvaluation evaluation;
     }
 
     /** P12 LLM 五角度输出——只进 FunnelVerdict，不进 AnalysisResult。 */
@@ -1088,10 +1090,11 @@ public class DocumentAnalysisService {
             List<LeverageCard> leverageCards,
             List<MustHaveCoverage> mustHaveCoverage,
             List<VariantFit> variantFit,
-            PositioningCheck positioning
+            PositioningCheck positioning,
+            FunnelVerdict.Evaluation evaluation
     ) {
         static LlmFunnelFields empty() {
-            return new LlmFunnelFields(null, List.of(), List.of(), List.of(), List.of(), null);
+            return new LlmFunnelFields(null, List.of(), List.of(), List.of(), List.of(), null, null);
         }
     }
 
@@ -1143,6 +1146,20 @@ public class DocumentAnalysisService {
         public Boolean anchored;
         public String currentAnchor;
         public String suggestedAnchor;
+        public String comment;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawEvaluation {
+        public String overall;
+        public List<RawDimensionComment> dimensions;
+        public List<String> strengths;
+        public List<String> weaknesses;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawDimensionComment {
+        public String dimension;
         public String comment;
     }
 
@@ -1292,6 +1309,30 @@ public class DocumentAnalysisService {
         return new PositioningCheck(raw.anchored, raw.currentAnchor, raw.suggestedAnchor, raw.comment);
     }
 
+    /** 定性评价（v6）：清洗空白条目；全部为空时返回 null（历史 run/LLM 未产出时前端优雅跳过）。 */
+    private static FunnelVerdict.Evaluation parseEvaluation(RawEvaluation raw) {
+        if (raw == null) return null;
+        String overall = raw.overall != null && !raw.overall.isBlank() ? raw.overall.trim() : null;
+        List<FunnelVerdict.Evaluation.DimensionComment> dims = raw.dimensions == null ? List.of()
+                : raw.dimensions.stream()
+                        .filter(d -> d != null && d.dimension != null && !d.dimension.isBlank()
+                                && d.comment != null && !d.comment.isBlank())
+                        .map(d -> new FunnelVerdict.Evaluation.DimensionComment(
+                                d.dimension.trim(), d.comment.trim()))
+                        .toList();
+        List<String> strengths = cleanStrings(raw.strengths);
+        List<String> weaknesses = cleanStrings(raw.weaknesses);
+        if (overall == null && dims.isEmpty() && strengths.isEmpty() && weaknesses.isEmpty()) {
+            return null;
+        }
+        return new FunnelVerdict.Evaluation(overall, dims, strengths, weaknesses);
+    }
+
+    private static List<String> cleanStrings(List<String> list) {
+        if (list == null) return List.of();
+        return list.stream().filter(s -> s != null && !s.isBlank()).map(String::trim).toList();
+    }
+
     /**
      * 组装漏斗结论：LLM 输出 + 代码事实（红旗/词汇diff/画像定义）合成。
      * 部分降级：实体抽取失败只损失实体级精度——红旗已切换为文本级粗查（executeClaimed）、
@@ -1315,7 +1356,8 @@ public class DocumentAnalysisService {
                 fields.presentation(),
                 fields.leverageCards(),
                 ctx.degraded(),
-                groundingValidator.validate(suggestions, ctx.fullText()));
+                groundingValidator.validate(suggestions, ctx.fullText()),
+                fields.evaluation());
     }
 
     /** 要求文本以画像定义为准（LLM 只给 id/status/evidence），防转录走样。 */

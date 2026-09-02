@@ -23,7 +23,8 @@ public record FunnelVerdict(
         Presentation presentation,
         List<LeverageCard> leverageCards,
         boolean analysisDegraded,
-        List<GroundingValidator.Finding> groundingFindings
+        List<GroundingValidator.Finding> groundingFindings,
+        Evaluation evaluation
 ) {
 
     /** 匹配模式：JD 对照 / 方向画像（广撒网）/ 未指定。 */
@@ -96,6 +97,23 @@ public record FunnelVerdict(
     public static FunnelVerdict degraded(List<RedFlag> redFlags) {
         return new FunnelVerdict(redFlags != null ? redFlags : List.of(),
                 MODE_NONE, null, List.of(), List.of(), List.of(), null,
-                List.of(), StrengthStats.from(List.of()), null, List.of(), true, List.of());
+                List.of(), StrengthStats.from(List.of()), null, List.of(), true, List.of(), null);
+    }
+
+    /**
+     * 定性评价（v6）——补"只有描述没有判断"的缺口。
+     * <p>overall/strengths/weaknesses 是 LLM 的独立综合判断；dimensions 只给定性评语，
+     * 各维度档位仍由代码侧计算（内容强度/表达分/匹配率），避免 LLM 重评与代码结论打架。
+     * 历史 run（v5 及以前）无此字段，前端需容忍 null。
+     */
+    public record Evaluation(
+            String overall,
+            List<DimensionComment> dimensions,
+            List<String> strengths,
+            List<String> weaknesses
+    ) {
+        /** 单一维度的一句话评语。 */
+        public record DimensionComment(String dimension, String comment) {
+        }
     }
 }

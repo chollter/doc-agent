@@ -153,6 +153,21 @@ export interface FunnelVerdict {
   leverageCards: LeverageCard[] | null;
   analysisDegraded: boolean;
   groundingFindings?: GroundingFinding[] | null;
+  /** 定性评价（v6）；历史 run 无此字段 */
+  evaluation?: Evaluation | null;
+}
+
+/** 维度评语：档位由代码侧计算，评语归 LLM */
+export interface EvaluationDimension {
+  dimension: string;
+  comment: string;
+}
+
+export interface Evaluation {
+  overall: string | null;
+  dimensions: EvaluationDimension[] | null;
+  strengths: string[] | null;
+  weaknesses: string[] | null;
 }
 
 export interface GroundingFinding {

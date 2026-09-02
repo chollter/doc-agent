@@ -98,4 +98,67 @@ public final class ResumeDateParser {
         }
         return YearMonth.of(year, month).atDay(1);
     }
+
+    /** 区间扫描结果：start/end 为月起止，startPos/endPos 为原文位置（供上下文判断），openEnded=至今。 */
+    public record ScannedRange(LocalDate start, LocalDate end, int startPos, int endPos, boolean openEnded) {
+    }
+
+    /** 区间模式：日期 [分隔符 日期|至今]。分隔符兼容 - – — ~ 至 到；'-' 置首避免范围语义。 */
+    private static final Pattern RANGE_PART = Pattern.compile(
+            "(\\d{4}\\s*[./年-]\\s*\\d{1,2}\\s*月?)\\s*[-–—~至到]\\s*((\\d{4}\\s*[./年-]\\s*\\d{1,2}\\s*月?)|至今|现在|目前|present|now|current)",
+            Pattern.CASE_INSENSITIVE);
+
+    /**
+     * 区间感知的全文扫描——文本级空窗检查的数据基础。
+     * <p>先匹配"date - date / 至今"区间，剩余孤立日期作为单点区间。
+     * 关键修正：同一段经历自身的起止月（如 2019.07-2020.10 的两个端点）
+     * 必须聚合为一段，否则逐点扫描会把工作时长本身误报成"空窗"。
+     */
+    public static List<ScannedRange> scanRanges(String text) {
+        List<ScannedRange> ranges = new ArrayList<>();
+        List<int[]> consumed = new ArrayList<>();
+        if (text != null && !text.isBlank()) {
+            Matcher m = RANGE_PART.matcher(text);
+            while (m.find()) {
+                LocalDate start = parseSingle(m.group(1));
+                String explicitEnd = m.group(3);
+                LocalDate end = explicitEnd != null ? parseSingle(explicitEnd)
+                        : LocalDate.now().withDayOfMonth(1);
+                if (start == null || end == null) {
+                    continue;
+                }
+                if (end.isBefore(start)) {
+                    LocalDate t = start;
+                    start = end;
+                    end = t;
+                }
+                ranges.add(new ScannedRange(start, end, m.start(), m.end(), explicitEnd == null));
+                consumed.add(new int[]{m.start(), m.end()});
+            }
+            Matcher single = DATE_PART.matcher(text);
+            while (single.find()) {
+                boolean inRange = consumed.stream()
+                        .anyMatch(c -> single.start() >= c[0] && single.end() <= c[1]);
+                if (inRange) {
+                    continue;
+                }
+                LocalDate d = safeDate(single.group(1), single.group(2));
+                if (d != null) {
+                    ranges.add(new ScannedRange(d, d, single.start(), single.end(), false));
+                }
+            }
+        }
+        ranges.sort(java.util.Comparator.comparing(ScannedRange::start));
+        return ranges;
+    }
+
+    private static LocalDate parseSingle(String fragment) {
+        Matcher m = DATE_PART.matcher(fragment);
+        return m.find() ? safeDate(m.group(1), m.group(2)) : null;
+    }
+
+    /** 时间段值是否为开放区间（至今/现在/present 等）——尾部雇佣检查依赖它区分在职与离职。 */
+    public static boolean isOpenEnded(String period) {
+        return period != null && OPEN_ENDED.matcher(period).find();
+    }
 }

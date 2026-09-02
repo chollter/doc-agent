@@ -110,7 +110,7 @@ public class LlmGateway {
             // 优化1：按目标模型窗口动态截断 userContent，而非固定字数。
             // 剩余空间 = 模型窗口 - 系统提示已用 - prompt模板已用 - 安全余量(给输出和误差留)
             String safeContent = truncateByModelWindow(promptTemplate, userContent, runId);
-            fullPrompt = promptTemplate + "\n\n工单内容：\n" + safeContent;
+            fullPrompt = promptTemplate + "\n\n简历内容：\n" + safeContent;
             ChatClient.ChatClientRequestSpec request = client.prompt()
                     .system(systemBasePrompt)
                     .user(fullPrompt);

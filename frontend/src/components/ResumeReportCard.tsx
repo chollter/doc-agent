@@ -1,5 +1,5 @@
 import { AlertTriangle, Award, Bookmark, Briefcase, CheckCircle, ClipboardList, GraduationCap, HelpCircle, Lightbulb, ShieldAlert, Sparkles, Target, TrendingUp, User } from 'lucide-react';
-import type { AnalysisResult, EnhancedKeyPoint, EnhancedRisk, ResumeProfile, QualityScore, SkillMatrix, FunnelVerdict, LeverageCard as LeverageCardType } from '../api/analysis';
+import type { AnalysisResult, EnhancedKeyPoint, EnhancedRisk, Evaluation, ResumeProfile, QualityScore, SkillMatrix, FunnelVerdict, LeverageCard as LeverageCardType } from '../api/analysis';
 
 function ModeBadge({ mode }: { mode: string | null | undefined }) {
   if (!mode) return null;
@@ -254,19 +254,80 @@ function verdictLine(verdict: FunnelVerdict): { text: string; alert: boolean } {
   return { text: `无一票否决项；${parts.join(' · ')}`, alert: false };
 }
 
+/** 定性评价（v6）：总评 + 优缺点 + 五维评语——结论区首屏直给评价，不再只有指标标签 */
+function EvaluationSection({ evaluation }: { evaluation: Evaluation }) {
+  const strengths = evaluation.strengths ?? [];
+  const weaknesses = evaluation.weaknesses ?? [];
+  const dimensions = evaluation.dimensions ?? [];
+  return (
+    <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+      {evaluation.overall && (
+        <div className="text-sm font-semibold leading-7 text-slate-800">{evaluation.overall}</div>
+      )}
+      {(strengths.length > 0 || weaknesses.length > 0) && (
+        <div className="grid gap-2 md:grid-cols-2">
+          {strengths.length > 0 && (
+            <div className="rounded-lg bg-emerald-50/70 p-3">
+              <div className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                <CheckCircle size={13} /> 强项
+              </div>
+              <ul className="space-y-1 text-xs leading-5 text-slate-700">
+                {strengths.map((s, i) => <li key={i}>· {s}</li>)}
+              </ul>
+            </div>
+          )}
+          {weaknesses.length > 0 && (
+            <div className="rounded-lg bg-amber-50/70 p-3">
+              <div className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-amber-700">
+                <AlertTriangle size={13} /> 需注意
+              </div>
+              <ul className="space-y-1 text-xs leading-5 text-slate-700">
+                {weaknesses.map((s, i) => <li key={i}>· {s}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+      {dimensions.length > 0 && (
+        <div className="space-y-1 rounded-lg bg-slate-50/80 p-3">
+          {dimensions.map((d, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs leading-5">
+              <span className="w-24 shrink-0 font-medium text-slate-500">{d.dimension}</span>
+              <span className="text-slate-600">{d.comment}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** P12 漏斗式结论——按"会死在哪一关"的顺序渲染 */
 function FunnelVerdictSection({ verdict, onCitation }: {
   verdict: FunnelVerdict;
   onCitation?: (sectionId: string) => void;
 }) {
   const line = verdictLine(verdict);
+  const evaluation = verdict.evaluation ?? null;
   return (
     <div className="space-y-4">
-      {/* 一句话裁决（置顶，打开页面第一行就是判断） */}
-      <div className={`rounded-xl border px-4 py-3 text-sm font-semibold ${
-        line.alert ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-100 bg-emerald-50/70 text-slate-700'}`}>
-        {line.text}
-      </div>
+      {/* 一票否决警报最优先；否则定性评价置顶（v6：首屏是评价而非指标标签） */}
+      {line.alert && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          {line.text}
+        </div>
+      )}
+
+      {evaluation && <EvaluationSection evaluation={evaluation} />}
+
+      {/* 确定性指标行：无评价时（历史 run）仍担当首屏；有评价时降为辅助行 */}
+      {!line.alert && (evaluation ? (
+        <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">{line.text}</div>
+      ) : (
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3 text-sm font-semibold text-slate-700">
+          {line.text}
+        </div>
+      ))}
 
       {verdict.analysisDegraded && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-xs leading-5 text-amber-700">

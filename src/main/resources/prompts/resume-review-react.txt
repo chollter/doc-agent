@@ -65,7 +65,20 @@
   "variantFit": [
     {"variantId": "子方向id", "name": "子方向名", "fit": "HIGH|MEDIUM|LOW", "reason": "适配理由"}
   ],
-  "positioning": null
+  "positioning": null,
+
+  "evaluation": {
+    "overall": "总评（100字内）：水平定位（在同年限候选人中处于什么位置）+ 竞争力判断 + 最大拖累项",
+    "dimensions": [
+      {"dimension": "真实性与可信度", "comment": "一句话定性评语（时间线是否自洽、数字有无出处、有无矛盾）"},
+      {"dimension": "项目经历含金量", "comment": "一句话定性评语（成果质量/归属/量化程度）"},
+      {"dimension": "岗位匹配", "comment": "一句话定性评语（相对所投方向/画像）"},
+      {"dimension": "表达质量", "comment": "一句话定性评语（结构/信息密度/可读性）"},
+      {"dimension": "职业轨迹", "comment": "一句话定性评语（连续性/稳定性/成长方向）"}
+    ],
+    "strengths": ["最突出的2-3个优点（评价语）"],
+    "weaknesses": ["最需要正视的2-3个缺点（评价语）"]
+  }
 }
 
 重要：matchDimensions、mustHaveCoverage、variantFit 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
@@ -86,7 +99,9 @@
 - **两者都没有**：以上匹配字段全部设为空数组/null。
 
 ## 强制规则
-- 本轮只输出结论（诊断），不输出改写建议：不要给 before/after、不要给“怎么改”——具体建议由用户追问时另行生成，擅自输出会污染结论区
+- 本轮只输出结论（诊断）与评价，不输出改写建议：不要给 before/after、不要给“怎么改”——具体建议由用户追问时另行生成，擅自输出会污染结论区
+- evaluation 是定性评价，不是事实描述：禁止复述“工作年限X年、技术栈覆盖…”这类信息；必须给判断（好/差在什么程度、处于什么水平、在筛选中会造成什么影响）
+- evaluation.strengths/weaknesses 每条必须有原文依据（不编造）；overall 必须给明确定论，禁止和稀泥、禁止“总体还不错”式空话；dimensions 按上述五维顺序各一条，每条 30 字内，只给评语不重复打分
 - leverageCards 3-6 张，亮点与风险都要有，每张必须有 likelyQuestion
 - presentation.score 按 rubric 使用整个区间，issues 定位到 sectionId（issues 是诊断，不是改写建议）
 - keyPoints/risks 必须从结构化字段提取，保持一致性

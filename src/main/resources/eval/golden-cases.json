@@ -659,6 +659,133 @@
           ]
         ]
       }
+    },
+    {
+      "name": "corpus-normal-transition",
+      "file": "eval-docs/corpus/corpus-normal-transition.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ],
+        "mustNotHaveRedFlagTypes": [
+          "TIMELINE_GAP",
+          "TRAILING_GAP"
+        ]
+      }
+    },
+    {
+      "name": "corpus-trailing-unemployed",
+      "file": "eval-docs/corpus/corpus-trailing-unemployed.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ],
+        "mustHaveRedFlagTypes": [
+          "TRAILING_GAP"
+        ]
+      }
+    },
+    {
+      "name": "corpus-trailing-covered",
+      "file": "eval-docs/corpus/corpus-trailing-covered.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ],
+        "mustHaveRedFlagTypes": [
+          "EMPLOYMENT_GAP_COVERED"
+        ],
+        "mustNotHaveRedFlagTypes": [
+          "TRAILING_GAP"
+        ]
+      }
     }
   ]
 }

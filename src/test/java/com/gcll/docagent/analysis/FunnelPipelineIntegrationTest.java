@@ -105,7 +105,16 @@ class FunnelPipelineIntegrationTest {
                {"requirementId":"llm-integration","status":"MET","evidence":"封装 LLM 网关","sectionId":"sec-2"},
                {"requirementId":"shipped-app","status":"MISSING","evidence":null,"sectionId":null}],
              "variantFit":[{"variantId":"agent-eng","fit":"HIGH","reason":"编排经验"}],
-             "positioning":{"anchored":false,"currentAnchor":"后端工程师","suggestedAnchor":"AI 应用工程师（RAG 方向）","comment":"建议锚定"}}
+             "positioning":{"anchored":false,"currentAnchor":"后端工程师","suggestedAnchor":"AI 应用工程师（RAG 方向）","comment":"建议锚定"},
+             "evaluation":{"overall":"工程完整度尚可，但结果量化不足拖累竞争力",
+               "dimensions":[
+                 {"dimension":"真实性与可信度","comment":"时间线自洽，空窗需解释"},
+                 {"dimension":"项目经历含金量","comment":"有业务级结果但归因偏弱"},
+                 {"dimension":"岗位匹配","comment":"LLM API 经验覆盖，缺上线产品"},
+                 {"dimension":"表达质量","comment":"时态混乱，重点被淹没"},
+                 {"dimension":"职业轨迹","comment":"9个月空窗是主要疑点"}],
+               "strengths":["主导检索增强问答系统，有真实调用量"],
+               "weaknesses":["早期经历无结果佐证"]}}
             """;
 
     @Test
@@ -162,6 +171,16 @@ class FunnelPipelineIntegrationTest {
 
         // ⑧ 兼容分映射（确定性）：MIXED(65)×0.4 + 62×0.3 + PARTIAL(70)×0.3 - HIGH红旗10 = 55
         assertThat(scoreOverallOf(runId)).isEqualTo(55);
+
+        // ⑨ 评价（v6）：总评/五维评语/优缺点端到端透传——结论区的评价内容来自这里
+        JsonNode eval = verdict.get("evaluation");
+        assertThat(eval).isNotNull();
+        assertThat(path(eval, "overall").asText()).contains("竞争力");
+        assertThat(eval.get("dimensions").size()).isEqualTo(5);
+        assertThat(path(eval.get("dimensions").get(0), "dimension").asText()).isEqualTo("真实性与可信度");
+        assertThat(path(eval.get("dimensions").get(0), "comment").asText()).isNotBlank();
+        assertThat(eval.get("strengths").size()).isEqualTo(1);
+        assertThat(eval.get("weaknesses").size()).isEqualTo(1);
     }
 
     @Test
@@ -189,6 +208,8 @@ class FunnelPipelineIntegrationTest {
         // 红旗层退化为文本级粗查（降级不级联）：RESUME_MD 的 9 个月空窗仍被兜底检出，
         // 消息注明粗查口径——不造假实体级红旗，也不静默丢掉硬伤
         assertThat(verdict.get("redFlags").toString()).contains("TIMELINE_GAP").contains("粗查");
+        // 评价基于 LLM 直读原文，抽取降级不陪葬（与五角度同口径）
+        assertThat(path(path(verdict, "evaluation"), "overall").asText()).contains("竞争力");
     }
 
     @Test

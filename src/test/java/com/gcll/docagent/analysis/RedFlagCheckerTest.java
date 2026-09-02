@@ -44,9 +44,10 @@ class RedFlagCheckerTest {
 
     @Test
     void shouldFlagSmallGapAsMediumOnly() {
+        // 含当月修正后真实空窗 = 2020.11~2021.01 共 3 个月 → MEDIUM
         List<RedFlag> flags = check(List.of(
                 period("2020.01-2020.10", "work"),
-                period("2021.01-2022.06", "work")));
+                period("2021.02-2022.06", "work")));
 
         assertThat(flags).anySatisfy(f -> {
             assertThat(f.type()).isEqualTo(RedFlag.TIMELINE_GAP);
@@ -203,6 +204,78 @@ class RedFlagCheckerTest {
         List<RedFlag> gaps = flags.stream()
                 .filter(f -> f.type().equals(RedFlag.TIMELINE_GAP)).toList();
         assertThat(gaps).hasSize(1);
-        assertThat(gaps.get(0).message()).contains("27 个月");
+        assertThat(gaps.get(0).message()).contains("26 个月");
+    }
+
+    @Test
+    void realTwoMonthTransitionShouldNotBeFlagged() {
+        // 含当月修正锁定：结束月次月算起，真实 2 个月交接期不报旗（旧口径会误报 3 个月）
+        List<RedFlag> flags = check(List.of(
+                period("2020.01-2020.06", "work"),
+                period("2020.09-2021.05", "work")));
+
+        assertThat(flags).noneMatch(f -> f.type().equals(RedFlag.TIMELINE_GAP));
+    }
+
+    @Test
+    void contiguousJobsShouldHaveZeroGap() {
+        List<RedFlag> flags = check(List.of(
+                period("2020.01-2020.03", "work"),
+                period("2020.04-2021.05", "work")));
+
+        assertThat(flags).noneMatch(f -> f.type().equals(RedFlag.TIMELINE_GAP));
+    }
+
+    @Test
+    void closedLastEmploymentShouldFlagTrailingGap() {
+        List<RedFlag> flags = check(List.of(
+                period("2023.01-2025.06", "work"),
+                period("2025.06-2026.01", "work")));
+
+        assertThat(flags).anySatisfy(f -> {
+            assertThat(f.type()).isEqualTo(RedFlag.TRAILING_GAP);
+            assertThat(f.severity()).isEqualTo(RedFlag.Severity.HIGH);
+        });
+    }
+
+    @Test
+    void openEmploymentShouldHaveNoTrailingFlag() {
+        List<RedFlag> flags = check(List.of(
+                period("2023.01-2025.06", "work"),
+                period("2025.07-至今", "work")));
+
+        assertThat(flags).noneMatch(f -> f.type().equals(RedFlag.TRAILING_GAP)
+                || f.type().equals(RedFlag.EMPLOYMENT_GAP_COVERED));
+    }
+
+    @Test
+    void projectCoveredLeavingShouldBeHintNotGap() {
+        // 用户真实场景：雇佣结束 + 独立项目至今——不是空窗，是面试准备信号
+        List<RedFlag> flags = check(List.of(
+                period("2025.02-2026.02", "work"),
+                period("2026.04-至今", "project")));
+
+        assertThat(flags).anySatisfy(f -> {
+            assertThat(f.type()).isEqualTo(RedFlag.EMPLOYMENT_GAP_COVERED);
+            assertThat(f.severity()).isEqualTo(RedFlag.Severity.LOW);
+            assertThat(f.message()).contains("面试必问");
+        });
+        assertThat(flags).noneMatch(f -> f.type().equals(RedFlag.TRAILING_GAP));
+    }
+
+    @Test
+    void untaggedEducationContextShouldBeExcluded() {
+        // LLM 漏标 kind 的兜底：上下文含教育词的时间段不参与职业空窗计算
+        List<ResumeEntity> entities = List.of(
+                new ResumeEntity(ResumeEntity.EntityType.TIME_PERIOD, "2015.09-2019.06",
+                        "华南理工 软件工程 本科", java.util.Map.of()),
+                period("2019.07-2020.10", null),
+                period("2021.07-至今", null));
+
+        List<RedFlag> flags = checker.check(new ResumeEntities(entities), "13800138000", Persona.GENERAL);
+
+        // 教育→首职的 1 个月与首职→当前的间隔正常计算，毕业前不产生空窗旗
+        assertThat(flags).noneMatch(f -> f.type().equals(RedFlag.TIMELINE_GAP)
+                && f.message().contains("2019-06"));
     }
 }
