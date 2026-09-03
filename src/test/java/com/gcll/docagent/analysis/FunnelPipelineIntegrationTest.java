@@ -105,25 +105,31 @@ class FunnelPipelineIntegrationTest {
                {"requirementId":"llm-integration","status":"MET","evidence":"封装 LLM 网关","sectionId":"sec-2"},
                {"requirementId":"shipped-app","status":"MISSING","evidence":null,"sectionId":null}],
              "variantFit":[{"variantId":"agent-eng","fit":"HIGH","reason":"编排经验"}],
-             "positioning":{"anchored":false,"currentAnchor":"后端工程师","suggestedAnchor":"AI 应用工程师（RAG 方向）","comment":"建议锚定"},
-             "evaluation":{"overall":"工程完整度尚可，但结果量化不足拖累竞争力",
-               "dimensions":[
-                 {"dimension":"真实性与可信度","comment":"时间线自洽，空窗需解释"},
-                 {"dimension":"项目经历含金量","comment":"有业务级结果但归因偏弱"},
-                 {"dimension":"岗位匹配","comment":"LLM API 经验覆盖，缺上线产品"},
-                 {"dimension":"表达质量","comment":"时态混乱，重点被淹没"},
-                 {"dimension":"职业轨迹","comment":"9个月空窗是主要疑点"}],
-               "strengths":["主导检索增强问答系统，有真实调用量"],
-               "weaknesses":["早期经历无结果佐证"]}}
+             "positioning":{"anchored":false,"currentAnchor":"后端工程师","suggestedAnchor":"AI 应用工程师（RAG 方向）","comment":"建议锚定"}}
+            """;
+
+    /** 评价专调桩（v7）：深度契约——总体档位定论 + 五维评语带原文证据 + 判断式优缺点。 */
+    private static final String EVALUATION_JSON = """
+            {"overall":"在同年限（7年）候选人中处于上游：检索增强问答系统有日均 12 万次调用的业务级结果，工程完整度扎实；但云海经历零结果叠加 9 个月空窗拉低可信度，初筛大概率通过、空窗必被追问",
+             "dimensions":[
+               {"dimension":"真实性与可信度","comment":"星河经历有日均 12 万次调用量佐证，可信度较高；但代码预检修出 9 个月空窗，且云海段以参与开头却无任何结果——这组矛盾会让面试官追问归属真实性"},
+               {"dimension":"项目经历含金量","comment":"检索增强问答系统是业务级落地，属于 7 年档里少的有真实流量见证的 AI 应用经历；云海订单中心经历无量化结果，含金量存疑"},
+               {"dimension":"岗位匹配","comment":"画像共性要求缺上线产品一项：检索问答系统已上线但责任归属未写清；凭真实调用量可以补，但简历必须先写明白"},
+               {"dimension":"表达质量","comment":"sec-2 时态混乱（负责/主导/参与混用），重点被淹没；动词强度整体偏弱，削弱了本可更硬的结果"},
+               {"dimension":"职业轨迹","comment":"从传统后端转向 AI 应用的方向清晰，但 9 个月空窗打断了连续性；下一步若不能讲清转向动机，会被视为逃逸式跳槽"}],
+             "strengths":["检索增强问答系统是业务级落地（原文：主导检索增强知识库问答系统），有真实调用量见证，同期候选人中稀缺"],
+             "weaknesses":["9 个月空窗叠加云海段零结果，时间线硬伤会直接触发初筛质疑，需备好口径而非等待被问"]}
             """;
 
     @Test
     void assemblesFunnelVerdictEndToEnd() throws Exception {
-        // 抽取与主分析均走 4 参网关（按 prompt 文件分流）
+        // 抽取、主分析、评价专调均走 4 参网关（按 prompt 文件分流）
         when(llmGateway.invoke(anyString(), eq("resume-entity-extract.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ENTITIES_JSON, 200, 100, "qwen-plus"));
         when(llmGateway.invoke(anyString(), eq("resume-review.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
+        when(llmGateway.invoke(anyString(), eq("resume-evaluation.txt"), anyString(), anyString()))
+                .thenReturn(LlmResponse.of(EVALUATION_JSON, 600, 400, "qwen-plus"));
 
         String runId = submit(RESUME_MD, "按方向画像分析这份简历", "AI应用开发");
         awaitStatus(runId, "COMPLETED");
@@ -172,24 +178,27 @@ class FunnelPipelineIntegrationTest {
         // ⑧ 兼容分映射（确定性）：MIXED(65)×0.4 + 62×0.3 + PARTIAL(70)×0.3 - HIGH红旗10 = 55
         assertThat(scoreOverallOf(runId)).isEqualTo(55);
 
-        // ⑨ 评价（v6）：总评/五维评语/优缺点端到端透传——结论区的评价内容来自这里
+        // ⑨ 评价（v7 专调链路）：总评档位定论/五维评语带原文证据/判断式优缺点端到端透传
         JsonNode eval = verdict.get("evaluation");
         assertThat(eval).isNotNull();
-        assertThat(path(eval, "overall").asText()).contains("竞争力");
+        assertThat(path(eval, "overall").asText()).contains("上游");
         assertThat(eval.get("dimensions").size()).isEqualTo(5);
         assertThat(path(eval.get("dimensions").get(0), "dimension").asText()).isEqualTo("真实性与可信度");
-        assertThat(path(eval.get("dimensions").get(0), "comment").asText()).isNotBlank();
+        // v7 契约：评语必须引证据（旧 v6 契约是一句话敷衍，线上实测被用户判不合格）
+        assertThat(path(eval.get("dimensions").get(0), "comment").asText()).contains("空窗");
         assertThat(eval.get("strengths").size()).isEqualTo(1);
         assertThat(eval.get("weaknesses").size()).isEqualTo(1);
     }
 
     @Test
     void marksDegradedAndSuppressesScoreWhenExtractionFails() throws Exception {
-        // 抽取挂掉（4 参 invoke 的 entity-extract 分支抛异常）→ 降级路径；主分析正常返回
+        // 抽取挂掉（4 参 invoke 的 entity-extract 分支抛异常）→ 降级路径；主分析与评价专调正常返回
         when(llmGateway.invoke(anyString(), eq("resume-entity-extract.txt"), anyString(), anyString()))
                 .thenThrow(new RuntimeException("extraction down"));
         when(llmGateway.invoke(anyString(), eq("resume-review.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
+        when(llmGateway.invoke(anyString(), eq("resume-evaluation.txt"), anyString(), anyString()))
+                .thenReturn(LlmResponse.of(EVALUATION_JSON, 600, 400, "qwen-plus"));
 
         String runId = submit(RESUME_MD, "按方向画像分析这份简历", "AI应用开发");
         awaitStatus(runId, "COMPLETED");
@@ -208,8 +217,8 @@ class FunnelPipelineIntegrationTest {
         // 红旗层退化为文本级粗查（降级不级联）：RESUME_MD 的 9 个月空窗仍被兜底检出，
         // 消息注明粗查口径——不造假实体级红旗，也不静默丢掉硬伤
         assertThat(verdict.get("redFlags").toString()).contains("TIMELINE_GAP").contains("粗查");
-        // 评价基于 LLM 直读原文，抽取降级不陪葬（与五角度同口径）
-        assertThat(path(path(verdict, "evaluation"), "overall").asText()).contains("竞争力");
+        // 评价专调基于 LLM 直读原文，抽取降级不陪葬（与五角度同口径）
+        assertThat(path(path(verdict, "evaluation"), "overall").asText()).contains("上游");
     }
 
     @Test
@@ -218,6 +227,8 @@ class FunnelPipelineIntegrationTest {
                 .thenReturn(LlmResponse.of(ENTITIES_JSON, 200, 100, "qwen-plus"));
         when(llmGateway.invoke(anyString(), eq("resume-review.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
+        when(llmGateway.invoke(anyString(), eq("resume-evaluation.txt"), anyString(), anyString()))
+                .thenReturn(LlmResponse.of(EVALUATION_JSON, 600, 400, "qwen-plus"));
 
         String runId = submit(RESUME_MD, "按方向画像分析这份简历", "AI应用开发");
         awaitStatus(runId, "COMPLETED");

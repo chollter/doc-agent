@@ -3,10 +3,7 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  Download,
-  FileText,
   Loader2,
-  RotateCcw,
   Send,
   ShieldAlert,
   Sparkles,
@@ -20,10 +17,8 @@ import {
   type ActionableSuggestion,
   type AppliedRevision,
   type AuditStep,
-  type DocumentView,
   type FunnelVerdict,
 } from '../api/analysis';
-import DocumentPanel from '../components/DocumentPanel';
 import ExecutionChain from '../components/ExecutionChain';
 
 /** 对话消息——报告/建议/链路等都以消息形态进入对话流 */
@@ -37,98 +32,6 @@ type ChatMessage =
 
 let seq = 0;
 const nextId = () => `msg-${++seq}`;
-
-/** 修改稿面板：原文/修改稿双 Tab + 变更节高亮 + 下载 + 再分析 */
-function DocumentPreviewPanel({ doc, revision, onReAnalyze, reAnalyzing, highlight }: {
-  doc: DocumentView | null;
-  revision: AppliedRevision | null;
-  onReAnalyze: () => void;
-  reAnalyzing: boolean;
-  highlight: string | null;
-}) {
-  const [tab, setTab] = useState<'original' | 'revised'>('original');
-  useEffect(() => {
-    if (revision) setTab('revised');
-  }, [revision]);
-
-  if (!doc) {
-    return (
-      <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-400">
-        上传简历后在这里预览
-      </div>
-    );
-  }
-  return (
-    <div className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center gap-1 border-b border-slate-100 px-3 py-2">
-        <button
-          type="button"
-          onClick={() => setTab('original')}
-          className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ${tab === 'original' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'}`}
-        >
-          <FileText size={13} /> 原文
-        </button>
-        {revision && (
-          <button
-            type="button"
-            onClick={() => setTab('revised')}
-            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ${tab === 'revised' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-400 hover:text-slate-600'}`}
-          >
-            <CheckCircle2 size={13} /> 修改稿（{revision.appliedCount} 处）
-          </button>
-        )}
-        <div className="ml-auto flex items-center gap-1.5">
-          {revision && (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  const blob = new Blob([revision.revisedMarkdown], { type: 'text/markdown;charset=utf-8' });
-                  const a = document.createElement('a');
-                  a.href = URL.createObjectURL(blob);
-                  a.download = 'resume-revised.md';
-                  a.click();
-                  URL.revokeObjectURL(a.href);
-                }}
-                className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
-              >
-                <Download size={12} /> 下载
-              </button>
-              <button
-                type="button"
-                disabled={reAnalyzing}
-                onClick={onReAnalyze}
-                className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:bg-slate-300"
-              >
-                {reAnalyzing ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
-                修改稿再分析
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === 'original' ? (
-          <div className="p-3">
-            <DocumentPanel doc={doc} highlight={highlight} />
-          </div>
-        ) : revision ? (
-          <div className="space-y-3 p-4">
-            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
-              修改稿为 Markdown 文本（PDF 原件不可直接编辑）——核对后下载回填你的源文件。
-              {revision.missingBefores.length > 0 && (
-                <span className="ml-1 text-amber-600">{revision.missingBefores.length} 条建议原文定位失败未应用</span>
-              )}
-            </div>
-            <pre className="whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-4 text-xs leading-6 text-slate-700">
-              {revision.revisedMarkdown}
-            </pre>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 /** 精简版报告消息（详细卡片去 /classic 看，对话里给结论级信息） */
 function ReportBubble({ verdict, summary, mode }: { verdict: FunnelVerdict; summary: string; mode: string | null }) {
@@ -274,9 +177,8 @@ function CompareBubble({ before, after }: { before: FunnelVerdict; after: Funnel
 }
 
 /**
- * 对话式简历工作台——上传在左、对话在中、预览在右。
- * 分析报告/建议/链路都以消息进入对话流；建议可采纳，采纳后修改稿实时出现在右侧，
- * 修改稿可一键再分析形成"分析→建议→采纳→复评"闭环（53→75 的产品化形态）。
+ * 对话式简历工作台——上传在左、对话流占满其余宽度（右侧预览面板暂时下线）。
+ * 分析报告/建议/链路都以消息进入对话流；采纳建议后修改稿暂存 state（面板恢复即用）。
  */
 export default function ChatWorkspacePage() {
   const [file, setFile] = useState<File | null>(null);
@@ -285,17 +187,16 @@ export default function ChatWorkspacePage() {
   const [phase, setPhase] = useState<'idle' | 'running' | 'done' | 'failed'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [doc, setDoc] = useState<DocumentView | null>(null);
   const [chainSteps, setChainSteps] = useState<AuditStep[]>([]);
   const [applied, setApplied] = useState<Set<number>>(new Set());
-  const [revision, setRevision] = useState<AppliedRevision | null>(null);
+  // 修改稿暂存：右侧预览面板暂时下线，仅保留采纳状态的后端同步（恢复面板时读回返回值即可）
+  const [, setRevision] = useState<AppliedRevision | null>(null);
   const [applying, setApplying] = useState(false);
-  const [reAnalyzing, setReAnalyzing] = useState(false);
   const [followUpText, setFollowUpText] = useState('');
   const [sendingFollowUp, setSendingFollowUp] = useState(false);
-  const [highlight, setHighlight] = useState<string | null>(null);
   const [lastRunId, setLastRunId] = useState<string | null>(null);
-  const [lastVerdict, setLastVerdict] = useState<FunnelVerdict | null>(null);
+  // 最新结论暂存：再分析前后对比功能随右侧面板下线，恢复时读回 lastVerdict 即可
+  const [, setLastVerdict] = useState<FunnelVerdict | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const closeStreamRef = useRef<(() => void) | null>(null);
@@ -325,7 +226,6 @@ export default function ChatWorkspacePage() {
           cleanup();
           setPhase('done');
           setLastRunId(runId);
-          analysisApi.getDocument(runId).then(setDoc).catch(() => {});
           analysisApi.getAudit(runId).then((steps) => {
             setChainSteps(steps);
             setMessages((prev) => [...prev, { id: nextId(), role: 'chain', steps }]);
@@ -358,7 +258,7 @@ export default function ChatWorkspacePage() {
   }, [cleanup]);
 
   const start = async () => {
-    if (!file || phase === 'running' || reAnalyzing) return;
+    if (!file || phase === 'running') return;
     setError(null);
     setMessages([]);
     setApplied(new Set());
@@ -374,7 +274,6 @@ export default function ChatWorkspacePage() {
         persona || undefined,
       );
       setLastRunId(runId);
-      analysisApi.getDocument(runId).then(setDoc).catch(() => setDoc(null));
       awaitRun(runId, `分析这份简历${targetDirection.trim() ? `（方向：${targetDirection.trim()}）` : ''}`, false, null);
     } catch (ex) {
       setPhase('failed');
@@ -405,33 +304,6 @@ export default function ChatWorkspacePage() {
       setApplied(applied);
     } finally {
       setApplying(false);
-    }
-  };
-
-  /** 修改稿再分析：闭环 53→75 */
-  const reAnalyze = async () => {
-    if (!revision || !file || phase === 'running' || reAnalyzing) return;
-    setReAnalyzing(true);
-    setError(null);
-    setApplied(new Set());
-    try {
-      const revisedFile = new File([revision.revisedMarkdown],
-        file.name.replace(/\.(pdf|docx?|md|txt)$/i, '') + '-修改稿.md',
-        { type: 'text/markdown' });
-      const prevVerdict = lastVerdict;
-      const { runId } = await analysisApi.submit(
-        revisedFile, '按方向画像分析这份简历', 'resume-review',
-        undefined,
-        targetDirection.trim() || undefined,
-        persona || undefined,
-      );
-      setLastRunId(runId);
-      awaitRun(runId, '对修改稿再分析一次', true, prevVerdict);
-      analysisApi.getDocument(runId).then(setDoc).catch(() => {});
-    } catch (ex) {
-      setError(getErrorMessage(ex));
-    } finally {
-      setReAnalyzing(false);
     }
   };
 
@@ -468,7 +340,7 @@ export default function ChatWorkspacePage() {
   const running = phase === 'running';
 
   return (
-    <div className="grid h-screen grid-cols-[260px_minmax(0,1fr)_minmax(0,420px)] gap-3 p-3">
+    <div className="grid h-screen grid-cols-[260px_minmax(0,1fr)] gap-3 p-3">
       {/* 左：上传与参数 */}
       <div className="flex min-w-0 flex-col gap-3">
         <div
@@ -553,8 +425,7 @@ export default function ChatWorkspacePage() {
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-slate-400">
               <Sparkles size={22} className="text-indigo-300" />
-              上传简历并开始分析——报告、建议、面试预演都会出现在这个对话里，
-              采纳建议后修改稿实时出现在右侧，可一键再分析看前后对比。
+              上传简历并开始分析——报告、建议、面试预演都会出现在这个对话里。
             </div>
           )}
           {messages.map((m) => {
@@ -592,7 +463,7 @@ export default function ChatWorkspacePage() {
               <div key={m.id} className="max-w-[95%] space-y-2">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
                   <CheckCircle2 size={13} className="text-indigo-400" />
-                  改进建议（点击采纳，采纳后修改稿出现在右侧）
+                  改进建议（点击采纳）
                 </div>
                 {m.suggestions.map((s, i) => {
                   const isApplied = applied.has(i);
@@ -607,13 +478,9 @@ export default function ChatWorkspacePage() {
                         </span>
                         <span className="text-xs font-medium text-slate-600">{s.target}</span>
                         {s.sectionId && (
-                          <button
-                            type="button"
-                            onClick={() => setHighlight(s.sectionId)}
-                            className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-600 hover:underline"
-                          >
+                          <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-600">
                             {s.sectionId}
-                          </button>
+                          </span>
                         )}
                         <button
                           type="button"
@@ -680,15 +547,6 @@ export default function ChatWorkspacePage() {
           </div>
         </div>
       </div>
-
-      {/* 右：预览 */}
-      <DocumentPreviewPanel
-        doc={doc}
-        revision={revision}
-        onReAnalyze={reAnalyze}
-        reAnalyzing={reAnalyzing}
-        highlight={highlight}
-      />
     </div>
   );
 }

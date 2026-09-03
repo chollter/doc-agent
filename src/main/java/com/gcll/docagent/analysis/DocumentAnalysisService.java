@@ -1,6 +1,7 @@
 package com.gcll.docagent.analysis;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -624,8 +625,9 @@ public class DocumentAnalysisService {
         // P12 漏斗结论：红旗 + 方向画像 + LLM 五角度输出 → FunnelVerdict
         // 按技能判断而非实体非空：降级时空实体仍需组装（LLM 五角度输出基于直读原文，不该陪葬）
         if ("resume-review".equals(skill.name())) {
+            FunnelVerdict.Evaluation evaluation = evaluateResume(run, resumeCtx, result, funnelFields, tracer);
             FunnelVerdict verdict = assembleVerdict(resumeCtx, funnelFields,
-                    result.actionableSuggestions());
+                    result.actionableSuggestions(), evaluation);
             result = result.withResumeDeepAnalysis(resumeCtx.profile(), null,
                             result.actionableSuggestions(), result.enhancedKeyPoints(), result.enhancedRisks())
                     .withFunnelVerdict(verdict);
@@ -991,8 +993,7 @@ public class DocumentAnalysisService {
                     parseLeverageCards(raw.leverageCards),
                     parseCoverage(raw.mustHaveCoverage),
                     parseVariantFit(raw.variantFit),
-                    parsePositioning(raw.positioning),
-                    parseEvaluation(raw.evaluation));
+                    parsePositioning(raw.positioning));
             return new ParsedAnalysis(analysis, funnel);
         } catch (IllegalArgumentException ex) {
             throw ex;
@@ -1080,21 +1081,19 @@ public class DocumentAnalysisService {
         public List<RawCoverage> mustHaveCoverage;
         public List<RawVariantFit> variantFit;
         public RawPositioning positioning;
-        public RawEvaluation evaluation;
     }
 
-    /** P12 LLM 五角度输出——只进 FunnelVerdict，不进 AnalysisResult。 */
+    /** P12 LLM 五角度输出——只进 FunnelVerdict，不进 AnalysisResult。评价（v7）走专调，不在此列。 */
     private record LlmFunnelFields(
             Presentation presentation,
             List<ExperienceStrength> experienceStrength,
             List<LeverageCard> leverageCards,
             List<MustHaveCoverage> mustHaveCoverage,
             List<VariantFit> variantFit,
-            PositioningCheck positioning,
-            FunnelVerdict.Evaluation evaluation
+            PositioningCheck positioning
     ) {
         static LlmFunnelFields empty() {
-            return new LlmFunnelFields(null, List.of(), List.of(), List.of(), List.of(), null, null);
+            return new LlmFunnelFields(null, List.of(), List.of(), List.of(), List.of(), null);
         }
     }
 
@@ -1340,7 +1339,8 @@ public class DocumentAnalysisService {
      * 落地性校验（反编造/引文锚定）无论降级与否都执行——不变量不允许豁免。
      */
     private FunnelVerdict assembleVerdict(ResumeContext ctx, LlmFunnelFields fields,
-                                          List<ActionableSuggestion> suggestions) {
+                                          List<ActionableSuggestion> suggestions,
+                                          FunnelVerdict.Evaluation evaluation) {
         List<RedFlag> redFlags = ctx.redFlags();
         List<MustHaveCoverage> coverage = mergeCoverage(ctx.archetype(), fields.mustHaveCoverage());
         List<VariantFit> variantFit = mergeVariants(ctx.archetype(), fields.variantFit());
@@ -1357,7 +1357,77 @@ public class DocumentAnalysisService {
                 fields.leverageCards(),
                 ctx.degraded(),
                 groundingValidator.validate(suggestions, ctx.fullText()),
-                fields.evaluation());
+                evaluation);
+    }
+
+    /**
+     * 评价专调（v7）：简历全文 + 代码事实 + 主分析结论 → 深度定性评价。
+     * <p>v6 把 evaluation 塞进主分析大 JSON——十几个字段挤一次输出，评价被契约
+     * 压成每条 30 字的一句话敷衍（用户实测反馈）。v7 拆专职调用：全文输入、
+     * 单一职责、每维 80-150 字且必须引原文。
+     * <p>失败不级联：无网关/异常/空产出时返回 null，前端容忍缺字段（与历史 v5 run 同形态）。
+     */
+    private FunnelVerdict.Evaluation evaluateResume(AgentRun run, ResumeContext ctx, AnalysisResult result,
+                                                    LlmFunnelFields funnel, TraceRecorder tracer) {
+        LlmGateway llmGateway = llmGatewayProvider.getIfAvailable();
+        if (llmGateway == null || ctx.fullText() == null || ctx.fullText().isBlank()) {
+            return null;
+        }
+        String stepId = tracer.begin("EVALUATION_LLM", null);
+        tracer.recordMeta(stepId, true, "SpringAI");
+        try {
+            LlmResponse response = llmGateway.invoke("llm.resume-evaluation", "resume-evaluation.txt",
+                    buildEvaluationInput(run, ctx, result, funnel), run.getId());
+            FunnelVerdict.Evaluation evaluation = parseEvaluationJson(response.content());
+            tracer.end(stepId, evaluation != null ? "evaluation generated" : "evaluation empty", null);
+            return evaluation;
+        } catch (Exception ex) {
+            tracer.end(stepId, "evaluation failed: " + ex.getMessage(), ex.getMessage());
+            log.warn("Evaluation LLM failed, runId={}: {}", run.getId(), ex.getMessage());
+            return null;
+        }
+    }
+
+    /** 评价专调输入：方向锚点 + 代码预检事实 + 主分析结构化结论 + 简历全文。 */
+    private static String buildEvaluationInput(AgentRun run, ResumeContext ctx, AnalysisResult result,
+                                               LlmFunnelFields funnel) {
+        StringBuilder sb = new StringBuilder();
+        if (run.getJobDescription() != null && !run.getJobDescription().isBlank()) {
+            sb.append("## 目标岗位JD\n").append(run.getJobDescription()).append('\n');
+        } else if (ctx.archetype() != null) {
+            sb.append("## 目标方向（广撒网画像）\n")
+              .append(ctx.archetype().getName()).append("：").append(ctx.archetype().getSummary()).append('\n');
+        } else {
+            sb.append("## 评价锚点：未填 JD/方向，按简历自身定位评价\n");
+        }
+        if (ctx.profile() != null) {
+            sb.append("\n总工作年限：").append(ctx.profile().yearsOfExperience()).append(" 年\n");
+        }
+        if (ctx.redFlags() != null && !ctx.redFlags().isEmpty()) {
+            sb.append("\n## 代码预检红旗（已验证事实，可直接引用）\n");
+            ctx.redFlags().forEach(f -> sb.append("- [").append(f.severity()).append("] ")
+                    .append(f.message()).append('\n'));
+        }
+        sb.append("\n## 主分析结论（结构化参照，不要照抄）\n")
+          .append("摘要：").append(result.summary() == null ? "" : result.summary()).append('\n');
+        if (funnel != null && funnel.leverageCards() != null && !funnel.leverageCards().isEmpty()) {
+            sb.append("亮点/风险：\n");
+            funnel.leverageCards().forEach(c -> sb.append("- [").append(c.kind()).append("] ")
+                    .append(c.point()).append('\n'));
+        }
+        sb.append("\n## 简历全文\n").append(ctx.fullText());
+        return sb.toString();
+    }
+
+    /** 解析评价专调 JSON（容错：剥围栏、截最外层对象），失败向上抛由 evaluateResume 兑现降级。 */
+    private FunnelVerdict.Evaluation parseEvaluationJson(String content) throws JsonProcessingException {
+        String json = stripFences(content);
+        int start = json.indexOf('{');
+        int end = json.lastIndexOf('}');
+        if (start < 0 || end <= start) {
+            throw new IllegalArgumentException("no json object in evaluation content");
+        }
+        return parseEvaluation(objectMapper.readValue(json.substring(start, end + 1), RawEvaluation.class));
     }
 
     /** 要求文本以画像定义为准（LLM 只给 id/status/evidence），防转录走样。 */

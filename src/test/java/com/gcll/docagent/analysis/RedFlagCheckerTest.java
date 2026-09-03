@@ -52,6 +52,10 @@ class RedFlagCheckerTest {
         assertThat(flags).anySatisfy(f -> {
             assertThat(f.type()).isEqualTo(RedFlag.TIMELINE_GAP);
             assertThat(f.severity()).isEqualTo(RedFlag.Severity.MEDIUM);
+            // 文案契约：区间为空窗月闭区间（结束次月→下段开始前月）并注明入职月——
+            // 旧格式把下段开始日写进区间，读起来像"空窗持续到入职月"（线上被用户判错）
+            assertThat(f.message()).contains("3 个月空窗（2020-11 至 2021-01")
+                    .contains("2021-02 已入职下一段");
         });
     }
 
@@ -166,6 +170,7 @@ class RedFlagCheckerTest {
             assertThat(f.type()).isEqualTo(RedFlag.TIMELINE_GAP);
             assertThat(f.severity()).isEqualTo(RedFlag.Severity.MEDIUM);
             assertThat(f.message()).contains("粗查");
+            assertThat(f.message()).contains("已入职下一段");
         });
     }
 
@@ -261,6 +266,27 @@ class RedFlagCheckerTest {
             assertThat(f.message()).contains("面试必问");
         });
         assertThat(flags).noneMatch(f -> f.type().equals(RedFlag.TRAILING_GAP));
+    }
+
+    @Test
+    void nestedProjectShouldNotCreateGapsOrOverlap() {
+        // 线上真实缺陷回归：在职期内的项目段（kind=project）混入时间线后，
+        // “项目结束 2024.04→下份工作 2025.02”被算成假空窗、“项目 2023.05 与雇佣 2022.08
+        // 嵌套”被算成假重叠 17 个月。项目段必须不参与段间空窗/重叠计算；
+        // 雇佣段之间的真实间隔（2024.10→2025.02 含当月修正 = 3 个月）照常报 MEDIUM
+        List<RedFlag> flags = check(List.of(
+                period("2020.03-2022.06", "work"),
+                period("2022.08-2024.10", "work"),
+                period("2023.05-2024.04", "project"),
+                period("2025.02-2026.02", "work"),
+                period("2026.04-至今", "project")));
+
+        List<RedFlag> gaps = flags.stream()
+                .filter(f -> f.type().equals(RedFlag.TIMELINE_GAP)).toList();
+        assertThat(gaps).hasSize(1);
+        assertThat(gaps.get(0).severity()).isEqualTo(RedFlag.Severity.MEDIUM);
+        assertThat(gaps.get(0).message()).contains("2024-11");
+        assertThat(flags).noneMatch(f -> f.type().equals(RedFlag.OVERLAP));
     }
 
     @Test

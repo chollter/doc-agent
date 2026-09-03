@@ -3,6 +3,7 @@ package com.gcll.docagent.analysis;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -88,9 +89,11 @@ public class RedFlagChecker {
                 if (gap > GAP_MEDIUM_MONTHS) {
                     RedFlag.Severity severity = gap > GAP_HIGH_MONTHS
                             ? RedFlag.Severity.MEDIUM : RedFlag.Severity.LOW;
+                    YearMonth nextStart = YearMonth.from(range[0]);
                     flags.add(new RedFlag(RedFlag.TIMELINE_GAP, severity,
-                            String.format("时间线疑似有 %d 个月空窗（%s 至 %s，粗查）",
-                                    gap, prevEnd.plusMonths(1), range[0])));
+                            String.format("时间线疑似有 %d 个月空窗（%s 至 %s，%s 已入职下一段，粗查）",
+                                    gap, YearMonth.from(prevEnd.plusMonths(1)),
+                                    nextStart.minusMonths(1), nextStart)));
                 }
             }
             if (prevEnd == null || range[1].isAfter(prevEnd)) {
@@ -165,10 +168,15 @@ public class RedFlagChecker {
         }
     }
 
-    /** 解析非教育时间段为 [start, end]，按开始时间排序。教育兜底：kind 缺失时按上下文教育词排除。 */
+    /**
+     * 解析参与时间线检查的雇佣段为 [start, end]，按开始时间排序。
+     * <p>project 段排除（线上缺陷回归：在职期内的项目段混入时间线，其端点与下一段
+     * 雇佣之间的正常间隔被算成空窗、与雇佣段的嵌套被算成重叠——项目归属雇佣期是常态）；
+     * 教育段排除（kind=education 或漏标兜底）。尾部雇佣检查单独用全量实体。
+     */
     private List<LocalDate[]> parseWorkPeriods(ResumeEntities entities) {
         return entities.getByType(ResumeEntity.EntityType.TIME_PERIOD).stream()
-                .filter(p -> !isEducationEntity(p))
+                .filter(p -> !"project".equals(p.kind()) && !isEducationEntity(p))
                 .map(p -> ResumeDateParser.parseRange(p.value()))
                 .filter(r -> r != null)
                 .sorted(Comparator.comparing(a -> a[0]))
@@ -200,9 +208,12 @@ public class RedFlagChecker {
             long gap = ChronoUnit.MONTHS.between(prevEndExclusive, periods.get(i)[0]);
             if (gap > GAP_MEDIUM_MONTHS) {
                 RedFlag.Severity severity = gap > GAP_HIGH_MONTHS ? RedFlag.Severity.HIGH : RedFlag.Severity.MEDIUM;
+                // 区间展示空窗月闭区间（次月→下段开始的前一月）并注明入职月——
+                // 下段开始日不是空窗，写进区间会被读成"空窗持续到入职月"（线上被用户判错）
+                YearMonth nextStart = YearMonth.from(periods.get(i)[0]);
                 flags.add(new RedFlag(RedFlag.TIMELINE_GAP, severity,
-                        String.format("时间线有 %d 个月空窗（%s 至 %s）", gap,
-                                prevEndExclusive, periods.get(i)[0])));
+                        String.format("时间线有 %d 个月空窗（%s 至 %s，%s 已入职下一段）", gap,
+                                YearMonth.from(prevEndExclusive), nextStart.minusMonths(1), nextStart)));
             }
         }
         return flags;
