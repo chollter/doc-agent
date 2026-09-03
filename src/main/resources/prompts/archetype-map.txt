@@ -1,0 +1,9 @@
+把用户输入的求职方向短语映射到最接近的岗位画像。
+
+可用画像：
+{{archetypes}}
+
+规则：
+- 输出 JSON：{"archetypeId": "ai-app-dev", "confidence": "HIGH|MEDIUM|LOW", "reason": "一句话"}
+- 没有接近的画像时输出 {"archetypeId": null, "confidence": "LOW", "reason": "说明缺什么画像"}
+- 只做选择，不要发明不存在的画像 id

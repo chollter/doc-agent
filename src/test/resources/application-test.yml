@@ -1,23 +1,15 @@
 spring:
   application:
-    name: tech-support-agent-test
+    name: doc-agent-test
   datasource:
-    url: jdbc:h2:mem:tech_support_agent_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    url: jdbc:h2:mem:doc_agent_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
     username: sa
     password:
     driver-class-name: org.h2.Driver
-  # 测试用独立 Redis db=15，与真实应用 db0 隔离，避免测试间/与应用间幂等键互相污染。
-  # （@SpringBootTest 跑工单会写 idempotency:* 键，共用 db0 会导致后续测试命中残留 → Agent run not found）
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      database: 15
   sql:
     init:
       mode: always
       schema-locations: classpath:db/schema.sql
-      data-locations: classpath:db/data-knowledge.sql
   ai:
     dashscope:
       api-key: test-key
@@ -28,12 +20,3 @@ spring:
             # 测试用 H2，但 Spring AI ChatMemory 的 JDBC starter 没带 schema-h2.sql，
             # 关掉自动建表避免启动失败。测试不依赖 ChatMemory 持久化（单测走 mock）。
             initialize-schema: never
-
-opsmind:
-  redisson:
-    enabled: false
-  # 测试环境关闭 pgvector：H2 不支持 CREATE EXTENSION vector 语法，
-  # 测试不依赖向量检索（走 mock/关键词），避免 PgVectorStoreConfig 激活导致上下文加载失败。
-  vectorstore:
-    pgvector:
-      enabled: false

@@ -10,16 +10,17 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.example</groupId>
-    <artifactId>tech-support-agent</artifactId>
+    <groupId>com.gcll</groupId>
+    <artifactId>doc-agent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
-    <name>tech-support-agent</name>
-    <description>Enterprise R&amp;D/Ops ticket analysis agent with Spring AI, RAG and human-in-the-loop.</description>
+    <name>doc-agent</name>
+    <description>Document analysis agent with ReAct loop, tool governance and traceable runs.</description>
 
     <properties>
         <java.version>21</java.version>
         <spring-ai.version>1.0.0</spring-ai.version>
         <mybatis-plus.version>3.5.9</mybatis-plus.version>
+        <langchain4j.version>1.15.1</langchain4j.version>
     </properties>
 
     <dependencyManagement>
@@ -50,19 +51,6 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-redis</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.redisson</groupId>
-            <artifactId>redisson</artifactId>
-            <version>3.40.2</version>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
         <dependency>
@@ -80,24 +68,17 @@
             <artifactId>spring-ai-alibaba-starter</artifactId>
             <version>1.0.0-M6.1</version>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-pgvector-store</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-milvus-store</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-mcp-client</artifactId>
-        </dependency>
-        <!-- ChatMemory：工单级短期记忆。JDBC repository 把对话历史存 PG，
-             MessageChatMemoryAdvisor 按 conversationId(runId) 隔离各工单上下文。
-             阶段1 用 InMemory 先跑通，JDBC 作为生产可持久化的备选 repository。 -->
+        <!-- ChatMemory：JDBC repository 持久化对话历史（按 conversationId=runId 隔离）。
+             注意：1.0.0 未内置 H2 schema 变体，故禁用其自动建表，DDL 并入 db/schema.sql。 -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-chat-memory-repository-jdbc</artifactId>
+        </dependency>
+        <!-- 默认内嵌 H2（零外部依赖一键演示）；生产/团队环境可用 pg profile 切 PostgreSQL -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
@@ -105,14 +86,50 @@
             <scope>runtime</scope>
         </dependency>
         <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <!-- 分布式追踪：Micrometer Tracing 桥接 OpenTelemetry，自动将 Spring AI 的 Observation Span 导出 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- 文档解析：PDF（PDFBox）与 DOCX（POI） -->
         <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>test</scope>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.5</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.3.0</version>
+        </dependency>
+
+        <!-- LangChain4j：ReAct 推理循环的核心框架。
+             与 Spring AI Alibaba（dashscope）共存：
+             Spring AI 管分诊/抽取/建议等流程调用，LangChain4j 管 ReAct 自主推理+工具迭代。
+             使用 OpenAI 兼容协议接入 dashscope（baseUrl 指向阿里云百炼 OpenAI 兼容端点），
+             避免两套框架争抢 ChatClient 配置。 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai</artifactId>
+            <version>${langchain4j.version}</version>
         </dependency>
     </dependencies>
 

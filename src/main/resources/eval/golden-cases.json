@@ -1,0 +1,791 @@
+{
+  "cases": [
+    {
+      "name": "tech-spec-summary",
+      "file": "samples/tech-spec.md",
+      "skill": "document-analysis",
+      "instruction": "提炼这份技术方案的核心内容与风险",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "minKeyPoints": 2,
+        "minCitations": 1,
+        "keywords": [
+          "技术方案"
+        ]
+      }
+    },
+    {
+      "name": "resume-review-basic",
+      "file": "samples/resume.pdf",
+      "skill": "resume-review",
+      "instruction": "按招聘漏斗分析这份简历",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "minKeyPoints": 1,
+        "minCitations": 1,
+        "hasFunnelVerdict": true,
+        "minLeverageCards": 2,
+        "hasProfile": true,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "requirements-risk-scan",
+      "file": "samples/product-requirements.docx",
+      "skill": "document-analysis",
+      "instruction": "梳理核心功能与开放风险",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "minKeyPoints": 2,
+        "minCitations": 1
+      }
+    },
+    {
+      "name": "jd-match-defect-injection",
+      "file": "eval-docs/defect-resume.md",
+      "skill": "resume-review",
+      "instruction": "分析这份简历与目标岗位的匹配度，逐条对照岗位要求给出诊断",
+      "jobDescription": "高级Java后端工程师（AI方向）\n\n岗位要求：\n1. 精通Java/Spring Boot微服务架构，3年以上生产级经验\n2. 有AI/LLM应用工程化经验（RAG/Agent/向量检索），有实际落地案例\n3. 熟悉Kubernetes/Service Mesh等云原生技术，有生产级容器编排经验\n4. 有大团队（15人以上）技术方案主导经验\n5. 英语流利（CET-6或同等），能参与跨国技术讨论\n6. 有Python数据分析经验者优先",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "minKeyPoints": 2,
+        "minCitations": 2,
+        "minMatchDimensions": 3
+      }
+    },
+    {
+      "name": "funnel-base",
+      "file": "eval-docs/funnel-base.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "calibrationRuns": 3,
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "minLeverageCards": 3,
+        "matchMode": "DIRECTION",
+        "minCoverageMet": 3,
+        "mustNotHaveRedFlagTypes": [
+          "TIMELINE_GAP",
+          "JOB_HOPPING",
+          "CONTACT_MISSING"
+        ],
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "funnel-defect-gap",
+      "file": "eval-docs/funnel-defect-gap.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "TIMELINE_GAP"
+        ],
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "funnel-defect-strength",
+      "file": "eval-docs/funnel-defect-strength.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "strengthBandAtMost": "MIXED",
+        "expectWorseThan": "funnel-base",
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "funnel-defect-vocab",
+      "file": "eval-docs/funnel-defect-vocab.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustContainVocabularyTerms": [
+          "RAG",
+          "Function Calling",
+          "Agent"
+        ],
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-senior-clean",
+      "file": "eval-docs/corpus/corpus-senior-clean.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustNotHaveRedFlagTypes": [
+          "TIMELINE_GAP",
+          "JOB_HOPPING",
+          "CONTACT_MISSING"
+        ],
+        "matchMode": "DIRECTION",
+        "minCoverageMet": 3,
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-senior-gap-cn",
+      "file": "eval-docs/corpus/corpus-senior-gap-cn.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "TIMELINE_GAP"
+        ],
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-newgrad",
+      "file": "eval-docs/corpus/corpus-newgrad.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustNotHaveRedFlagTypes": [
+          "JOB_HOPPING"
+        ],
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-hopping",
+      "file": "eval-docs/corpus/corpus-hopping.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "JOB_HOPPING"
+        ],
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-overlap",
+      "file": "eval-docs/corpus/corpus-overlap.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "OVERLAP"
+        ],
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-title-mismatch",
+      "file": "eval-docs/corpus/corpus-title-mismatch.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "TENURE_TITLE_MISMATCH"
+        ],
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-no-quant",
+      "file": "eval-docs/corpus/corpus-no-quant.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustHaveRedFlagTypes": [
+          "LOW_QUANTIFICATION"
+        ],
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-vocab",
+      "file": "eval-docs/corpus/corpus-vocab.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "mustContainVocabularyTerms": [
+          "RAG",
+          "Function Calling",
+          "Agent"
+        ],
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-fabrication-bait",
+      "file": "eval-docs/corpus/corpus-fabrication-bait.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-messy",
+      "file": "eval-docs/corpus/corpus-messy.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "presentationScoreAtMost": 70,
+        "strengthBandAtMost": "MIXED",
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ]
+      }
+    },
+    {
+      "name": "corpus-normal-transition",
+      "file": "eval-docs/corpus/corpus-normal-transition.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ],
+        "mustNotHaveRedFlagTypes": [
+          "TIMELINE_GAP",
+          "TRAILING_GAP"
+        ]
+      }
+    },
+    {
+      "name": "corpus-trailing-unemployed",
+      "file": "eval-docs/corpus/corpus-trailing-unemployed.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ],
+        "mustHaveRedFlagTypes": [
+          "TRAILING_GAP"
+        ]
+      }
+    },
+    {
+      "name": "corpus-trailing-covered",
+      "file": "eval-docs/corpus/corpus-trailing-covered.md",
+      "skill": "resume-review",
+      "instruction": "按方向画像分析这份简历",
+      "targetDirection": "AI应用开发",
+      "timeoutSeconds": 180,
+      "assertions": {
+        "status": "COMPLETED",
+        "hasFunnelVerdict": true,
+        "maxGroundingFindings": 0,
+        "summaryKeywordGroups": [
+          [
+            "水准",
+            "水平",
+            "档位",
+            "竞争力",
+            "匹配度"
+          ],
+          [
+            "风险",
+            "追问",
+            "短板",
+            "薄弱",
+            "死在"
+          ],
+          [
+            "建议",
+            "若只改",
+            "优先",
+            "先改",
+            "第一处",
+            "改进",
+            "补"
+          ]
+        ],
+        "mustHaveRedFlagTypes": [
+          "EMPLOYMENT_GAP_COVERED"
+        ],
+        "mustNotHaveRedFlagTypes": [
+          "TRAILING_GAP"
+        ]
+      }
+    }
+  ]
+}
