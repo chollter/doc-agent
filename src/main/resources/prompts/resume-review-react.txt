@@ -85,6 +85,10 @@
   - positioning 判断简历摘要/头衔是否锚定到最适合的子方向：{"anchored": false, "currentAnchor": "后端工程师", "suggestedAnchor": "AI 应用工程师（Agent 方向）", "comment": "..."}
 - **两者都没有**：以上匹配字段全部设为空数组/null。
 
+## 诊断卡（最终 JSON 必须包含 diagnoses）
+- 针对 3-6 条最影响初筛的经历输出 diagnosis：原文 claim、问题类型、造成的筛选/面试后果、缺失事实、补强方向和验证问题。
+- strengtheningDirection 只能要求用户补充真实事实，不得发明数字、规模、结果或经历。
+
 ## 强制规则
 - 本轮只输出结论（诊断），不输出改写建议：不要给 before/after、不要给“怎么改”——具体建议由用户追问时另行生成，擅自输出会污染结论区
 - leverageCards 3-6 张，亮点与风险都要有，每张必须有 likelyQuestion

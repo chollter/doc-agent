@@ -26,4 +26,7 @@ public interface AgentRunRepository {
 
     /** 重新入队（自愈路径）。 */
     boolean requeue(String runId, String fromStatus);
+
+    /** 心跳：推进 ANALYZING 状态 run 的 updated_at，防 stale 重排在执行中误触发（僵尸双执行）。 */
+    void touch(String runId);
 }

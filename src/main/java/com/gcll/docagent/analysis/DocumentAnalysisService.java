@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.gcll.docagent.agent.AgentStepEventPublisher;
 import com.gcll.docagent.api.BusinessException;
 import com.gcll.docagent.api.ErrorCode;
 import com.gcll.docagent.domain.AgentRun;
@@ -61,7 +62,7 @@ import java.util.concurrent.Executors;
  * <pre>
  * REACT_ANALYZE（自研 AgentLoop：状态机 + 每轮 checkpoint + 预算硬顶）
  *   失败 → DIRECT_LLM（携带循环已读片段——降级不丢上下文）
- *     失败 → RULE_FALLBACK（纯规则摘要，无 LLM 也能出结果）
+ *     失败 → resume-review 直接 FAILED；通用文档分析可进入 RULE_FALLBACK
  * → CITATION_VERIFY → REPORT（结果+token账单落库 + 清理 checkpoint）
  * </pre>
  */
@@ -85,8 +86,13 @@ public class DocumentAnalysisService {
     private final RedFlagChecker redFlagChecker;
     private final ResumeProfileBuilder profileBuilder;
     private final ArchetypeRegistry archetypeRegistry;
+    private final JobProfileExtractor jobProfileExtractor;
     private final GroundingValidator groundingValidator;
+    private final EvidenceAssessmentService evidenceAssessmentService;
+    private final AlignmentAnalyzer alignmentAnalyzer;
+    private final MatchScoreCalculator matchScoreCalculator;
     private final ApplicationEventPublisher eventPublisher;
+    private final AgentStepEventPublisher stepEventPublisher;
     private final boolean reactEnabled;
     private final boolean exportEnabled;
     private final int requeueStaleMinutes;
@@ -115,8 +121,13 @@ public class DocumentAnalysisService {
             RedFlagChecker redFlagChecker,
             ResumeProfileBuilder profileBuilder,
             ArchetypeRegistry archetypeRegistry,
+            JobProfileExtractor jobProfileExtractor,
             GroundingValidator groundingValidator,
+            EvidenceAssessmentService evidenceAssessmentService,
+            AlignmentAnalyzer alignmentAnalyzer,
+            MatchScoreCalculator matchScoreCalculator,
             ApplicationEventPublisher eventPublisher,
+            AgentStepEventPublisher stepEventPublisher,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
             @Value("${docagent.analysis.export-enabled:true}") boolean exportEnabled,
             @Value("${docagent.analysis.dispatcher.requeue-stale-minutes:15}") int requeueStaleMinutes,
@@ -137,8 +148,13 @@ public class DocumentAnalysisService {
         this.redFlagChecker = redFlagChecker;
         this.profileBuilder = profileBuilder;
         this.archetypeRegistry = archetypeRegistry;
+        this.jobProfileExtractor = jobProfileExtractor;
         this.groundingValidator = groundingValidator;
+        this.evidenceAssessmentService = evidenceAssessmentService;
+        this.alignmentAnalyzer = alignmentAnalyzer;
+        this.matchScoreCalculator = matchScoreCalculator;
         this.eventPublisher = eventPublisher;
+        this.stepEventPublisher = stepEventPublisher;
         this.reactEnabled = reactEnabled;
         this.exportEnabled = exportEnabled;
         this.requeueStaleMinutes = requeueStaleMinutes;
@@ -236,6 +252,21 @@ public class DocumentAnalysisService {
                 sb.append("\n工作经历条目（experienceStrength 请逐条对照这些条目评估）：");
                 workEntries.forEach(w -> sb.append("\n  - ").append(w.value()));
             }
+            if (!entities.getProjects().isEmpty()) {
+                sb.append("\n项目事实（只可使用 status=explicit 且有 sourceQuote 的事实）：");
+                entities.getProjects().forEach(p -> {
+                    sb.append("\n  - project=").append(p.projectId()).append(" section=").append(p.sectionId());
+                    appendFact(sb, "背景", p.context());
+                    appendFact(sb, "问题", p.problem());
+                    appendFacts(sb, "职责", p.responsibilities());
+                    appendFacts(sb, "技术", p.technologies());
+                    appendFact(sb, "AI链路", p.aiPipeline());
+                    appendFacts(sb, "决策", p.decisions());
+                    appendFact(sb, "结果", p.results());
+                    appendFact(sb, "规模", p.scale());
+                    appendFact(sb, "上线", p.deployment());
+                });
+            }
         }
 
         if (ctx.redFlags() != null && !ctx.redFlags().isEmpty()) {
@@ -243,30 +274,49 @@ public class DocumentAnalysisService {
             ctx.redFlags().forEach(f -> sb.append("\n  - [").append(f.severity()).append("] ").append(f.message()));
         }
 
-        if (run.getJobDescription() != null && !run.getJobDescription().isBlank()) {
-            sb.append("\n\n## 目标岗位JD（matchDimensions 必须逐条对照）\n")
-              .append(run.getJobDescription());
-        } else if (ctx.archetype() != null) {
-            Archetype a = ctx.archetype();
-            sb.append("\n\n## 方向画像（广撒网模式，mustHaveCoverage/variantFit/positioning 必须对照）");
-            sb.append("\n画像：").append(a.getName()).append("（").append(a.getSummary()).append("）");
-            sb.append("\n共性要求（逐条给 MET/PARTIAL/MISSING + 证据）：");
-            for (Archetype.MustHave m : a.getMustHaves()) {
-                sb.append("\n  - [").append(m.getId()).append("] ").append(m.getRequirement())
-                  .append("（证据线索：").append(String.join("、", m.getEvidenceHints())).append("）");
+        TargetProfile target = ctx.targetProfile();
+        if (target != null && !target.requirements().isEmpty()) {
+            sb.append("\n\n## 标准化岗位要求（逐条建立要求→证据→状态→缺失事实矩阵）");
+            sb.append("\n模式：").append(target.mode()).append("；岗位：").append(target.title());
+            if (target.summary() != null) sb.append("；目标：").append(target.summary());
+            sb.append("\n要求（逐条给 MET/PARTIAL/MISSING + 原文证据）：");
+            for (TargetProfile.Requirement r : target.requirements()) {
+                sb.append("\n  - [").append(r.id()).append("] ").append(r.requirement())
+                        .append("（优先级：").append(r.priority())
+                        .append("；淘汰项：").append(r.disqualifier())
+                        .append("；预期证据：").append(String.join("、", r.evidenceExpected()))
+                        .append("；关键词线索：").append(String.join("、", r.keywords())).append("）");
             }
-            sb.append("\n子方向（逐个给 HIGH/MEDIUM/LOW 适配）：");
-            for (Archetype.Variant v : a.getVariants()) {
-                sb.append("\n  - [").append(v.getId()).append("] ").append(v.getName())
-                  .append("：").append(String.join("、", v.getDifferentiators()));
+            if (!target.variants().isEmpty()) {
+                sb.append("\n子方向（逐个给 HIGH/MEDIUM/LOW 适配）：");
+                for (TargetProfile.Variant v : target.variants()) {
+                    sb.append("\n  - [").append(v.id()).append("] ").append(v.name())
+                            .append("：").append(String.join("、", v.differentiators()));
+                }
             }
-            sb.append("\n筛选题库（作 leverageCards 的 likelyQuestion 参考）：");
-            for (String q : a.getScreeningQuestions()) {
-                sb.append("\n  - ").append(q);
+            if (!target.screeningQuestions().isEmpty()) {
+                sb.append("\n筛选题库（作 leverageCards 的 likelyQuestion 参考）：");
+                target.screeningQuestions().forEach(q -> sb.append("\n  - ").append(q));
             }
+        } else if (run.getJobDescription() != null && !run.getJobDescription().isBlank()) {
+            sb.append("\n\n## 岗位标准化降级：以下为原始 JD，仅作 matchDimensions 对照，不得补充要求\n")
+                    .append(run.getJobDescription());
         }
 
         return sb.toString();
+    }
+
+    private static void appendFact(StringBuilder sb, String label, ResumeProjectFact.Fact fact) {
+        if (fact != null && fact.value() != null && !fact.value().isBlank()) {
+            sb.append(" ").append(label).append("=").append(fact.value())
+                    .append(" [").append(fact.status()).append("]");
+        }
+    }
+
+    private static void appendFacts(StringBuilder sb, String label, List<ResumeProjectFact.Fact> facts) {
+        if (facts != null) {
+            facts.forEach(f -> appendFact(sb, label, f));
+        }
     }
 
     /** 人群：用户显式指定优先，否则按画像年限推断。 */
@@ -290,12 +340,20 @@ public class DocumentAnalysisService {
         return archetypeRegistry.resolve(run.getTargetDirection()).orElse(null);
     }
 
+    private TargetProfile resolveTargetProfile(AgentRun run, Archetype archetype) {
+        if (run.getJobDescription() != null && !run.getJobDescription().isBlank()) {
+            return jobProfileExtractor.extract(run.getJobDescription(), run.getId()).profile();
+        }
+        return TargetProfile.fromArchetype(archetype);
+    }
+
     /** 简历分析的上下文——实体/红旗/画像/方向画像一次打包，贯穿执行链。 */
     private record ResumeContext(
             ResumeEntities entities,
             List<RedFlag> redFlags,
             ResumeProfile profile,
             Archetype archetype,
+            TargetProfile targetProfile,
             String matchMode,
             boolean degraded,
             String fullText,
@@ -303,7 +361,7 @@ public class DocumentAnalysisService {
             boolean ran
     ) {
         static ResumeContext empty() {
-            return new ResumeContext(new ResumeEntities(List.of()), List.of(), null, null,
+            return new ResumeContext(new ResumeEntities(List.of()), List.of(), null, null, null,
                     FunnelVerdict.MODE_NONE, false, "", Persona.GENERAL, false);
         }
     }
@@ -536,7 +594,13 @@ public class DocumentAnalysisService {
                                     ? sec.heading() + "\n" : "") + sec.text())
                             .reduce((a, b) -> a + "\n" + b)
                             .orElse("");
-                    ExtractionOutcome outcome = entityExtractor.extract(fullText, doc.fileName(), runId);
+                    String extractionText = doc.sections().stream()
+                            .map(sec -> "[SECTION_ID=" + sec.id() + "]\n"
+                                    + (sec.heading() != null && !sec.heading().isBlank()
+                                    ? sec.heading() + "\n" : "") + sec.text())
+                            .reduce((a, b) -> a + "\n" + b)
+                            .orElse("");
+                    ExtractionOutcome outcome = entityExtractor.extract(extractionText, doc.fileName(), runId);
                     ResumeEntities entities = outcome.entities();
                     tracer.end(extractStep, "extracted " + entities.getAll().size()
                             + " entities" + (outcome.degraded() ? " (DEGRADED)" : ""), null);
@@ -555,10 +619,12 @@ public class DocumentAnalysisService {
                     tracer.end(checkStep, "found " + redFlags.size() + " red flags, persona=" + persona, null);
 
                     Archetype archetype = resolveArchetype(run);
-                    String matchMode = archetype != null ? FunnelVerdict.MODE_DIRECTION
+                    TargetProfile targetProfile = resolveTargetProfile(run, archetype);
+                    String matchMode = targetProfile != null && TargetProfile.MODE_DIRECTION.equals(targetProfile.mode())
+                            ? FunnelVerdict.MODE_DIRECTION
                             : run.getJobDescription() != null ? FunnelVerdict.MODE_JD
                             : FunnelVerdict.MODE_NONE;
-                    resumeCtx = new ResumeContext(entities, redFlags, profile, archetype,
+                    resumeCtx = new ResumeContext(entities, redFlags, profile, archetype, targetProfile,
                             matchMode, outcome.degraded(), fullText, persona, true);
                 } catch (Exception ex) {
                     tracer.end(extractStep, "extraction failed: " + ex.getMessage(), ex.getMessage());
@@ -588,7 +654,8 @@ public class DocumentAnalysisService {
         List<AgentLoop.ObservedFragment> observations = List.of();
         Long tokensUsed = null;
 
-        if (reactEnabled && shouldUseReact(runId, doc, tracer)) {
+        boolean resumeReview = "resume-review".equals(skill.name());
+        if (reactEnabled && !resumeReview && shouldUseReact(runId, doc, tracer)) {
             LoopOutcome outcome = runLoop(runId, run, doc, skill, resumeFrom, tracer, enrichedUserMessage);
             if (outcome.parsed() != null && outcome.parsed().analysis() != null) {
                 result = outcome.parsed().analysis();
@@ -609,6 +676,9 @@ public class DocumentAnalysisService {
             }
         }
         if (result == null) {
+            if (resumeReview) {
+                throw new IllegalStateException("LLM_UNAVAILABLE: 简历分析需要可用的 LLM，未生成不完整或可能误导的报告");
+            }
             result = ruleFallback(doc, tracer);
             mode = "FALLBACK";
             tokensUsed = 0L;
@@ -620,17 +690,93 @@ public class DocumentAnalysisService {
         if (!resumeCtx.entities().isEmpty() || !resumeCtx.redFlags().isEmpty()) {
             result = result.withEntitiesAndFindings(resumeCtx.entities().getAll(),
                     resumeCtx.redFlags().stream().map(RedFlag::message).toList());
+            result = result.withProjectFacts(resumeCtx.entities().getProjects());
         }
 
         // P12 漏斗结论：红旗 + 方向画像 + LLM 五角度输出 → FunnelVerdict
         // 按技能判断而非实体非空：降级时空实体仍需组装（LLM 五角度输出基于直读原文，不该陪葬）
         if ("resume-review".equals(skill.name())) {
-            FunnelVerdict.Evaluation evaluation = evaluateResume(run, resumeCtx, result, funnelFields, tracer);
+            // 新增：对齐分析（优先使用对齐矩阵，降级时回退到LLM五角度）
+            List<AlignmentEntry> alignmentMatrix = List.of();
+            if (resumeCtx.targetProfile() != null && !resumeCtx.targetProfile().requirements().isEmpty()) {
+                String alignStep = tracer.begin("ALIGNMENT_ANALYSIS", null);
+                tracer.recordMeta(alignStep, true, "AlignmentAnalyzer");
+                try {
+                    alignmentMatrix = alignmentAnalyzer.align(
+                            resumeCtx.targetProfile(),
+                            resumeCtx.entities(),
+                            resumeCtx.fullText(),
+                            runId
+                    );
+                    tracer.end(alignStep, "aligned " + alignmentMatrix.size() + " requirements", null);
+                } catch (Exception ex) {
+                    tracer.end(alignStep, "alignment failed: " + ex.getMessage(), ex.getMessage());
+                    log.warn("Alignment analysis failed, using LLM fallback, runId={}: {}", runId, ex.getMessage());
+                }
+            }
+
+            List<EvidenceAssessment> evidenceAssessments = evidenceAssessmentService
+                    .assess(resumeCtx.entities(), resumeCtx.fullText());
+
+            // 从对齐矩阵转换为现有的coverage格式（兼容现有流程）
+            List<MustHaveCoverage> coverage = !alignmentMatrix.isEmpty()
+                    ? alignmentMatrix.stream()
+                            .map(entry -> new MustHaveCoverage(
+                                    entry.requirementId(),
+                                    entry.requirement(),
+                                    entry.status(),
+                                    entry.evidence().isEmpty() ? null : entry.evidence().get(0).claim(),
+                                    entry.evidence().isEmpty() ? null : entry.evidence().get(0).sectionId()
+                            ))
+                            .toList()
+                    : mergeCoverage(resumeCtx.targetProfile(), funnelFields.mustHaveCoverage());
+
+            List<RequirementVerdict> requirementVerdicts = evidenceAssessmentService
+                    .assessRequirements(coverage, evidenceAssessments, resumeCtx.targetProfile());
+
+            // 计算匹配度分数
+            MatchScore matchScore = matchScoreCalculator.calculate(
+                    requirementVerdicts,
+                    evidenceAssessments,
+                    resumeCtx.redFlags()
+            );
+
+            FunnelVerdict.Evaluation evaluation = evaluateResume(
+                    run, resumeCtx, result, funnelFields, requirementVerdicts, tracer);
+            result = result.withEvidenceAssessments(evidenceAssessments);
+
+            if (evaluation != null && evaluation.overall() != null && !evaluation.overall().isBlank()) {
+                // 对外总评使用裁决之后生成的文本，避免候选分析阶段的乐观判断成为最终结论。
+                result = result.withSummary(evaluation.overall().trim());
+            }
+
+            // 从对齐矩阵生成建议（优先级已排序）
+            List<ActionableSuggestion> suggestions = !alignmentMatrix.isEmpty()
+                    ? alignmentMatrix.stream()
+                            .filter(entry -> entry.fix() != null)
+                            .sorted(java.util.Comparator.comparingInt(e -> -e.fix().roiScore()))
+                            .map(entry -> new ActionableSuggestion(
+                                    entry.status() == MustHaveCoverage.Status.MISSING ? "HIGH" : "MEDIUM",
+                                    entry.requirement(),
+                                    entry.evidence().isEmpty() ? null : entry.evidence().get(0).sectionId(),
+                                    entry.fix().before(),
+                                    entry.fix().after(),
+                                    entry.fix().reason(),
+                                    entry.fix().roiScore(),
+                                    entry.fix().type().name(),
+                                    entry.fix().effort()
+                            ))
+                            .toList()
+                    : (result.actionableSuggestions() == null ? List.of() : result.actionableSuggestions());
+
+            result = result.withActionableSuggestions(suggestions);
+
             FunnelVerdict verdict = assembleVerdict(resumeCtx, funnelFields,
-                    result.actionableSuggestions(), evaluation);
+                    suggestions, evaluation, evidenceAssessments, requirementVerdicts, matchScore);
             result = result.withResumeDeepAnalysis(resumeCtx.profile(), null,
-                            result.actionableSuggestions(), result.enhancedKeyPoints(), result.enhancedRisks())
-                    .withFunnelVerdict(verdict);
+                            suggestions, result.enhancedKeyPoints(), result.enhancedRisks())
+                    .withFunnelVerdict(verdict)
+                    .withAlignmentMatrix(alignmentMatrix);
 
             // 兼容映射：DB 列表排序仍用 score_overall，明细记录各角度档位
             run.setScoreOverall(verdict.legacyOverall());
@@ -841,16 +987,30 @@ public class DocumentAnalysisService {
             String userContent = (enrichedUserMessage != null ? enrichedUserMessage : buildUserMessage(run, doc))
                     + (carried.isEmpty() ? "" : "\n\nAgent 此前已阅读的片段（降级续读，勿重复阅读）：\n" + carried)
                     + "\n\n文档内容（[节ID] 标记了各节，引用时使用节ID）：\n" + renderWithSectionIds(doc);
-            LlmResponse response = llmGateway.invoke(
-                    "llm." + skill.name(), skill.directPromptFile(), userContent, runId);
+            // 流式输出（2026-09-18）：主分析改 invokeStream，增量经节流后推给 SSE 订阅者，
+            // 前端“实时生成”面板逐字显示；总耗时不变但感知等待大幅缩短
+            StringBuilder liveBuffer = new StringBuilder();
+            LlmResponse response = llmGateway.invokeStream(
+                    "llm." + skill.name(), skill.directPromptFile(), userContent, runId,
+                    delta -> {
+                        liveBuffer.append(delta);
+                        // 48 字符节流：token 级推送事件量过大，攒小段再推（同时也是 SSE 保活）
+                        if (liveBuffer.length() >= 48) {
+                            stepEventPublisher.publishToken(runId, stepId, liveBuffer.toString());
+                            liveBuffer.setLength(0);
+                        }
+                    });
+            if (liveBuffer.length() > 0) {
+                stepEventPublisher.publishToken(runId, stepId, liveBuffer.toString());
+            }
             ParsedAnalysis parsed = parseResult(response.content());
             long tokens = response.promptTokens() + response.completionTokens();
             tracer.end(stepId, "direct llm completed, tokens=" + tokens
                     + (carried.isEmpty() ? "" : ", carried=" + observations.size() + " fragments"), null);
             return new LlmOutcome(parsed, tokens);
         } catch (Exception ex) {
-            log.warn("Direct LLM failed, falling back to rule, runId={}: {}", runId, ex.getMessage());
-            tracer.end(stepId, "direct LLM failed → fallback rule", ex.getMessage());
+            log.warn("Direct LLM failed, caller decides whether fallback is allowed, runId={}: {}", runId, ex.getMessage());
+            tracer.end(stepId, "direct LLM failed", ex.getMessage());
             return new LlmOutcome(ParsedAnalysis.empty(), null);
         }
     }
@@ -905,32 +1065,32 @@ public class DocumentAnalysisService {
                 keyPoints,
                 List.of("规则模式不做推断，未识别文档中的风险"),
                 List.of("LLM 当前不可用，建议配置 LLM_API_KEY 后重新分析以获得针对性建议"),
-                citations, null, null, null, null, null,
-                null, null, null, null, null, null);
+                citations, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null);
         tracer.end(stepId, "rule fallback completed", null);
         return result;
     }
 
-    /** 引用校验：sectionId 必须真实存在；quote 尝试定位到真实节；编造的引用剔除。 */
+    /** 引用校验：sectionId 与 quote 必须同时回锚；仅 sectionId 存在不能让编造 quote 通过。 */
     private AnalysisResult verifyCitations(AnalysisResult result, ParsedDocument doc, TraceRecorder tracer) {
         String stepId = tracer.begin("CITATION_VERIFY", null);
         List<AnalysisResult.Citation> kept = new ArrayList<>();
         int dropped = 0;
         for (AnalysisResult.Citation c : result.citations()) {
-            if (c == null || c.sectionId() == null) {
+            if (c == null || c.sectionId() == null || c.quote() == null || c.quote().isBlank()) {
                 dropped++;
                 continue;
             }
             String normalized = c.sectionId().trim();
             var section = doc.findSection(normalized);
-            if (section.isPresent()) {
-                kept.add(new AnalysisResult.Citation(normalized, c.quote()));
-            } else if (c.quote() != null && !c.quote().isBlank()) {
+            if (section.isPresent() && sectionContains(section.get(), c.quote())) {
+                kept.add(new AnalysisResult.Citation(normalized, c.quote().trim()));
+            } else if (section.isEmpty()) {
                 List<DocSection> matches = doc.sections().stream()
-                        .filter(s -> s.text() != null && s.text().contains(c.quote().trim()))
+                        .filter(s -> sectionContains(s, c.quote()))
                         .toList();
                 if (matches.size() == 1) {
-                    kept.add(new AnalysisResult.Citation(matches.get(0).id(), c.quote()));
+                    kept.add(new AnalysisResult.Citation(matches.get(0).id(), c.quote().trim()));
                 } else {
                     dropped++;
                 }
@@ -940,6 +1100,17 @@ public class DocumentAnalysisService {
         }
         tracer.end(stepId, "kept=" + kept.size() + ", dropped=" + dropped, null);
         return result.withCitations(List.copyOf(kept));
+    }
+
+    private static boolean sectionContains(DocSection section, String quote) {
+        if (section == null || quote == null || quote.isBlank()) return false;
+        String content = (section.heading() == null ? "" : section.heading() + "\n")
+                + (section.text() == null ? "" : section.text());
+        return normalizeForAnchor(content).contains(normalizeForAnchor(quote));
+    }
+
+    private static String normalizeForAnchor(String value) {
+        return value == null ? "" : value.replaceAll("\\s+", "").trim();
     }
 
     // --- 结果解析 ---
@@ -981,11 +1152,14 @@ public class DocumentAnalysisService {
                     parseMatchDimensions(raw.matchDimensions),
                     parseGaps(raw.gaps),
                     parseInterviewQuestions(raw.interviewQuestions),
-                    null, null,
+                    null, null, null,
                     null, parseQualityScore(raw.qualityScore),
                     parseActionableSuggestions(raw.actionableSuggestions),
                     parseEnhancedKeyPoints(raw.enhancedKeyPoints),
                     parseEnhancedRisks(raw.enhancedRisks),
+                    null,
+                    parseDiagnoses(raw.diagnoses),
+                    null,
                     null);
             LlmFunnelFields funnel = new LlmFunnelFields(
                     parsePresentation(raw.presentation),
@@ -1074,6 +1248,7 @@ public class DocumentAnalysisService {
         public List<RawActionableSuggestion> actionableSuggestions;
         public List<RawEnhancedKeyPoint> enhancedKeyPoints;
         public List<RawEnhancedRisk> enhancedRisks;
+        public List<RawDiagnosis> diagnoses;
         // P12 五角度漏斗字段
         public RawPresentation presentation;
         public List<RawExperienceStrength> experienceStrength;
@@ -1159,7 +1334,10 @@ public class DocumentAnalysisService {
     @JsonIgnoreProperties(ignoreUnknown = true)
     static class RawDimensionComment {
         public String dimension;
+        public String level;
         public String comment;
+        public List<String> evidence;
+        public String issueType;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -1193,6 +1371,20 @@ public class DocumentAnalysisService {
         public String detail;
         public String sectionId;
         public String challengeAngle;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawDiagnosis {
+        public String severity;
+        public String target;
+        public String sectionId;
+        public String claim;
+        public String problemType;
+        public String whyItHurts;
+        public List<String> missingFacts;
+        public String strengtheningDirection;
+        public String interviewQuestion;
+        public String evidenceLevel;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -1317,7 +1509,11 @@ public class DocumentAnalysisService {
                         .filter(d -> d != null && d.dimension != null && !d.dimension.isBlank()
                                 && d.comment != null && !d.comment.isBlank())
                         .map(d -> new FunnelVerdict.Evaluation.DimensionComment(
-                                d.dimension.trim(), d.comment.trim()))
+                                d.dimension.trim(),
+                                d.level == null || d.level.isBlank() ? "MEDIUM" : d.level.trim().toUpperCase(),
+                                d.comment.trim(),
+                                d.evidence,
+                                d.issueType == null || d.issueType.isBlank() ? "NONE" : d.issueType.trim().toUpperCase()))
                         .toList();
         List<String> strengths = cleanStrings(raw.strengths);
         List<String> weaknesses = cleanStrings(raw.weaknesses);
@@ -1340,24 +1536,29 @@ public class DocumentAnalysisService {
      */
     private FunnelVerdict assembleVerdict(ResumeContext ctx, LlmFunnelFields fields,
                                           List<ActionableSuggestion> suggestions,
-                                          FunnelVerdict.Evaluation evaluation) {
+                                          FunnelVerdict.Evaluation evaluation,
+                                          List<EvidenceAssessment> evidenceAssessments,
+                                          List<RequirementVerdict> requirementVerdicts,
+                                          MatchScore matchScore) {
         List<RedFlag> redFlags = ctx.redFlags();
-        List<MustHaveCoverage> coverage = mergeCoverage(ctx.archetype(), fields.mustHaveCoverage());
         List<VariantFit> variantFit = mergeVariants(ctx.archetype(), fields.variantFit());
         List<VocabularyGap> vocabGaps = ctx.archetype() != null
                 ? ctx.archetype().findVocabularyGaps(ctx.fullText()) : List.of();
+
         return new FunnelVerdict(
                 redFlags,
                 ctx.matchMode(),
                 ctx.archetype() != null ? ctx.archetype().getId() : null,
-                coverage, variantFit, vocabGaps, fields.positioning(),
+                requirementVerdicts, variantFit, vocabGaps, fields.positioning(),
                 fields.experienceStrength(),
                 StrengthStats.from(fields.experienceStrength()),
                 fields.presentation(),
                 fields.leverageCards(),
                 ctx.degraded(),
                 groundingValidator.validate(suggestions, ctx.fullText()),
-                evaluation);
+                evaluation,
+                evidenceAssessments,
+                matchScore);
     }
 
     /**
@@ -1368,7 +1569,9 @@ public class DocumentAnalysisService {
      * <p>失败不级联：无网关/异常/空产出时返回 null，前端容忍缺字段（与历史 v5 run 同形态）。
      */
     private FunnelVerdict.Evaluation evaluateResume(AgentRun run, ResumeContext ctx, AnalysisResult result,
-                                                    LlmFunnelFields funnel, TraceRecorder tracer) {
+                                                    LlmFunnelFields funnel,
+                                                    List<RequirementVerdict> requirementVerdicts,
+                                                    TraceRecorder tracer) {
         LlmGateway llmGateway = llmGatewayProvider.getIfAvailable();
         if (llmGateway == null || ctx.fullText() == null || ctx.fullText().isBlank()) {
             return null;
@@ -1377,7 +1580,7 @@ public class DocumentAnalysisService {
         tracer.recordMeta(stepId, true, "SpringAI");
         try {
             LlmResponse response = llmGateway.invoke("llm.resume-evaluation", "resume-evaluation.txt",
-                    buildEvaluationInput(run, ctx, result, funnel), run.getId());
+                    buildEvaluationInput(run, ctx, result, funnel, requirementVerdicts), run.getId());
             FunnelVerdict.Evaluation evaluation = parseEvaluationJson(response.content());
             tracer.end(stepId, evaluation != null ? "evaluation generated" : "evaluation empty", null);
             return evaluation;
@@ -1390,7 +1593,8 @@ public class DocumentAnalysisService {
 
     /** 评价专调输入：方向锚点 + 代码预检事实 + 主分析结构化结论 + 简历全文。 */
     private static String buildEvaluationInput(AgentRun run, ResumeContext ctx, AnalysisResult result,
-                                               LlmFunnelFields funnel) {
+                                               LlmFunnelFields funnel,
+                                               List<RequirementVerdict> requirementVerdicts) {
         StringBuilder sb = new StringBuilder();
         if (run.getJobDescription() != null && !run.getJobDescription().isBlank()) {
             sb.append("## 目标岗位JD\n").append(run.getJobDescription()).append('\n');
@@ -1407,6 +1611,12 @@ public class DocumentAnalysisService {
             sb.append("\n## 代码预检红旗（已验证事实，可直接引用）\n");
             ctx.redFlags().forEach(f -> sb.append("- [").append(f.severity()).append("] ")
                     .append(f.message()).append('\n'));
+        }
+        if (requirementVerdicts != null && !requirementVerdicts.isEmpty()) {
+            sb.append("\n## 岗位要求裁决（唯一有效的匹配判断，不得自行改判）\n");
+            requirementVerdicts.forEach(v -> sb.append("- [").append(v.status()).append("] ")
+                    .append(v.requirement()).append("；证据等级=").append(v.evidenceLevel())
+                    .append("；理由=").append(v.reason()).append('\n'));
         }
         sb.append("\n## 主分析结论（结构化参照，不要照抄）\n")
           .append("摘要：").append(result.summary() == null ? "" : result.summary()).append('\n');
@@ -1431,20 +1641,11 @@ public class DocumentAnalysisService {
     }
 
     /** 要求文本以画像定义为准（LLM 只给 id/status/evidence），防转录走样。 */
-    private static List<MustHaveCoverage> mergeCoverage(Archetype archetype, List<MustHaveCoverage> llm) {
-        if (archetype == null) {
+    private static List<MustHaveCoverage> mergeCoverage(TargetProfile target, List<MustHaveCoverage> llm) {
+        if (target == null) {
             return llm;
         }
-        var byId = archetype.getMustHaves().stream()
-                .collect(java.util.stream.Collectors.toMap(Archetype.MustHave::getId, m -> m, (a, b) -> a));
-        List<MustHaveCoverage> merged = new ArrayList<>();
-        for (MustHaveCoverage c : llm) {
-            Archetype.MustHave def = byId.get(c.requirementId());
-            merged.add(new MustHaveCoverage(c.requirementId(),
-                    def != null ? def.getRequirement() : c.requirement(),
-                    c.status(), c.evidence(), c.sectionId()));
-        }
-        return merged;
+        return CoverageMerge.merge(target, llm);
     }
 
     private static List<VariantFit> mergeVariants(Archetype archetype, List<VariantFit> llm) {
@@ -1483,6 +1684,20 @@ public class DocumentAnalysisService {
         return raw.stream().filter(Objects::nonNull)
                 .map(r -> new AnalysisResult.EnhancedRisk(r.risk, r.detail, r.sectionId, r.challengeAngle))
                 .toList();
+    }
+
+    private static List<ResumeDiagnosis> parseDiagnoses(List<RawDiagnosis> raw) {
+        if (raw == null) return null;
+        return raw.stream().filter(Objects::nonNull).map(d -> new ResumeDiagnosis(
+                d.severity, d.target, d.sectionId, d.claim, d.problemType, d.whyItHurts,
+                d.missingFacts, d.strengtheningDirection, d.interviewQuestion,
+                parseEvidenceLevel(d.evidenceLevel))).toList();
+    }
+
+    private static EvidenceLevel parseEvidenceLevel(String value) {
+        if (value == null) return null;
+        try { return EvidenceLevel.valueOf(value.trim().toUpperCase()); }
+        catch (IllegalArgumentException ex) { return null; }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

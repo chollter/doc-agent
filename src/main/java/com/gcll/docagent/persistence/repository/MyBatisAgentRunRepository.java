@@ -102,4 +102,9 @@ public class MyBatisAgentRunRepository implements AgentRunRepository {
     public boolean requeue(String runId, String fromStatus) {
         return agentRunMapper.requeue(runId, fromStatus) == 1;
     }
+
+    @Override
+    public void touch(String runId) {
+        agentRunMapper.heartbeat(runId);
+    }
 }

@@ -1,7 +1,10 @@
 package com.gcll.docagent.analysis;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +19,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RedFlagCheckerTest {
 
     private final RedFlagChecker checker = new RedFlagChecker();
+
+    /** 词表资源是单点事实源：可解析且两组非空，防止静默空表禁用教育分流/职级检查。 */
+    @Test
+    void screeningLexiconResourceLoadsNonEmpty() throws Exception {
+        RedFlagChecker.ScreeningLexicon lexicon = RedFlagChecker.ScreeningLexicon.load();
+
+        assertThat(lexicon.seniorTitleMarkers()).isNotEmpty();
+        assertThat(lexicon.educationMarkers()).contains("大学", "本科");
+        assertThat(new ClassPathResource("lexicons/screening-lexicon.json")
+                .getContentAsString(StandardCharsets.UTF_8))
+                .contains("seniorTitleMarkers")
+                .contains("educationMarkers");
+        assertThat(new ObjectMapper().readTree(new ClassPathResource("lexicons/screening-lexicon.json")
+                .getContentAsString(StandardCharsets.UTF_8)).get("seniorTitleMarkers").isArray()).isTrue();
+    }
 
     private static ResumeEntity period(String value, String kind) {
         return new ResumeEntity(ResumeEntity.EntityType.TIME_PERIOD, value, "timeline",
@@ -54,7 +72,8 @@ class RedFlagCheckerTest {
             assertThat(f.severity()).isEqualTo(RedFlag.Severity.MEDIUM);
             // 文案契约：区间为空窗月闭区间（结束次月→下段开始前月）并注明入职月——
             // 旧格式把下段开始日写进区间，读起来像"空窗持续到入职月"（线上被用户判错）
-            assertThat(f.message()).contains("3 个月空窗（2020-11 至 2021-01")
+            assertThat(f.message()).contains("段间")
+                    .contains("3 个月空窗（段间：2020-11 至 2021-01")
                     .contains("2021-02 已入职下一段");
         });
     }
@@ -169,7 +188,7 @@ class RedFlagCheckerTest {
         assertThat(flags).anySatisfy(f -> {
             assertThat(f.type()).isEqualTo(RedFlag.TIMELINE_GAP);
             assertThat(f.severity()).isEqualTo(RedFlag.Severity.MEDIUM);
-            assertThat(f.message()).contains("粗查");
+            assertThat(f.message()).contains("段间").contains("粗查");
             assertThat(f.message()).contains("已入职下一段");
         });
     }
@@ -240,6 +259,7 @@ class RedFlagCheckerTest {
         assertThat(flags).anySatisfy(f -> {
             assertThat(f.type()).isEqualTo(RedFlag.TRAILING_GAP);
             assertThat(f.severity()).isEqualTo(RedFlag.Severity.HIGH);
+            assertThat(f.message()).contains("尾部");
         });
     }
 
@@ -263,7 +283,7 @@ class RedFlagCheckerTest {
         assertThat(flags).anySatisfy(f -> {
             assertThat(f.type()).isEqualTo(RedFlag.EMPLOYMENT_GAP_COVERED);
             assertThat(f.severity()).isEqualTo(RedFlag.Severity.LOW);
-            assertThat(f.message()).contains("面试必问");
+            assertThat(f.message()).contains("尾部").contains("面试必问");
         });
         assertThat(flags).noneMatch(f -> f.type().equals(RedFlag.TRAILING_GAP));
     }

@@ -144,6 +144,8 @@ export interface FunnelVerdict {
   matchMode: 'JD' | 'DIRECTION' | 'NONE';
   archetypeId: string | null;
   mustHaveCoverage: MustHaveCoverage[] | null;
+  /** 唯一岗位匹配真相源；mustHaveCoverage 仅为兼容派生视图 */
+  requirementVerdicts?: RequirementVerdict[] | null;
   variantFit: VariantFit[] | null;
   vocabularyGaps: VocabularyGap[] | null;
   positioning: PositioningCheck | null;
@@ -155,12 +157,64 @@ export interface FunnelVerdict {
   groundingFindings?: GroundingFinding[] | null;
   /** 定性评价（v6）；历史 run 无此字段 */
   evaluation?: Evaluation | null;
+  evidenceAssessments?: EvidenceAssessment[] | null;
+}
+
+export interface ResumeDiagnosis {
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  target: string;
+  sectionId: string | null;
+  claim: string;
+  problemType: string;
+  whyItHurts: string;
+  missingFacts: string[];
+  strengtheningDirection: string;
+  interviewQuestion: string;
+  evidenceLevel: 'L0_KEYWORD' | 'L1_ACTIVITY' | 'L2_METHOD' | 'L3_RESULT' | 'L4_TRADE_OFF' | null;
+}
+
+export interface EvidenceAssessment {
+  claim: string;
+  evidenceLevel: 'L0_KEYWORD' | 'L1_ACTIVITY' | 'L2_METHOD' | 'L3_RESULT' | 'L4_TRADE_OFF';
+  evidenceFound: string[];
+  missingFacts: string[];
+  likelyInterviewQuestions: string[];
+  preparationAdvice: string[];
+  hasOriginalBasis: boolean;
+}
+
+export interface RequirementVerdict {
+  requirementId: string;
+  requirement: string;
+  priority: string | null;
+  status: 'MET' | 'PARTIAL' | 'MISSING';
+  evidenceLevel: 'L0_KEYWORD' | 'L1_ACTIVITY' | 'L2_METHOD' | 'L3_RESULT' | 'L4_TRADE_OFF';
+  claim: string | null;
+  supportingEvidence: string[];
+  sectionIds: string[];
+  missingFacts: string[];
+  reason: string;
+  interviewQuestion: string;
+  hasOriginalBasis: boolean;
+  fix?: SuggestionFix | null;
+}
+
+export interface SuggestionFix {
+  type: string;
+  before: string;
+  after: string;
+  roiScore: number;
+  reason: string;
+  effort: string;
 }
 
 /** 维度评语：档位由代码侧计算，评语归 LLM */
 export interface EvaluationDimension {
   dimension: string;
+  level?: 'STRONG' | 'MEDIUM' | 'WEAK' | 'UNKNOWN' | string;
   comment: string;
+  evidence?: string[];
+  issueType?: 'CAPABILITY_GAP' | 'EVIDENCE_INSUFFICIENT' | 'EXPRESSION_PROBLEM' | 'IRRELEVANT_TO_TARGET' | 'NONE' | string;
 }
 
 export interface Evaluation {
@@ -271,6 +325,29 @@ export interface AnalysisResult {
   enhancedRisks?: EnhancedRisk[] | null;
   // P12 漏斗式结论（新主结果；历史 run 为 null）
   funnelVerdict?: FunnelVerdict | null;
+  evidenceAssessments?: EvidenceAssessment[] | null;
+  diagnoses?: ResumeDiagnosis[] | null;
+  projectFacts?: ResumeProjectFact[] | null;
+}
+
+export interface ResumeFact {
+  value: string | null;
+  status: 'explicit' | 'inferred' | 'missing' | string;
+  sourceQuote: string | null;
+}
+
+export interface ResumeProjectFact {
+  projectId: string | null;
+  sectionId: string | null;
+  context: ResumeFact | null;
+  problem: ResumeFact | null;
+  responsibilities: ResumeFact[];
+  technologies: ResumeFact[];
+  aiPipeline: ResumeFact | null;
+  decisions: ResumeFact[];
+  results: ResumeFact | null;
+  scale: ResumeFact | null;
+  deployment: ResumeFact | null;
 }
 
 export interface RunStart {
@@ -382,6 +459,14 @@ export interface StepEvent {
   timestamp: number;
 }
 
+/** SSE token 事件（LLM 流式增量，2026-09-18） */
+export interface TokenEvent {
+  runId: string;
+  stepId: string;
+  delta: string;
+  timestamp: number;
+}
+
 export const analysisApi = {
   submit(
     file: File,
@@ -472,11 +557,13 @@ export const analysisApi = {
 /**
  * 订阅 run 的步骤流（EventSource）。
  * 返回关闭函数。onEvent 收到的是"合并视图"——同一步骤的 RUNNING 与终态按 stepId 更新。
+ * onToken（可选）接收 LLM 流式增量（DIRECT_LLM 实时生成）。
  */
 export function subscribeSteps(
   runId: string,
   onEvent: (event: StepEvent) => void,
   onError?: (message: string) => void,
+  onToken?: (event: TokenEvent) => void,
 ): () => void {
   const source = new EventSource(`${SSE_BASE}/api/analysis/runs/${runId}/stream`);
   source.addEventListener('step', (e) => {
@@ -486,6 +573,15 @@ export function subscribeSteps(
       // 忽略畸形事件
     }
   });
+  if (onToken) {
+    source.addEventListener('token', (e) => {
+      try {
+        onToken(JSON.parse((e as MessageEvent).data) as TokenEvent);
+      } catch {
+        // 忽略畸形事件
+      }
+    });
+  }
   source.onerror = () => {
     // EventSource 断开会自动重连；这里只上报，由调用方决定是否轮询兜底
     onError?.('SSE 连接中断，将按轮询兜底');

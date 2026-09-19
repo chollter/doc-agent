@@ -62,4 +62,14 @@ class EntityNormalizerTest {
             assertThat(p.kind()).isEqualTo("work");
         });
     }
+
+    @Test
+    void shouldExposeSourceAnchorAttributes() {
+        ResumeEntity claim = new ResumeEntity(ResumeEntity.EntityType.CLAIM,
+                "主导订单重构", "项目经历", Map.of(
+                "sectionId", "sec-3", "sourceQuote", "主导订单重构"));
+
+        assertThat(claim.sectionId()).isEqualTo("sec-3");
+        assertThat(claim.sourceQuote()).isEqualTo("主导订单重构");
+    }
 }

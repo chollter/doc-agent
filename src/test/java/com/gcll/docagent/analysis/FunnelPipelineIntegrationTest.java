@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -32,7 +33,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>P12 主链路此前没有任何测试走过全链：实体抽取 → 红旗 → 方向画像 → v2 契约解析 →
  * FunnelVerdict 组装 → 落库 → API 返回。v2 契约的 JSON 字段名或枚举接线笔误，
  * 在这里立即暴露，而不是等到有 Key 跑评测时才暴露。
- * <p>抽取走 LlmGateway 的 2 参 invoke，主分析走 4 参 invoke——两个桩分别打。
+ * <p>抽取与评价走 4 参 invoke，主分析走 invokeStream——三个桩分别打；coverage-judge
+ * 不打桩（未命中 stub 返回 null → 对齐分析降级 fallback，按证据等级判覆盖）。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -49,7 +51,9 @@ class FunnelPipelineIntegrationTest {
     @MockitoBean
     private LlmGateway llmGateway;
 
-    /** 简历正文：时间线与实体桩一致（含 9 个月空窗）；只写"检索增强"不写 RAG（触发词汇缺口）；含手机号。 */
+    /** 简历正文：时间线与实体桩一致（含 9 个月空窗）；只写"检索增强"不写 RAG（触发词汇缺口）；
+     * 星河段含 OpenAI 接口证据（llm-api 命中；不用含"API"字样的表述——backend-3y 关键词表含 API，会误命中拉高等级）、
+     * 云海段仅 Spring Boot（backend-3y 仅活动级）；含手机号。 */
     private static final String RESUME_MD = """
             # 陈远航 — 后端工程师
 
@@ -61,6 +65,7 @@ class FunnelPipelineIntegrationTest {
             ## 工作经历
             ### 星河科技 · AI应用工程师 2021.07 – 至今
             - 主导检索增强知识库问答系统，日均调用 12 万次
+            - 基于 OpenAI 兼容接口封装 LLM 调用，实现流式输出与错误重试
 
             ### 云海软件 · 后端工程师 2019.07 – 2020.10
             - 参与订单中心开发
@@ -69,7 +74,8 @@ class FunnelPipelineIntegrationTest {
             Java / Spring Boot / LangChain
             """;
 
-    /** 实体抽取桩：两段工作时间（中间 9 个月空窗 → TIMELINE_GAP HIGH）+ 教育/技能/声明/指标。 */
+    /** 实体抽取桩：两段工作时间（中间 9 个月空窗 → TIMELINE_GAP HIGH）+ 教育/技能/声明/指标。
+     * 双项目：星河（L3——API/检索增强/结果齐）命中 llm-api；云海（L2——仅活动+方法无结果）命中 backend-3y。 */
     private static final String ENTITIES_JSON = """
             {"entities":[
               {"type":"TIME_PERIOD","value":"2021.07-至今","context":"星河科技","attributes":{"kind":"work"}},
@@ -80,8 +86,25 @@ class FunnelPipelineIntegrationTest {
               {"type":"SKILL","value":"LangChain","context":"技能"},
               {"type":"CLAIM","value":"主导检索增强知识库问答系统","context":"工作"},
               {"type":"METRIC","value":"日均调用 12 万次","context":"工作"},
-              {"type":"WORK_ENTRY","value":"星河科技 AI应用工程师 2021.07-至今 主导检索增强问答系统","context":"工作","attributes":{"kind":"work","metricCount":"1"}}
-            ]}
+            {"type":"WORK_ENTRY","value":"星河科技 AI应用工程师 2021.07-至今 主导检索增强问答系统","context":"工作","attributes":{"kind":"work","metricCount":"1"}}
+            ],"projects":[{"projectId":"project-1","sectionId":"sec-2",
+              "context":{"value":"知识库问答","status":"explicit","sourceQuote":"主导检索增强知识库问答系统"},
+              "problem":{"value":null,"status":"missing","sourceQuote":null},
+              "responsibilities":[{"value":"主导系统建设","status":"explicit","sourceQuote":"主导检索增强知识库问答系统"}],
+              "technologies":[{"value":"LangChain","status":"explicit","sourceQuote":"LangChain"},{"value":"OpenAI","status":"explicit","sourceQuote":"OpenAI"}],
+              "aiPipeline":{"value":"检索增强","status":"explicit","sourceQuote":"检索增强知识库问答系统"},
+              "decisions":[],"results":{"value":"日均调用 12 万次","status":"explicit","sourceQuote":"日均调用 12 万次"},
+              "scale":{"value":"日均调用 12 万次","status":"explicit","sourceQuote":"日均调用 12 万次"},
+              "deployment":{"value":null,"status":"missing","sourceQuote":null}},
+            {"projectId":"project-2","sectionId":"sec-5",
+              "context":{"value":"订单中心","status":"explicit","sourceQuote":"参与订单中心开发"},
+              "problem":{"value":null,"status":"missing","sourceQuote":null},
+              "responsibilities":[{"value":"参与订单中心开发","status":"explicit","sourceQuote":"参与订单中心开发"}],
+              "technologies":[{"value":"Spring Boot","status":"explicit","sourceQuote":"Spring Boot"}],
+              "aiPipeline":{"value":null,"status":"missing","sourceQuote":null},
+              "decisions":[],"results":{"value":null,"status":"missing","sourceQuote":null},
+              "scale":{"value":null,"status":"missing","sourceQuote":null},
+              "deployment":{"value":null,"status":"missing","sourceQuote":null}}]}
             """;
 
     /** 主分析桩：v2 五角度契约。要求文本故意只给 id（验证以画像定义合并）。 */
@@ -102,9 +125,9 @@ class FunnelPipelineIntegrationTest {
              "citations":[{"sectionId":"sec-2","quote":"主导检索增强知识库问答系统"}],
              "matchDimensions":[],"gaps":[],"interviewQuestions":[],
              "mustHaveCoverage":[
-               {"requirementId":"llm-integration","status":"MET","evidence":"封装 LLM 网关","sectionId":"sec-2"},
-               {"requirementId":"shipped-app","status":"MISSING","evidence":null,"sectionId":null}],
-             "variantFit":[{"variantId":"agent-eng","fit":"HIGH","reason":"编排经验"}],
+               {"requirementId":"llm-api","status":"MET","evidence":"主导检索增强知识库问答系统","sectionId":"sec-2"},
+               {"requirementId":"prompt-eng","status":"MISSING","evidence":null,"sectionId":null}],
+             "variantFit":[{"variantId":"agent","fit":"HIGH","reason":"编排经验"}],
              "positioning":{"anchored":false,"currentAnchor":"后端工程师","suggestedAnchor":"AI 应用工程师（RAG 方向）","comment":"建议锚定"}}
             """;
 
@@ -123,10 +146,11 @@ class FunnelPipelineIntegrationTest {
 
     @Test
     void assemblesFunnelVerdictEndToEnd() throws Exception {
-        // 抽取、主分析、评价专调均走 4 参网关（按 prompt 文件分流）
+        // 抽取、主分析、评价专调均走 4 参网关（按 prompt 文件分流）；
+        // 2026-09-18：主分析（resume-review.txt）改流式 invokeStream
         when(llmGateway.invoke(anyString(), eq("resume-entity-extract.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ENTITIES_JSON, 200, 100, "qwen-plus"));
-        when(llmGateway.invoke(anyString(), eq("resume-review.txt"), anyString(), anyString()))
+        when(llmGateway.invokeStream(anyString(), eq("resume-review.txt"), anyString(), anyString(), any()))
                 .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
         when(llmGateway.invoke(anyString(), eq("resume-evaluation.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(EVALUATION_JSON, 600, 400, "qwen-plus"));
@@ -138,6 +162,11 @@ class FunnelPipelineIntegrationTest {
         assertThat(path(result, "executionMode").asText()).isEqualTo("LLM");
         JsonNode verdict = result.get("result").get("funnelVerdict");
         assertThat(verdict).isNotNull();
+        assertThat(path(result.get("result"), "summary").asText())
+                .isEqualTo(path(verdict.get("evaluation"), "overall").asText());
+        JsonNode projectFacts = result.get("result").get("projectFacts");
+        assertThat(projectFacts).hasSize(2);
+        assertThat(path(projectFacts.get(0).get("results"), "status").asText()).isEqualTo("explicit");
 
         // ① 红旗：两段工作时间实体间 9 个月空窗 → TIMELINE_GAP / HIGH（代码层，非 LLM）
         JsonNode flags = verdict.get("redFlags");
@@ -153,15 +182,23 @@ class FunnelPipelineIntegrationTest {
         assertThat(path(vocab.get(0), "term").asText()).isEqualTo("RAG");
         assertThat(path(vocab.get(0), "usedSynonym").asText()).contains("检索增强");
 
-        // ③ 覆盖：要求文本以画像定义合并（LLM 只给了 id），status 保留
+        // ③ 覆盖（对齐矩阵路径）：关键词找证据 → coverage-judge 未桩走 fallback 按证据等级判；
+        //    llm-api 命中星河（L3）→ MET；backend-3y 仅命中云海方法级（L2）→ PARTIAL；
+        //    prompt-eng 无证据 → MISSING；证据等级钳制保证 L0 不虚报
         JsonNode coverage = verdict.get("mustHaveCoverage");
-        assertThat(coverage.size()).isEqualTo(2);
+        JsonNode requirementVerdicts = verdict.get("requirementVerdicts");
+        assertThat(requirementVerdicts).hasSize(3);
+        assertThat(path(requirementVerdicts.get(0), "status").asText()).isEqualTo("MET");
+        assertThat(coverage.size()).isEqualTo(3);
         assertThat(path(coverage.get(0), "requirement").asText()).contains("LLM API");
         assertThat(path(coverage.get(0), "status").asText()).isEqualTo("MET");
-        assertThat(path(coverage.get(1), "status").asText()).isEqualTo("MISSING");
+        assertThat(path(coverage.get(1), "requirementId").asText()).isEqualTo("backend-3y");
+        assertThat(path(coverage.get(1), "status").asText()).isEqualTo("PARTIAL");
+        assertThat(path(coverage.get(2), "requirementId").asText()).isEqualTo("prompt-eng");
+        assertThat(path(coverage.get(2), "status").asText()).isEqualTo("MISSING");
 
         // ④ 子方向：名称从画像合并（LLM 只给 variantId）
-        assertThat(path(verdict.get("variantFit").get(0), "name").asText()).isEqualTo("Agent 开发");
+        assertThat(path(verdict.get("variantFit").get(0), "name").asText()).isEqualTo("AI Agent开发");
 
         // ⑤ 强度：1/2 有结果（BUSINESS/LEAD）+ 1/2 无结果（NONE/PARTICIPANT）→ MIXED
         assertThat(path(path(verdict, "strength"), "band").asText()).isEqualTo("MIXED");
@@ -175,8 +212,9 @@ class FunnelPipelineIntegrationTest {
         assertThat(path(path(verdict, "positioning"), "anchored").asBoolean()).isFalse();
         assertThat(verdict.get("leverageCards").size()).isEqualTo(2);
 
-        // ⑧ 兼容分映射（确定性）：MIXED(65)×0.4 + 62×0.3 + PARTIAL(70)×0.3 - HIGH红旗10 = 55
-        assertThat(scoreOverallOf(runId)).isEqualTo(55);
+        // ⑧ 兼容分映射（确定性）：MIXED(65)×0.4 + 62×0.3 + WEAK(50)×0.3 - HIGH红旗10 = 49
+        //    画像 3 要求 MET 率 1/3 → WEAK，不再是 PARTIAL(70)
+        assertThat(scoreOverallOf(runId)).isEqualTo(49);
 
         // ⑨ 评价（v7 专调链路）：总评档位定论/五维评语带原文证据/判断式优缺点端到端透传
         JsonNode eval = verdict.get("evaluation");
@@ -195,7 +233,7 @@ class FunnelPipelineIntegrationTest {
         // 抽取挂掉（4 参 invoke 的 entity-extract 分支抛异常）→ 降级路径；主分析与评价专调正常返回
         when(llmGateway.invoke(anyString(), eq("resume-entity-extract.txt"), anyString(), anyString()))
                 .thenThrow(new RuntimeException("extraction down"));
-        when(llmGateway.invoke(anyString(), eq("resume-review.txt"), anyString(), anyString()))
+        when(llmGateway.invokeStream(anyString(), eq("resume-review.txt"), anyString(), anyString(), any()))
                 .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
         when(llmGateway.invoke(anyString(), eq("resume-evaluation.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(EVALUATION_JSON, 600, 400, "qwen-plus"));
@@ -225,7 +263,7 @@ class FunnelPipelineIntegrationTest {
     void appliesSuggestionToProduceRevisedMarkdown() throws Exception {
         when(llmGateway.invoke(anyString(), eq("resume-entity-extract.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(ENTITIES_JSON, 200, 100, "qwen-plus"));
-        when(llmGateway.invoke(anyString(), eq("resume-review.txt"), anyString(), anyString()))
+        when(llmGateway.invokeStream(anyString(), eq("resume-review.txt"), anyString(), anyString(), any()))
                 .thenReturn(LlmResponse.of(ANALYSIS_JSON, 800, 400, "qwen-plus"));
         when(llmGateway.invoke(anyString(), eq("resume-evaluation.txt"), anyString(), anyString()))
                 .thenReturn(LlmResponse.of(EVALUATION_JSON, 600, 400, "qwen-plus"));
@@ -233,7 +271,7 @@ class FunnelPipelineIntegrationTest {
         String runId = submit(RESUME_MD, "按方向画像分析这份简历", "AI应用开发");
         awaitStatus(runId, "COMPLETED");
 
-        // 采纳第 0 条建议：before="参与订单中心开发" → after="负责订单模块重构，QPS 800→2000"
+        // 采纳第 0 条建议（对齐矩阵 ENHANCE，ROI 最高）：before="订单中心" → after="[原有内容] + 补充细节：…"
         MvcResult applied = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                         .post("/api/analysis/runs/" + runId + "/apply-suggestions")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -245,10 +283,10 @@ class FunnelPipelineIntegrationTest {
         assertThat(revision.get("appliedCount").asInt()).isEqualTo(1);
         assertThat(revision.get("missingBefores").size()).isZero();
         String md = revision.get("revisedMarkdown").asText();
-        assertThat(md).contains("负责订单模块重构，QPS 800→2000");
-        assertThat(md).doesNotContain("参与订单中心开发");
-        // 变更节定位成功（前端据此高亮）
-        assertThat(revision.get("changedSectionIds").toString()).contains("sec-");
+        assertThat(md).contains("补充细节");
+        assertThat(md).doesNotContain("订单中心");
+        // 变更节定位成功（前端据此高亮；Markdown 分节：# 行均切节，云海 bullet 落在 sec-5）
+        assertThat(revision.get("changedSectionIds").toString()).contains("sec-5");
     }
 
     // --- helpers ---

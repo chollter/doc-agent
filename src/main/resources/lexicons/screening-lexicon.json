@@ -1,0 +1,10 @@
+{
+  "seniorTitleMarkers": [
+    "高级", "资深", "首席", "专家", "principal", "senior", "lead", "staff"
+  ],
+  "educationMarkers": [
+    "大学", "学院", "学校", "中学", "高中", "小学", "硕士", "本科", "大专", "专科",
+    "学位", "毕业", "入学", "在读", "教育经历",
+    "university", "college", "school", "bachelor", "master", "phd", "mba"
+  ]
+}

@@ -24,6 +24,7 @@ public record AnalysisResult(
         List<InterviewQuestion> interviewQuestions,
         // ---- 语义实体和模式检查（简历分析时产出） ----
         List<ResumeEntity> entities,
+        List<ResumeProjectFact> projectFacts,
         List<String> patternFindings,
         // ---- 简历深度分析（resume-review skill 产出） ----
         ResumeProfile profile,
@@ -31,8 +32,12 @@ public record AnalysisResult(
         List<ActionableSuggestion> actionableSuggestions,
         List<EnhancedKeyPoint> enhancedKeyPoints,
         List<EnhancedRisk> enhancedRisks,
+        List<EvidenceAssessment> evidenceAssessments,
+        List<ResumeDiagnosis> diagnoses,
         // ---- P12 漏斗式结论（新主结果） ----
-        FunnelVerdict funnelVerdict
+        FunnelVerdict funnelVerdict,
+        // ---- P12v2 对齐矩阵（要求→证据映射） ----
+        List<AlignmentEntry> alignmentMatrix
 ) {
 
     /**
@@ -67,21 +72,35 @@ public record AnalysisResult(
     public static AnalysisResult empty() {
         return new AnalysisResult("", List.of(), List.of(), List.of(), List.of(),
                 null, null, null, null, null,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null, null);
     }
 
     public AnalysisResult withCitations(List<Citation> newCitations) {
         return new AnalysisResult(summary, keyPoints, risks, suggestions, newCitations,
-                matchDimensions, gaps, interviewQuestions, entities, patternFindings,
+                matchDimensions, gaps, interviewQuestions, entities, projectFacts, patternFindings,
                 profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
-                funnelVerdict);
+                evidenceAssessments, diagnoses, funnelVerdict, alignmentMatrix);
+    }
+
+    public AnalysisResult withSummary(String newSummary) {
+        return new AnalysisResult(newSummary, keyPoints, risks, suggestions, citations,
+                matchDimensions, gaps, interviewQuestions, entities, projectFacts, patternFindings,
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
+                evidenceAssessments, diagnoses, funnelVerdict, alignmentMatrix);
     }
 
     public AnalysisResult withEntitiesAndFindings(List<ResumeEntity> newEntities, List<String> newFindings) {
         return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
-                matchDimensions, gaps, interviewQuestions, newEntities, newFindings,
+                matchDimensions, gaps, interviewQuestions, newEntities, projectFacts, newFindings,
                 profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
-                funnelVerdict);
+                evidenceAssessments, diagnoses, funnelVerdict, alignmentMatrix);
+    }
+
+    public AnalysisResult withProjectFacts(List<ResumeProjectFact> newProjectFacts) {
+        return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
+                matchDimensions, gaps, interviewQuestions, entities, newProjectFacts, patternFindings,
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
+                evidenceAssessments, diagnoses, funnelVerdict, alignmentMatrix);
     }
 
     public AnalysisResult withResumeDeepAnalysis(ResumeProfile newProfile, QualityScore newQualityScore,
@@ -89,15 +108,43 @@ public record AnalysisResult(
                                                   List<EnhancedKeyPoint> newKeyPoints,
                                                   List<EnhancedRisk> newRisks) {
         return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
-                matchDimensions, gaps, interviewQuestions, entities, patternFindings,
+                matchDimensions, gaps, interviewQuestions, entities, projectFacts, patternFindings,
                 newProfile, newQualityScore, newSuggestions, newKeyPoints, newRisks,
-                funnelVerdict);
+                evidenceAssessments, diagnoses, funnelVerdict, alignmentMatrix);
     }
 
     public AnalysisResult withFunnelVerdict(FunnelVerdict verdict) {
         return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
-                matchDimensions, gaps, interviewQuestions, entities, patternFindings,
+                matchDimensions, gaps, interviewQuestions, entities, projectFacts, patternFindings,
                 profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
-                verdict);
+                evidenceAssessments, diagnoses, verdict, alignmentMatrix);
+    }
+
+    public AnalysisResult withEvidenceAssessments(List<EvidenceAssessment> assessments) {
+        return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
+                matchDimensions, gaps, interviewQuestions, entities, projectFacts, patternFindings,
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
+                assessments, diagnoses, funnelVerdict, alignmentMatrix);
+    }
+
+    public AnalysisResult withActionableSuggestions(List<ActionableSuggestion> newSuggestions) {
+        return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
+                matchDimensions, gaps, interviewQuestions, entities, projectFacts, patternFindings,
+                profile, qualityScore, newSuggestions, enhancedKeyPoints, enhancedRisks,
+                evidenceAssessments, diagnoses, funnelVerdict, alignmentMatrix);
+    }
+
+    public AnalysisResult withDiagnoses(List<ResumeDiagnosis> newDiagnoses) {
+        return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
+                matchDimensions, gaps, interviewQuestions, entities, projectFacts, patternFindings,
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
+                evidenceAssessments, newDiagnoses, funnelVerdict, alignmentMatrix);
+    }
+
+    public AnalysisResult withAlignmentMatrix(List<AlignmentEntry> matrix) {
+        return new AnalysisResult(summary, keyPoints, risks, suggestions, citations,
+                matchDimensions, gaps, interviewQuestions, entities, projectFacts, patternFindings,
+                profile, qualityScore, actionableSuggestions, enhancedKeyPoints, enhancedRisks,
+                evidenceAssessments, diagnoses, funnelVerdict, matrix);
     }
 }

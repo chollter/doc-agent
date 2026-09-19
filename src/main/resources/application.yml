@@ -90,6 +90,12 @@ docagent:
   # 当前 prompt/分析行为版本——校准对照的版本锚点；每次改 prompt 或分析行为后递增，
   # 提交时未手填版本标注的运行自动带上此值（手填优先）。
   prompt-version: v7
+  llm:
+    # LLM HTTP 客户端超时（秒）：连接超时防握手挂起，读超时防响应僵死。
+    # （log.txt 事故：JDK HttpClient 无默认读超时，单次调用挂 15 分钟触发 stale 重排双执行）。
+    # 流式调用的“块间间隔”超时用同一读超时值（LlmGateway.invokeStream 的 Flux.timeout）。
+    connect-timeout-seconds: ${LLM_CONNECT_TIMEOUT_SEC:10}
+    read-timeout-seconds: ${LLM_READ_TIMEOUT_SEC:180}
   analysis:
     # 短文档路由：字符数低于此值的文档跳过 ReAct 直接单轮分析（短文档迭代精读无信息增量，
     # 实测只烧 token 且易循环不收敛）；0=关闭阈值恢复全量走循环。
@@ -116,6 +122,12 @@ opsmind:
       # 走 simple-model 的 callName（简单结构化任务，用快模型省成本、效果不损）。
       simple-calls:
         - llm.context-summarize
+      # 判断类调用走强模型：主结论与评价专调是质量瓶颈（档位判断/含金量评估/
+      # 市场校准恰是中档模型与前沿模型差距最大的任务）；简历全文仅数千 token，
+      # 强模型成本影响可忽略。LLM_STRONG_MODEL 可整体换型（如 deepseek-v3）。
+      mappings:
+        llm.resume-review: ${LLM_STRONG_MODEL:qwen-max}
+        llm.resume-evaluation: ${LLM_STRONG_MODEL:qwen-max}
       # 模型 → 上下文窗口（token）。供 truncate 按目标模型窗口动态截断 userContent。
       model-windows:
         qwen-turbo: 8192

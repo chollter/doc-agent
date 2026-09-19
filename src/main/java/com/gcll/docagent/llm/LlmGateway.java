@@ -4,22 +4,29 @@ import com.gcll.docagent.llm.context.ContextWindowManager;
 import com.gcll.docagent.llm.routing.ModelRouter;
 import com.gcll.docagent.persistence.entity.LlmInteractionEntity;
 import com.gcll.docagent.persistence.mapper.LlmInteractionMapper;
+import com.gcll.docagent.persistence.repository.AgentRunRepository;
 import com.gcll.docagent.resilience.LlmResponse;
 import com.gcll.docagent.resilience.NonRetryableCallException;
 import com.gcll.docagent.resilience.RetryableCallException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * LLM 纯执行器：负责 prompt 加载、系统提示拼装、结构化调用与 token 解析。
@@ -38,12 +45,19 @@ import java.util.UUID;
  * <ul>
  *   <li><b>老路径 {@link #invoke(String, String)}</b>：单 ChatClient、无记忆、单轮。保留不动，
  *       供尚未迁移的调用方使用，保证编译通过。</li>
- *   <li><b>新路径 {@link #invoke(String, String, String, String)}</b>：按 callName 经
- *       {@link ModelRouter} 路由到对应模型，按 runId 设 conversationId 隔离工单记忆。
- *       迁移完成的调用方用这条。</li>
+ *   <li><b>管线路径 {@link #invoke(String, String, String, String)}</b>：按 callName 经
+ *       {@link ModelRouter} 路由到对应模型。<b>2026-09-18 起默认无记忆（单轮）</b>——
+ *       此前 runId 兼作 conversationId，管线单轮调用也会累积巨型对话历史，
+ *       击穿模型输入上限（39105 &gt; 30720 → 400 InvalidParameter）。需要记忆的调用方
+ *       显式用 {@link #invoke(String, String, String, String, boolean)} 传 withMemory=true。</li>
+ *   <li><b>流式路径 {@link #invokeStream(String, String, String, String, Consumer)}</b>：
+ *       逐块聚合内容并回调增量，供 SSE 实时输出。runId 仅作留痕关联与心跳，不参与记忆。</li>
  * </ul>
  * <p>两条路径并存，逐步把调用方从老路径迁到新路径。迁移期间功能等价（新路径不挂 advisor 时
  * 与老路径行为一致）。
+ * <p><b>心跳与超时（2026-09-18 事故修复）</b>：每次调用前推进 run 的 updated_at（心跳）——
+ * 防 stale 重排在长 LLM 调用执行中误触发（僵尸双执行）；流式调用按“两个数据块之间的最大
+ * 间隔”限时（readTimeoutSeconds），防连接僵死无限挂起。
  */
 @Service
 @ConditionalOnBean(ChatClient.Builder.class)
@@ -59,17 +73,24 @@ public class LlmGateway {
     private final ModelRouter modelRouter;
     private final ContextWindowManager contextWindowManager;
     private final LlmInteractionMapper interactionMapper;
+    private final ObjectProvider<AgentRunRepository> agentRunRepositoryProvider;
+    /** 流式调用两个数据块之间的最大间隔（秒），防连接僵死无限挂起。 */
+    private final long readTimeoutSeconds;
 
     public LlmGateway(ChatClient.Builder chatClientBuilder,
                       ModelRouter modelRouter,
                       ContextWindowManager contextWindowManager,
-                      LlmInteractionMapper interactionMapper) throws IOException {
+                      LlmInteractionMapper interactionMapper,
+                      ObjectProvider<AgentRunRepository> agentRunRepositoryProvider,
+                      @Value("${docagent.llm.read-timeout-seconds:180}") long readTimeoutSeconds) throws IOException {
         this.chatClient = chatClientBuilder.build();
         this.systemBasePrompt = new ClassPathResource("prompts/system-base.txt")
                 .getContentAsString(StandardCharsets.UTF_8);
         this.modelRouter = modelRouter;
         this.contextWindowManager = contextWindowManager;
         this.interactionMapper = interactionMapper;
+        this.agentRunRepositoryProvider = agentRunRepositoryProvider;
+        this.readTimeoutSeconds = readTimeoutSeconds;
     }
 
     /**
@@ -78,21 +99,95 @@ public class LlmGateway {
      * <p>迁移完成后所有调用方应改用 {@link #invoke(String, String, String, String)}。
      */
     public LlmResponse invoke(String promptFile, String userContent) {
-        return doInvoke(chatClient, promptFile, userContent, null);
+        return doInvoke(chatClient, promptFile, userContent, null, null, false);
     }
 
     /**
-     * 新路径：按 callName 路由模型，按 runId 隔离记忆。
+     * 管线路径：按 callName 路由模型，<b>无记忆（单轮）</b>。
+     *
+     * <p>2026-09-18 起默认不挂记忆 advisor：runId 仅作留痕关联与心跳。
+     * 需要跨调用记忆的调用方显式用 5 参重载。
      *
      * @param callName    调用点标识（如 {@code llm.root-cause}），用于 {@link ModelRouter} 选模型
      * @param promptFile  classpath:prompts/ 下的提示词文件名
      * @param userContent 用户工单内容
-     * @param runId       工单运行 ID，作为记忆 conversationId；null 表示无记忆（单轮）
+     * @param runId       工单运行 ID，作留痕关联 + 心跳；null 表示无 run 上下文
      * @return LLM 响应（内容 + prompt/completion token；token 缺失记 0）
      */
     public LlmResponse invoke(String callName, String promptFile, String userContent, String runId) {
         ChatClient routed = modelRouter.clientFor(callName);
-        return doInvoke(routed, promptFile, userContent, runId);
+        return doInvoke(routed, promptFile, userContent, runId, callName, false);
+    }
+
+    /**
+     * 带记忆开关的重载：withMemory=true 时按 runId 设 conversationId，挂记忆 advisor 隔离对话历史。
+     * 仅追问等多轮对话场景使用；管线单轮调用一律走 4 参版本（防历史膨胀击穿输入上限）。
+     */
+    public LlmResponse invoke(String callName, String promptFile, String userContent,
+                              String runId, boolean withMemory) {
+        ChatClient routed = modelRouter.clientFor(callName);
+        return doInvoke(routed, promptFile, userContent, runId, callName, withMemory);
+    }
+
+    /**
+     * 流式路径：逐块聚合内容，每个增量回调 onDelta（供 SSE 实时输出）。
+     *
+     * <p>超时语义：两个数据块之间超过 readTimeoutSeconds 即失败（与阻塞调用的读超时对齐），
+     * 防连接僵死无限挂起。异常分类与 doInvoke 一致。
+     *
+     * @param onDelta 增量回调（null 则不回调，仍聚合返回完整内容）
+     */
+    public LlmResponse invokeStream(String callName, String promptFile, String userContent,
+                                    String runId, Consumer<String> onDelta) {
+        String fullPrompt = null;
+        try {
+            heartbeat(runId);
+            ChatClient routed = modelRouter.clientFor(callName);
+            String promptTemplate = loadPrompt(promptFile);
+            String safeContent = truncateByModelWindow(promptTemplate, userContent, callName);
+            fullPrompt = promptTemplate + "\n\n简历内容：\n" + safeContent;
+            StringBuilder content = new StringBuilder();
+            AtomicReference<String> modelRef = new AtomicReference<>();
+            AtomicReference<Usage> usageRef = new AtomicReference<>();
+            routed.prompt().system(systemBasePrompt).user(fullPrompt)
+                    .stream().chatResponse()
+                    .timeout(Duration.ofSeconds(readTimeoutSeconds))
+                    .doOnNext(chunkResponse -> {
+                        String delta = extractDelta(chunkResponse);
+                        if (delta != null && !delta.isEmpty()) {
+                            content.append(delta);
+                            if (onDelta != null) {
+                                onDelta.accept(delta);
+                            }
+                        }
+                        ChatResponseMetadata metadata = chunkResponse.getMetadata();
+                        if (metadata != null) {
+                            if (metadata.getModel() != null) {
+                                modelRef.set(metadata.getModel());
+                            }
+                            if (metadata.getUsage() != null) {
+                                usageRef.set(metadata.getUsage());
+                            }
+                        }
+                    })
+                    .blockLast();
+            Usage usage = usageRef.get();
+            int promptTokens = promptTokensOf(usage);
+            int completionTokens = completionTokensOf(usage);
+            recordInteraction(runId, promptFile, modelRef.get(), promptTokens, completionTokens,
+                    fullPrompt, content.toString(), true);
+            return LlmResponse.of(content.toString(), promptTokens, completionTokens, modelRef.get());
+        } catch (IOException ex) {
+            recordInteraction(runId, promptFile, null, 0, 0, null, "ERROR: " + ex.getMessage(), false);
+            throw new NonRetryableCallException("Failed to load prompt: " + promptFile, ex);
+        } catch (NonRetryableCallException | RetryableCallException ex) {
+            recordInteraction(runId, promptFile, null, 0, 0, fullPrompt, "ERROR: " + ex.getMessage(), false);
+            throw ex;
+        } catch (Exception ex) {
+            recordInteraction(runId, promptFile, null, 0, 0, fullPrompt, "ERROR: " + ex.getMessage(), false);
+            log.debug("LLM invokeStream failed, classified as retryable, error={}", ex.getMessage());
+            throw new RetryableCallException("LLM stream call failed", ex);
+        }
     }
 
     /**
@@ -101,30 +196,36 @@ public class LlmGateway {
      * @param client      路由后的 ChatClient（已挂 advisor 或无）
      * @param promptFile  提示词文件
      * @param userContent 工单内容
-     * @param runId       非 null 时设 conversationId 启用记忆；null 走无 advisor 路径
+     * @param runId       run 标识（留痕 + 心跳）；withMemory=true 时兼作 conversationId
+     * @param callName    调用点标识（查模型窗口截断用）；null 走老路径固定字数截断
+     * @param withMemory  true 时挂记忆 advisor（多轮对话）；管线单轮调用一律 false
      */
-    private LlmResponse doInvoke(ChatClient client, String promptFile, String userContent, String runId) {
+    private LlmResponse doInvoke(ChatClient client, String promptFile, String userContent,
+                                 String runId, String callName, boolean withMemory) {
         String fullPrompt = null;
         try {
+            heartbeat(runId);
             String promptTemplate = loadPrompt(promptFile);
             // 优化1：按目标模型窗口动态截断 userContent，而非固定字数。
             // 剩余空间 = 模型窗口 - 系统提示已用 - prompt模板已用 - 安全余量(给输出和误差留)
-            String safeContent = truncateByModelWindow(promptTemplate, userContent, runId);
+            // 2026-09-18 修复：此处曾误传 runId（UUID），windowFor(uuid) 永远 miss 回退默认小窗口
+            String safeContent = truncateByModelWindow(promptTemplate, userContent, callName);
             fullPrompt = promptTemplate + "\n\n简历内容：\n" + safeContent;
             ChatClient.ChatClientRequestSpec request = client.prompt()
                     .system(systemBasePrompt)
                     .user(fullPrompt);
-            if (runId != null) {
+            if (withMemory && runId != null) {
                 // 设 conversationId：advisor 据此隔离各工单对话历史
                 request = request.advisors(spec -> spec.param(MEMORY_CONVERSATION_ID_KEY, runId));
             }
             ChatResponse chatResponse = request.call().chatResponse();
             String content = chatResponse.getResult().getOutput().getText();
             // 阶段4：透传实际模型名（来自响应 metadata），支撑 token 指标按 model 分维
-            String model = chatResponse.getMetadata().getModel();
-            Usage usage = chatResponse.getMetadata().getUsage();
-            int promptTokens = usage.getPromptTokens() != null ? usage.getPromptTokens().intValue() : 0;
-            int completionTokens = usage.getCompletionTokens() != null ? usage.getCompletionTokens().intValue() : 0;
+            ChatResponseMetadata metadata = chatResponse.getMetadata();
+            String model = metadata != null ? metadata.getModel() : null;
+            Usage usage = metadata != null ? metadata.getUsage() : null;
+            int promptTokens = promptTokensOf(usage);
+            int completionTokens = completionTokensOf(usage);
             // 记录 LLM 交互日志（优化证据链）
             recordInteraction(runId, promptFile, model, promptTokens, completionTokens,
                     fullPrompt, content, true);
@@ -143,6 +244,38 @@ public class LlmGateway {
             log.debug("LLM invoke failed, classified as retryable, error={}", ex.getMessage());
             throw new RetryableCallException("LLM call failed", ex);
         }
+    }
+
+    /** 心跳：长 LLM 调用前推进 run 的 updated_at，防 stale 重排在执行中误触发（僵尸双执行）。失败静默——诊断路径不阻塞主流程。 */
+    private void heartbeat(String runId) {
+        if (runId == null || agentRunRepositoryProvider == null) {
+            return;
+        }
+        try {
+            AgentRunRepository repository = agentRunRepositoryProvider.getIfAvailable();
+            if (repository != null) {
+                repository.touch(runId);
+            }
+        } catch (Exception ex) {
+            log.debug("Heartbeat failed, runId={}: {}", runId, ex.getMessage());
+        }
+    }
+
+    /** 从流式块中提取增量文本；首末块（无内容/只有元数据）返回 null。 */
+    private static String extractDelta(ChatResponse chunk) {
+        if (chunk == null || chunk.getResult() == null || chunk.getResult().getOutput() == null) {
+            return null;
+        }
+        String text = chunk.getResult().getOutput().getText();
+        return text == null ? null : text;
+    }
+
+    private static int promptTokensOf(Usage usage) {
+        return usage != null && usage.getPromptTokens() != null ? usage.getPromptTokens().intValue() : 0;
+    }
+
+    private static int completionTokensOf(Usage usage) {
+        return usage != null && usage.getCompletionTokens() != null ? usage.getCompletionTokens().intValue() : 0;
     }
 
     /**

@@ -1,5 +1,6 @@
 import { AlertTriangle, Award, Bookmark, Briefcase, CheckCircle, ClipboardList, GraduationCap, HelpCircle, Lightbulb, ShieldAlert, Sparkles, Target, TrendingUp, User } from 'lucide-react';
-import type { AnalysisResult, EnhancedKeyPoint, EnhancedRisk, Evaluation, ResumeProfile, QualityScore, SkillMatrix, FunnelVerdict, LeverageCard as LeverageCardType } from '../api/analysis';
+import type { AnalysisResult, EnhancedKeyPoint, EnhancedRisk, Evaluation, ResumeProfile, QualityScore, SkillMatrix, FunnelVerdict, LeverageCard as LeverageCardType, ResumeDiagnosis, ResumeProjectFact, ResumeFact } from '../api/analysis';
+import { AlignmentMatrix, type AlignmentEntry } from './AlignmentMatrix';
 
 function ModeBadge({ mode }: { mode: string | null | undefined }) {
   if (!mode) return null;
@@ -291,14 +292,127 @@ function EvaluationSection({ evaluation }: { evaluation: Evaluation }) {
       {dimensions.length > 0 && (
         <div className="space-y-1 rounded-lg bg-slate-50/80 p-3">
           {dimensions.map((d, i) => (
-            <div key={i} className="flex items-start gap-2 text-xs leading-5">
-              <span className="w-24 shrink-0 font-medium text-slate-500">{d.dimension}</span>
-              <span className="text-slate-600">{d.comment}</span>
+            <div key={i} className="space-y-0.5 text-xs leading-5">
+              <div className="flex items-start gap-2">
+                <span className="w-32 shrink-0 font-medium text-slate-500">{d.dimension}</span>
+                <span className="text-slate-600">{d.level ? `【${d.level}】` : ''}{d.comment}</span>
+              </div>
+              {(d.issueType && d.issueType !== 'NONE') && (
+                <div className="pl-32 text-[11px] text-amber-600">问题类型：{d.issueType}</div>
+              )}
+              {d.evidence && d.evidence.length > 0 && (
+                <div className="pl-32 text-[11px] text-slate-400">证据：{d.evidence.join('；')}</div>
+              )}
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function ProjectFactsSection({ projects, onCitation }: {
+  projects: ResumeProjectFact[];
+  onCitation?: (sectionId: string) => void;
+}) {
+  if (!projects.length) return null;
+  const renderFact = (label: string, fact: ResumeFact | null) => {
+    if (!fact || !fact.value) return null;
+    return <div className="text-xs leading-5 text-slate-600"><span className="font-medium text-slate-500">{label}：</span>{fact.value}</div>;
+  };
+  const renderList = (label: string, facts: ResumeFact[]) => {
+    const values = facts.filter(f => f?.value).map(f => f.value).join('、');
+    return values ? <div className="text-xs leading-5 text-slate-600"><span className="font-medium text-slate-500">{label}：</span>{values}</div> : null;
+  };
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-sky-600">
+        <Target size={15} />
+        项目事实与证据
+      </div>
+      <div className="space-y-2">
+        {projects.map((project, i) => (
+          <div key={project.projectId ?? i} className="rounded-lg border border-sky-100 bg-sky-50/50 p-3">
+            <div className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-700">
+              <span>{project.projectId ?? `项目 ${i + 1}`}</span>
+              {project.sectionId && <button type="button" onClick={() => onCitation?.(project.sectionId!)} className="text-sky-500 hover:underline">定位原文</button>}
+            </div>
+            {renderFact('背景', project.context)}
+            {renderFact('问题', project.problem)}
+            {renderList('职责', project.responsibilities)}
+            {renderList('技术', project.technologies)}
+            {renderFact('AI 链路', project.aiPipeline)}
+            {renderList('决策', project.decisions)}
+            {renderFact('结果', project.results)}
+            {renderFact('规模', project.scale)}
+            {renderFact('上线', project.deployment)}
+            <div className="mt-1 text-[11px] text-amber-600">
+              缺失字段不会被当作事实，需补充真实信息后再改写。
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DiagnosisSection({ diagnoses, onCitation }: {
+  diagnoses: ResumeDiagnosis[];
+  onCitation?: (sectionId: string) => void;
+}) {
+  if (!diagnoses || diagnoses.length === 0) return null;
+  const severityClass: Record<string, string> = {
+    HIGH: 'border-rose-200 bg-rose-50/70',
+    MEDIUM: 'border-amber-200 bg-amber-50/70',
+    LOW: 'border-slate-200 bg-slate-50/80',
+  };
+  const severityLabel: Record<string, string> = { HIGH: '优先处理', MEDIUM: '建议处理', LOW: '可优化' };
+  const levelLabel: Record<string, string> = {
+    L0_KEYWORD: 'L0 关键词', L1_ACTIVITY: 'L1 做过什么', L2_METHOD: 'L2 怎么做',
+    L3_RESULT: 'L3 有结果', L4_TRADE_OFF: 'L4 有权衡',
+  };
+  return (
+    <section>
+      <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-amber-700">
+        <Target size={15} /> 简历问题诊断与补强方向
+      </div>
+      <div className="space-y-3">
+        {diagnoses.map((d, i) => (
+          <div key={i} className={`rounded-xl border p-3 ${severityClass[d.severity] ?? severityClass.MEDIUM}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                {severityLabel[d.severity] ?? d.severity}
+              </span>
+              {d.evidenceLevel && <span className="text-[11px] font-medium text-slate-500">{levelLabel[d.evidenceLevel] ?? d.evidenceLevel}</span>}
+              <span className="text-sm font-semibold text-slate-800">{d.target}</span>
+            </div>
+            {d.claim && <div className="mt-2 border-l-2 border-amber-300 pl-2 text-xs leading-5 text-slate-600">原文：{d.claim}</div>}
+            {d.problemType && <div className="mt-2 text-xs font-medium text-rose-700">问题：{d.problemType}</div>}
+            {d.whyItHurts && <p className="mt-1 text-xs leading-5 text-slate-600">影响：{d.whyItHurts}</p>}
+            {d.missingFacts?.length > 0 && (
+              <div className="mt-2 text-xs leading-5 text-slate-600">
+                <span className="font-semibold text-slate-700">缺少事实：</span>{d.missingFacts.join('；')}
+              </div>
+            )}
+            {d.strengtheningDirection && (
+              <div className="mt-2 text-xs leading-5 text-emerald-700">
+                <span className="font-semibold">补强方向：</span>{d.strengtheningDirection}
+              </div>
+            )}
+            {d.interviewQuestion && (
+              <div className="mt-2 rounded-lg bg-white/70 px-2.5 py-1.5 text-xs leading-5 text-slate-600">
+                <span className="font-semibold text-slate-700">面试验证：</span>{d.interviewQuestion}
+              </div>
+            )}
+            {d.sectionId && (
+              <button type="button" onClick={() => onCitation?.(d.sectionId!)} className="mt-2 text-xs text-amber-700 hover:underline">
+                定位原文 →
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -378,7 +492,7 @@ function FunnelVerdictSection({ verdict, onCitation }: {
 
       {/* 第二关：岗位匹配（JD 对照 / 方向画像广撒网），默认折叠 */}
       {verdict.matchMode === 'DIRECTION' && (
-        <details className="group rounded-xl border border-sky-100 bg-sky-50/50 p-4">
+        <details className="group rounded-xl border border-sky-100 bg-sky-50/50 p-4" open>
           <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-semibold text-sky-700">
             <Target size={15} />
             方向匹配（广撒网模式：{verdict.archetypeId}）
@@ -386,6 +500,31 @@ function FunnelVerdictSection({ verdict, onCitation }: {
             <span className="ml-auto hidden text-xs font-normal text-slate-400 group-open:inline">收起</span>
           </summary>
           <div className="mt-3">
+
+          {/* 新增：对齐矩阵优先展示 */}
+          {verdict.requirementVerdicts && verdict.requirementVerdicts.length > 0 && (
+            <div className="mb-3">
+              <AlignmentMatrix entries={verdict.requirementVerdicts.map(rv => ({
+                requirementId: rv.requirementId,
+                requirement: rv.requirement,
+                status: rv.status === 'MET' ? 'FULL' : rv.status === 'PARTIAL' ? 'PARTIAL' : 'MISSING',
+                evidence: rv.supportingEvidence.map((ev, idx) => ({
+                  claim: rv.claim || ev,
+                  sectionId: rv.sectionIds[idx] || rv.sectionIds[0] || '',
+                  evidenceLevel: rv.evidenceLevel,
+                })),
+                gap: rv.reason,
+                fix: rv.fix ? {
+                  type: rv.fix.type,
+                  before: rv.fix.before,
+                  after: rv.fix.after,
+                  roiScore: rv.fix.roiScore,
+                  reason: rv.fix.reason,
+                  effort: rv.fix.effort,
+                } : undefined,
+              } as AlignmentEntry))} />
+            </div>
+          )}
 
           {verdict.mustHaveCoverage && verdict.mustHaveCoverage.length > 0 && (
             <div className="mb-3">
@@ -603,8 +742,14 @@ export default function ResumeReportCard({ result, mode, onCitation }: {
       {/* 候选人画像 */}
       {hasProfile && <ProfileBar profile={result.profile!} />}
 
+      {result.projectFacts && result.projectFacts.length > 0 && (
+        <ProjectFactsSection projects={result.projectFacts} onCitation={onCitation} />
+      )}
+
       {/* P12 漏斗式结论（新主结果，按"会死在哪一关"排序） */}
       {result.funnelVerdict && <FunnelVerdictSection verdict={result.funnelVerdict} onCitation={onCitation} />}
+
+      {result.diagnoses && <DiagnosisSection diagnoses={result.diagnoses} onCitation={onCitation} />}
 
       {/* 质量评分（P11 历史 run 兼容） */}
       {hasQualityScore && <QualityScoreCard score={result.qualityScore!} />}

@@ -6,8 +6,8 @@ import java.util.List;
 
 /**
  * 评测用例——固定输入 + 结果断言，让"引用防幻觉""降级可靠"这类主张变得可度量。
- * <p>断言设计为模式无关（REACT/LLM/FALLBACK 皆须通过），保证无 API Key 的 CI 环境
- * 也能跑通全量回归；接入真实 Key 时同一批用例自动验证更强路径。
+ * <p>断言覆盖直连 LLM 与通用文档分析的 FALLBACK 路径；resume-review 在无可用 LLM
+ * 时按 fail-closed 策略结束为 LLM_UNAVAILABLE，不伪造内容结果。
  * <p>P10 起支持配对缺陷注入：简历×JD 埋已知匹配/差距/幻觉陷阱，
  * 断言差距检出率、匹配维度完整性与面试题 grounding。
  * <p>P12 起支持方向画像模式（targetDirection）与漏斗分角度断言：

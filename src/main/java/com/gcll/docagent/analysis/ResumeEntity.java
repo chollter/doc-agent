@@ -33,6 +33,16 @@ public record ResumeEntity(
         return attributes != null ? attributes.get("kind") : null;
     }
 
+    /** Source section assigned by the extraction contract, e.g. sec-3. */
+    public String sectionId() {
+        return attributes != null ? attributes.get("sectionId") : null;
+    }
+
+    /** Continuous source quote used to audit a claim without trusting its value. */
+    public String sourceQuote() {
+        return attributes != null ? attributes.get("sourceQuote") : null;
+    }
+
     public static ResumeEntity of(EntityType type, String value, String context) {
         return new ResumeEntity(type, value, context, Map.of());
     }

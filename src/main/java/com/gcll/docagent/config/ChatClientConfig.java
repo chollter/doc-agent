@@ -104,6 +104,11 @@ public class ChatClientConfig {
      * {@code systemBasePrompt} 是无状态 String bean，不参与循环依赖，直接注入即可
      * （曾误加 {@code @Lazy}，但 Spring 无法对 final 的 String 生成 CGLIB 代理，导致启动失败）。
      *
+     * <p><b>HTTP 超时（2026-09-18 事故修复）</b>：JDK HttpClient 默认无读超时，
+     * 连接僵死时线程无限阻塞（单次调用挂 15 分钟，触发 stale 重排双执行）。
+     * 这里显式建带超时的 RestClient 交给 DashScopeApi——阻塞调用读超时；
+     * 流式调用的“块间间隔”超时由 {@code LlmGateway.invokeStream} 的 Flux.timeout 兑现。
+     *
      * <p><b>兼容性风险点</b>（本地验证重点）：
      * M6.1 的 DashScopeChatModel 挂 GA 的 MessageChatMemoryAdvisor 是否运行时兼容，
      * 需在本地真跑一次确认。若 advisor 不生效或抛类转换异常，关闭 chat-memory.enabled
@@ -112,14 +117,31 @@ public class ChatClientConfig {
     @Bean
     public ModelRouter.ChatClientFactory chatClientFactory(
             @Value("${spring.ai.dashscope.api-key:}") String apiKey,
+            @Value("${docagent.llm.connect-timeout-seconds:10}") long connectTimeoutSeconds,
+            @Value("${docagent.llm.read-timeout-seconds:180}") long readTimeoutSeconds,
             ChatMemory chatMemory,
             ModelRoutingProperties properties,
             LlmCallExecutor llmCallExecutor,
             String systemBasePrompt) {
         ModelRoutingProperties.ChatMemory mem = properties.getChatMemory();
         return model -> {
-            // 1. 复用单个 DashScopeApi（apiKey 共用），只换 options.model
-            DashScopeApi api = new DashScopeApi(apiKey);
+            // 1. 复用单个 DashScopeApi（apiKey 共用），只换 options.model；
+            //    显式装配超时（JDK HttpClient 默认无读超时，会无限挂起）
+            java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(java.time.Duration.ofSeconds(connectTimeoutSeconds))
+                    .build();
+            org.springframework.http.client.JdkClientHttpRequestFactory requestFactory =
+                    new org.springframework.http.client.JdkClientHttpRequestFactory(httpClient);
+            requestFactory.setReadTimeout(java.time.Duration.ofSeconds(readTimeoutSeconds));
+            org.springframework.web.client.RestClient.Builder restClientBuilder =
+                    org.springframework.web.client.RestClient.builder().requestFactory(requestFactory);
+            // M6.1 无 builder()，用 4+1 参构造（与官方 2 参构造同源：默认错误处理器 + 自定义超时 RestClient）
+            DashScopeApi api = new DashScopeApi(
+                    "https://dashscope.aliyuncs.com",
+                    apiKey,
+                    restClientBuilder,
+                    org.springframework.web.reactive.function.client.WebClient.builder(),
+                    org.springframework.ai.retry.RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER);
             DashScopeChatOptions options = DashScopeChatOptions.builder()
                     .withModel(model)
                     .build();

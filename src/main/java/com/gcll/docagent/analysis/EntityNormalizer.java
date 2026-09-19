@@ -34,6 +34,6 @@ public class EntityNormalizer {
                 normalized.add(fixed);
             }
         }
-        return new ResumeEntities(normalized);
+        return new ResumeEntities(normalized, entities.getProjects());
     }
 }

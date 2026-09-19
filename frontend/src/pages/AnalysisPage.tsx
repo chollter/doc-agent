@@ -59,6 +59,8 @@ export default function AnalysisPage() {
   const [optimizationNote, setOptimizationNote] = useState('');
   const [chainSteps, setChainSteps] = useState<AuditStep[]>([]);
   const [interviewMode, setInterviewMode] = useState(false);
+  // 实时生成（2026-09-18）：DIRECT_LLM 流式 token 增量拼接展示；保留尾部 12k 字防长输出卡 UI
+  const [liveOutput, setLiveOutput] = useState('');
   // 执行过程面板折叠态：运行中展开看进度，完成后自动收缩让主屏给结果，失败保持展开
   const [processCollapsed, setProcessCollapsed] = useState(false);
 
@@ -122,6 +124,7 @@ export default function AnalysisPage() {
     setChainSteps([]);
     setDetail(null);
     setHighlight(null);
+    setLiveOutput('');
     setPhase('running');
     setProcessCollapsed(false);
     setElapsed(0);
@@ -136,7 +139,12 @@ export default function AnalysisPage() {
         optimizationNote.trim() || undefined
       );
       analysisApi.getDocument(runId).then(setDoc).catch(() => setDoc(null));
-      closeStreamRef.current = subscribeSteps(runId, mergeStep);
+      closeStreamRef.current = subscribeSteps(
+        runId,
+        mergeStep,
+        undefined,
+        (t) => setLiveOutput((prev) => (prev + t.delta).slice(-12000)),
+      );
       pollRef.current = window.setInterval(() => {
         refreshDetail(runId).catch(() => {/* 轮询失败由下一轮兜底 */});
       }, 2500);
@@ -168,6 +176,7 @@ export default function AnalysisPage() {
     setDetail(null);
     setDoc(null);
     setError(null);
+    setLiveOutput('');
     setInterviewMode(false);
   };
 
@@ -475,6 +484,17 @@ export default function AnalysisPage() {
             </div>
             <StepTimeline steps={steps} />
           </div>
+          {phase === 'running' && liveOutput && (
+            <div>
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+                <Loader2 size={12} className="animate-spin" />
+                实时生成
+              </div>
+              <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap break-all rounded-xl bg-slate-900 p-3 text-xs leading-5 text-emerald-300">
+                {liveOutput}
+              </pre>
+            </div>
+          )}
           {detail?.status === 'COMPLETED' && (
             <div>
               <div className="mb-2 text-xs font-semibold text-slate-500">阶段状态</div>

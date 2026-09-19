@@ -26,4 +26,12 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
             + "WHERE id = #{id} AND status = #{fromStatus}")
     int requeue(@org.apache.ibatis.annotations.Param("id") String id,
                 @org.apache.ibatis.annotations.Param("fromStatus") String fromStatus);
+
+    /**
+     * 心跳：推进 ANALYZING 状态 run 的 updated_at，防 stale 重排在长 LLM 调用执行中误触发
+     * （僵尸双执行）。仅 ANALYZING 生效——终态 run 不被心跳复活。
+     */
+    @Update("UPDATE agent_run SET updated_at = CURRENT_TIMESTAMP "
+            + "WHERE id = #{id} AND status = 'ANALYZING'")
+    int heartbeat(@org.apache.ibatis.annotations.Param("id") String id);
 }

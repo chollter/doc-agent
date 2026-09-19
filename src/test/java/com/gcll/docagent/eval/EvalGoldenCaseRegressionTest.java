@@ -12,9 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Golden case 回归——走完整生产链路（提交→异步执行→断言→轨迹指标）。
- * <p>断言与执行模式无关：无有效 API Key 的环境降级到 FALLBACK 也必须全绿，
- * 因此该测试在 CI（test-key，LLM 调用必然失败降级）与本地（真实 Key，REACT 路径）
- * 都是同一套通过标准。
+ * <p>无有效 API Key 时，resume-review 按产品策略 fail-closed，EvalRunner 将
+ * LLM_UNAVAILABLE 视为环境可用性结果；有有效 Key 或桩 LLM 时继续执行完整内容断言。
  */
 @SpringBootTest
 @ActiveProfiles("test")

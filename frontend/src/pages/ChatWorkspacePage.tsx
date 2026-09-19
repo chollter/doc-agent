@@ -27,7 +27,6 @@ type ChatMessage =
   | { id: string; role: 'assistant'; text: string }
   | { id: string; role: 'report'; verdict: FunnelVerdict; summary: string; mode: string | null; round: number }
   | { id: string; role: 'suggestions'; runId: string; suggestions: ActionableSuggestion[]; round: number }
-  | { id: string; role: 'chain'; steps: AuditStep[] }
   | { id: string; role: 'compare'; before: FunnelVerdict; after: FunnelVerdict };
 
 let seq = 0;
@@ -119,7 +118,10 @@ function ReportBubble({ verdict, summary, mode }: { verdict: FunnelVerdict; summ
       {verdict.vocabularyGaps && verdict.vocabularyGaps.length > 0 && (
         <div className="rounded-lg bg-sky-50/70 px-3 py-2 text-[11px] leading-5 text-sky-700">
           {verdict.vocabularyGaps.slice(0, 3).map((v, i) => (
-            <div key={i}>「{v.usedSynonym}」→ 建议补术语「{v.term}」</div>
+            <div key={i}>
+              <div>「{v.usedSynonym}」→ 建议补术语「{v.term}」</div>
+              {v.suggestion && <div className="text-[10px] text-sky-600">{v.suggestion}</div>}
+            </div>
           ))}
         </div>
       )}
@@ -219,6 +221,43 @@ export default function ChatWorkspacePage() {
   /** 等待 run 完成，产出报告消息序列 */
   const awaitRun = useCallback((runId: string, userMsgText: string, isReAnalysis: boolean, prevVerdict: FunnelVerdict | null) => {
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text: userMsgText }]);
+    
+    // SSE 流式订阅：实时更新左侧栏 ExecutionChain
+    const es = new EventSource(`/api/analysis/runs/${runId}/stream`);
+    closeStreamRef.current = () => es.close();
+    
+    es.addEventListener('step', (e) => {
+      const step = JSON.parse(e.data);
+      setChainSteps((prev) => {
+        const existing = prev.findIndex((s) => s.id === step.stepId);
+        const auditStep: AuditStep = {
+          id: step.stepId,
+          parentStepId: null,
+          stepName: step.stepName,
+          status: step.status,
+          inputSnapshot: null,
+          outputSnapshot: step.message || null,
+          llmUsed: false,
+          toolUsed: null,
+          costMs: 0,
+          errorMessage: null,
+          createdAt: new Date(step.timestamp).toISOString(),
+        };
+        if (existing >= 0) {
+          const next = [...prev];
+          next[existing] = auditStep;
+          return next;
+        }
+        return [...prev, auditStep];
+      });
+    });
+    
+    es.onerror = () => {
+      es.close();
+      closeStreamRef.current = null;
+      // SSE 断线回退到轮询（下方 setInterval 继续兜底）
+    };
+    
     pollRef.current = window.setInterval(async () => {
       try {
         const d = await analysisApi.getRun(runId);
@@ -228,7 +267,6 @@ export default function ChatWorkspacePage() {
           setLastRunId(runId);
           analysisApi.getAudit(runId).then((steps) => {
             setChainSteps(steps);
-            setMessages((prev) => [...prev, { id: nextId(), role: 'chain', steps }]);
           }).catch(() => {});
           const verdict = d.result?.funnelVerdict ?? null;
           setLastVerdict(verdict);
@@ -450,13 +488,6 @@ export default function ChatWorkspacePage() {
             }
             if (m.role === 'compare') {
               return <CompareBubble key={m.id} before={m.before} after={m.after} />;
-            }
-            if (m.role === 'chain') {
-              return (
-                <div key={m.id} className="max-w-[95%]">
-                  <ExecutionChain steps={m.steps} defaultCollapsed />
-                </div>
-              );
             }
             // suggestions
             return (

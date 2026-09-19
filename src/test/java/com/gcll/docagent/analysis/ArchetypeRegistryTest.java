@@ -27,7 +27,7 @@ class ArchetypeRegistryTest {
     @Test
     void shouldResolveDirectionByAlias() {
         assertThat(registry.resolve("AI应用开发")).isPresent();
-        assertThat(registry.resolve("想找 agent 开发方向")).isPresent();
+        assertThat(registry.resolve("想找大模型应用方向")).isPresent();
         assertThat(registry.resolve("llm应用")).isPresent();
         assertThat(registry.resolve("前端开发")).isEmpty();
     }

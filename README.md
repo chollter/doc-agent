@@ -100,7 +100,7 @@ mvn spring-boot:run
 http://localhost:8020
 ```
 
-生产/团队环境切 PostgreSQL：`--spring.profiles.active=pg`（连接参数见 `application-pg.yml`）。模型默认 qwen-plus，`LLM_MODEL` 可换；摘要等简单调用自动路由 qwen-turbo。
+生产/团队环境切 PostgreSQL：`--spring.profiles.active=pg`（连接参数见 `application-pg.yml`）。判断类调用（主结论/评价专调）默认路由 qwen-max（`LLM_STRONG_MODEL` 可换），ReAct 循环与追问对话用 `LLM_MODEL`（默认 qwen-plus，演示建议 `LLM_MODEL=qwen-max`），摘要等简单调用自动路由 qwen-turbo。
 
 ### 前端开发模式
 

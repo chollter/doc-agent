@@ -13,18 +13,53 @@
 - GAP：时间空窗
 - WORK_ENTRY：聚合工作经历条目——以它为核心组织输出，每段经历一条（公司+角色+时间段+该段全部核心声明），attributes 含 kind 与 METRIC 数量 metricCount
 
+除 entities 外，若简历中存在项目/工作成果，再输出 projects。项目事实是后续岗位匹配的唯一事实来源：
+- context：项目背景、用户或使用方
+- problem：解决的问题
+- responsibilities：候选人明确负责的工作
+- technologies：实际使用的技术
+- aiPipeline：模型、Prompt、RAG、Agent、工具调用或工作流链路
+- decisions：技术决策、方案取舍或约束
+- results：结果、指标或用户反馈
+- scale：用户、数据量、调用量、延迟等规模
+- deployment：上线、部署、监控或生产使用情况
+
+每个事实都必须是对象 {"value":"...", "status":"explicit|inferred|missing", "sourceQuote":"..."}。
+只有原文明确出现的内容才能标记 explicit；无法确认就输出 missing，禁止补数字、用户、结果或职责。
+
 输出 JSON 格式：
 {
   "entities": [
-    {"type": "SKILL", "value": "Java", "context": "5年 Java 开发经验", "attributes": {"proficiency": "精通"}},
+    {"type": "SKILL", "value": "Java", "context": "5年 Java 开发经验", "attributes": {"proficiency": "精通", "sectionId": "sec-2", "sourceQuote": "5年 Java 开发经验"}},
     {"type": "TIME_PERIOD", "value": "2022.03-2024.08", "context": "XX公司 高级工程师", "attributes": {"kind": "work"}},
     {"type": "METRIC", "value": "QPS 提升 5 倍", "context": "优化订单系统性能"},
     {"type": "EDUCATION", "value": "XX大学 计算机科学与技术 本科 2018", "context": "教育经历", "attributes": {"school": "XX大学", "degree": "本科", "major": "计算机科学与技术", "year": "2018"}},
-    {"type": "WORK_ENTRY", "value": "XX公司 高级工程师 2022.03-2024.08 主导订单系统重构", "context": "工作经历", "attributes": {"kind": "work", "metricCount": "2"}}
+    {"type": "WORK_ENTRY", "value": "XX公司 高级工程师 2022.03-2024.08 主导订单系统重构", "context": "工作经历", "attributes": {"kind": "work", "metricCount": "2", "sectionId": "sec-3", "sourceQuote": "主导订单系统重构"}}
   ]
+}
+
+项目输出格式：
+{
+  "projects": [{
+    "projectId": "project-1",
+    "sectionId": "sec-3",
+    "context": {"value":"...", "status":"explicit", "sourceQuote":"原文连续片段"},
+    "problem": {"value":null, "status":"missing", "sourceQuote":null},
+    "responsibilities": [],
+    "technologies": [],
+    "aiPipeline": {"value":null, "status":"missing", "sourceQuote":null},
+    "decisions": [],
+    "results": [],
+    "scale": {"value":null, "status":"missing", "sourceQuote":null},
+    "deployment": {"value":null, "status":"missing", "sourceQuote":null}
+  }]
 }
 
 要求：
 - 教育经历的时间段 kind 标 "education"，工作经历标 "work"，项目经历标 "project"
 - 同一信息只提取一次，不要重复
 - 日期只规范格式，不改写内容
+- 输入中的 [SECTION_ID=sec-X] 是唯一章节标识；每个 CLAIM、ACHIEVEMENT、WORK_ENTRY、METRIC 必须在 attributes 中填写真实 sectionId。
+- 每个 CLAIM、ACHIEVEMENT、WORK_ENTRY、METRIC 必须填写 sourceQuote：来自该章节的原文连续片段，不得改写、总结或拼接不存在的文字；找不到连续片段时省略该实体，不要猜测。
+- sourceQuote、sectionId 是审计字段，不能用 context 代替，也不能填虚构章节 ID。
+- project 的 sectionId 必须是项目主要事实所在的真实章节；每个 explicit 事实的 sourceQuote 必须是该章节中的连续原文。

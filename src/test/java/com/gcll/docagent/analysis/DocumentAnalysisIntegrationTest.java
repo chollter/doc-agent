@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -65,9 +66,11 @@ class DocumentAnalysisIntegrationTest {
                  "risks":["LLM 输出不稳定"],
                  "suggestions":["保持降级链路"],
                  "citations":[{"sectionId":"sec-2","quote":"采用 ReAct 循环阅读文档"},
-                              {"sectionId":"sec-99","quote":"编造的引用"}]}
+                               {"sectionId":"sec-2","quote":"该章节不存在的伪造内容"},
+                               {"sectionId":"sec-99","quote":"编造的引用"}]}
                 """;
-        when(llmGateway.invoke(anyString(), anyString(), anyString(), anyString()))
+        // 2026-09-18：DIRECT_LLM 主路径改流式 invokeStream，此处的 4 参 invoke stub 同步迁移
+        when(llmGateway.invokeStream(anyString(), anyString(), anyString(), anyString(), any()))
                 .thenReturn(LlmResponse.of(llmJson, 100, 50, "qwen-plus"));
 
         String runId = submit(MD, "提炼要点");
@@ -80,7 +83,7 @@ class DocumentAnalysisIntegrationTest {
         assertThat(node.get("executionMode").asText()).isEqualTo("LLM");
         assertThat(node.get("skill").asText()).isEqualTo("document-analysis");
         assertThat(node.get("summary").asText()).contains("ReAct");
-        // 编造引用（sec-99）被 CITATION_VERIFY 剔除，真实引用保留
+        // 不存在的 sectionId，以及真实 sectionId 下的伪造 quote 都会被剔除
         assertThat(node.get("result").get("citations").size()).isEqualTo(1);
         assertThat(node.get("result").get("citations").get(0).get("sectionId").asText()).isEqualTo("sec-2");
 
@@ -108,7 +111,7 @@ class DocumentAnalysisIntegrationTest {
 
     @Test
     void fallsBackToRuleModeWhenLlmFails() throws Exception {
-        when(llmGateway.invoke(anyString(), anyString(), anyString(), anyString()))
+        when(llmGateway.invokeStream(anyString(), anyString(), anyString(), anyString(), any()))
                 .thenThrow(new RuntimeException("llm down"));
 
         String runId = submit(MD, "提炼要点");
@@ -137,7 +140,7 @@ class DocumentAnalysisIntegrationTest {
                  "interviewQuestions":["你怎么设计高并发系统？"],
                  "citations":[]}
                 """;
-        when(llmGateway.invoke(anyString(), anyString(), anyString(), anyString()))
+        when(llmGateway.invokeStream(anyString(), anyString(), anyString(), anyString(), any()))
                 .thenReturn(LlmResponse.of(llmJson, 100, 50, "qwen-plus"));
 
         String runId = submit(MD, "分析匹配度");

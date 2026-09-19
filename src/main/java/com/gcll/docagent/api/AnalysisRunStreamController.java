@@ -32,7 +32,8 @@ public class AnalysisRunStreamController {
 
     @GetMapping(value = "/{runId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(@PathVariable String runId) {
-        SseEmitter emitter = new SseEmitter(600_000L);
+        // 30 分钟：长分析（含流式生成）期间不断连；token 事件天然保活，空闲阶段靠步骤事件
+        SseEmitter emitter = new SseEmitter(1_800_000L);
         stepEventPublisher.register(runId, emitter);
         replay(runId, emitter);
         return emitter;
