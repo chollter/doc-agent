@@ -264,53 +264,49 @@ function EvaluationSection({ evaluation }: { evaluation: Evaluation }) {
   const weaknesses = evaluation.weaknesses ?? [];
   const dimensions = evaluation.dimensions ?? [];
   return (
-    <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+    <section className="space-y-4">
       {evaluation.overall && (
-        <div className="text-sm font-semibold leading-7 text-slate-800">{evaluation.overall}</div>
+        <p className="text-sm leading-7 text-slate-900">{evaluation.overall}</p>
       )}
       {(strengths.length > 0 || weaknesses.length > 0) && (
-        <div className="grid gap-2 md:grid-cols-2">
+        <div className="grid gap-5 md:grid-cols-2">
           {strengths.length > 0 && (
-            <div className="rounded-lg bg-emerald-50/70 p-3">
-              <div className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-emerald-700">
-                <CheckCircle size={13} /> 强项
-              </div>
-              <ul className="space-y-1 text-xs leading-5 text-slate-700">
-                {strengths.map((s, i) => <li key={i}>· {s}</li>)}
+            <div>
+              <h4 className="mb-1.5 text-sm font-semibold text-slate-900">强项</h4>
+              <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
+                {strengths.map((s, i) => <li key={i}>{s}</li>)}
               </ul>
             </div>
           )}
           {weaknesses.length > 0 && (
-            <div className="rounded-lg bg-amber-50/70 p-3">
-              <div className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-amber-700">
-                <AlertTriangle size={13} /> 需注意
-              </div>
-              <ul className="space-y-1 text-xs leading-5 text-slate-700">
-                {weaknesses.map((s, i) => <li key={i}>· {s}</li>)}
+            <div>
+              <h4 className="mb-1.5 text-sm font-semibold text-slate-900">主要问题</h4>
+              <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
+                {weaknesses.map((s, i) => <li key={i}>{s}</li>)}
               </ul>
             </div>
           )}
         </div>
       )}
       {dimensions.length > 0 && (
-        <div className="space-y-1 rounded-lg bg-slate-50/80 p-3">
+        <div className="space-y-3 border-t border-slate-200 pt-4">
           {dimensions.map((d, i) => (
-            <div key={i} className="space-y-0.5 text-xs leading-5">
-              <div className="flex items-start gap-2">
-                <span className="w-32 shrink-0 font-medium text-slate-500">{d.dimension}</span>
-                <span className="text-slate-600">{d.level ? `【${d.level}】` : ''}{d.comment}</span>
+            <div key={i} className="space-y-1 text-sm leading-6">
+              <div>
+                <span className="mr-2 font-semibold text-slate-900">{d.dimension}</span>
+                <span className="text-slate-700">{d.level ? `【${d.level}】` : ''}{d.comment}</span>
               </div>
               {(d.issueType && d.issueType !== 'NONE') && (
-                <div className="pl-32 text-[11px] text-amber-600">问题类型：{d.issueType}</div>
+                <div className="text-xs text-slate-500">问题类型：{d.issueType}</div>
               )}
               {d.evidence && d.evidence.length > 0 && (
-                <div className="pl-32 text-[11px] text-slate-400">证据：{d.evidence.join('；')}</div>
+                <div className="text-xs text-slate-500">证据：{d.evidence.join('；')}</div>
               )}
             </div>
           ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -426,8 +422,9 @@ function FunnelVerdictSection({ verdict, onCitation }: {
 }) {
   const line = verdictLine(verdict);
   const evaluation = verdict.evaluation ?? null;
+  const showImprovementSuggestions = Boolean(0);
   return (
-    <div className="space-y-4">
+    <div className="resume-plain-output space-y-5">
       {/* 一票否决警报最优先；否则定性评价置顶（v6：首屏是评价而非指标标签） */}
       {line.alert && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
@@ -453,7 +450,7 @@ function FunnelVerdictSection({ verdict, onCitation }: {
       )}
 
       {/* 落地性校验（程序标记）：建议中的编造数字/失锚引文在此暴露 */}
-      {verdict.groundingFindings && verdict.groundingFindings.length > 0 && (
+      {showImprovementSuggestions && verdict.groundingFindings && verdict.groundingFindings.length > 0 && (
         <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-3">
           <div className="mb-1.5 text-xs font-semibold text-rose-600">
             落地性校验：{verdict.groundingFindings.length} 处建议未通过程序校验（数字无出处 / 引文失锚）
@@ -507,7 +504,7 @@ function FunnelVerdictSection({ verdict, onCitation }: {
           {/* 新增：对齐矩阵优先展示 */}
           {verdict.requirementVerdicts && verdict.requirementVerdicts.length > 0 && (
             <div className="mb-3">
-              <AlignmentMatrix entries={verdict.requirementVerdicts.map(rv => ({
+            <AlignmentMatrix showSuggestions={false} entries={verdict.requirementVerdicts.map(rv => ({
                 requirementId: rv.requirementId,
                 requirement: rv.requirement,
                 status: rv.status === 'MET' ? 'FULL' : rv.status === 'PARTIAL' ? 'PARTIAL' : 'MISSING',
@@ -583,7 +580,7 @@ function FunnelVerdictSection({ verdict, onCitation }: {
             </div>
           )}
 
-          {verdict.vocabularyGaps && verdict.vocabularyGaps.length > 0 && (
+          {showImprovementSuggestions && verdict.vocabularyGaps && verdict.vocabularyGaps.length > 0 && (
             <div className="mb-3">
               <div className="mb-1.5 text-xs font-semibold text-slate-500">搜索词汇覆盖（做了但没用行业术语，检索命中损失）</div>
               {verdict.vocabularyGaps.map((v, i) => (
@@ -651,7 +648,7 @@ function FunnelVerdictSection({ verdict, onCitation }: {
                         ))}
                       </div>
                     )}
-                    {d.gap && <div className="mt-1 text-[11px] text-amber-600">补齐后可投：{d.gap}</div>}
+                    {showImprovementSuggestions && d.gap && <div className="mt-1 text-[11px] text-amber-600">补齐后可投：{d.gap}</div>}
                   </div>
                 ))}
               </div>
@@ -787,9 +784,10 @@ export default function ResumeReportCard({ result, mode, onCitation }: {
   const hasEnhancedKeyPoints = result.enhancedKeyPoints && result.enhancedKeyPoints.length > 0;
   const hasEnhancedRisks = result.enhancedRisks && result.enhancedRisks.length > 0;
   const hasDeepAnalysis = hasProfile || hasQualityScore || hasEnhancedKeyPoints || hasEnhancedRisks;
+  const showImprovementSuggestions = Boolean(0);
 
   return (
-    <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div className="space-y-6 border border-slate-200 bg-white p-6 text-slate-900">
       <div className="flex items-start justify-between gap-3">
         <h3 className="text-base font-bold text-slate-800">简历分析报告</h3>
         <ModeBadge mode={mode} />
@@ -798,33 +796,35 @@ export default function ResumeReportCard({ result, mode, onCitation }: {
       {/* 候选人画像 */}
       {hasProfile && <ProfileBar profile={result.profile!} />}
 
-      {result.projectFacts && result.projectFacts.length > 0 && (
+      {showImprovementSuggestions && result.projectFacts && result.projectFacts.length > 0 && (
         <ProjectFactsSection projects={result.projectFacts} onCitation={onCitation} />
       )}
 
       {/* P12 漏斗式结论（新主结果，按"会死在哪一关"排序） */}
       {result.funnelVerdict && <FunnelVerdictSection verdict={result.funnelVerdict} onCitation={onCitation} />}
 
-      {result.diagnoses && <DiagnosisSection diagnoses={result.diagnoses} onCitation={onCitation} />}
+      {/* 改进建议/补强方向暂不展示，数据仍保留在结果中供后续启用。 */}
+      {showImprovementSuggestions && result.diagnoses && <DiagnosisSection diagnoses={result.diagnoses} onCitation={onCitation} />}
 
       {/* 质量评分（P11 历史 run 兼容） */}
-      {hasQualityScore && <QualityScoreCard score={result.qualityScore!} />}
+      {showImprovementSuggestions && hasQualityScore && <QualityScoreCard score={result.qualityScore!} />}
 
       {/* 候选人画像（LLM 总结；判断在结论区顶部的一句话裁决，不再混在一起） */}
-      {result.summary && (
-        <div className="rounded-xl bg-gradient-to-br from-indigo-50 to-violet-50 p-4">
-          <div className="mb-1 text-xs font-semibold text-indigo-400">候选人画像</div>
-          <div className="text-sm leading-7 text-slate-800">{result.summary}</div>
-        </div>
+      {/* evaluation.overall 与 summary 是同一裁决，避免重复渲染。 */}
+      {!result.funnelVerdict?.evaluation && result.summary && (
+        <section>
+          <h4 className="mb-2 text-sm font-semibold text-slate-900">总体评价</h4>
+          <p className="text-sm leading-7 text-slate-800">{result.summary}</p>
+        </section>
       )}
 
       {/* 增强亮点 */}
-      {hasEnhancedKeyPoints && (
+      {showImprovementSuggestions && hasEnhancedKeyPoints && (
         <EnhancedKeyPointsSection keyPoints={result.enhancedKeyPoints!} onCitation={onCitation} />
       )}
 
       {/* 增强风险 */}
-      {hasEnhancedRisks && (
+      {showImprovementSuggestions && hasEnhancedRisks && (
         <EnhancedRisksSection risks={result.enhancedRisks!} onCitation={onCitation} />
       )}
 

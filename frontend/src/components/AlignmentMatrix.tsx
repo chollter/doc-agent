@@ -86,7 +86,10 @@ function SuggestionCard({ fix, priority }: { fix: AlignmentEntry['fix']; priorit
   );
 }
 
-export function AlignmentMatrix({ entries }: { entries: AlignmentEntry[] }) {
+export function AlignmentMatrix({ entries, showSuggestions = true }: {
+  entries: AlignmentEntry[];
+  showSuggestions?: boolean;
+}) {
   if (!entries || entries.length === 0) {
     return null;
   }
@@ -126,7 +129,9 @@ export function AlignmentMatrix({ entries }: { entries: AlignmentEntry[] }) {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">匹配状态</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">简历证据</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">差距</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">改进建议</th>
+                {showSuggestions && (
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">改进建议</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -158,16 +163,18 @@ export function AlignmentMatrix({ entries }: { entries: AlignmentEntry[] }) {
                   <td className="px-4 py-3 text-xs text-slate-600">
                     {entry.gap || '—'}
                   </td>
-                  <td className="px-4 py-3">
-                    {entry.fix ? (
-                      <SuggestionCard
-                        fix={entry.fix}
-                        priority={entry.status === 'MISSING' ? 'HIGH' : 'MEDIUM'}
-                      />
-                    ) : (
-                      <span className="text-xs text-slate-400">无需改进</span>
-                    )}
-                  </td>
+                  {showSuggestions && (
+                    <td className="px-4 py-3">
+                      {entry.fix ? (
+                        <SuggestionCard
+                          fix={entry.fix}
+                          priority={entry.status === 'MISSING' ? 'HIGH' : 'MEDIUM'}
+                        />
+                      ) : (
+                        <span className="text-xs text-slate-400">无需改进</span>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

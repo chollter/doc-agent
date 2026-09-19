@@ -30,7 +30,7 @@
 ## 输出要求
 只输出合法 JSON，不要 markdown：
 {
-  "overall": "结论先行：简历质量档位（强/中等/偏弱）+最硬证据+最大拖累项；没有JD时不得输出初筛淘汰结论",
+  "overall": "250-400字完整评价。结论先行，但必须展开说明简历质量档位、最硬证据、主要问题及其影响；没有JD时不得输出初筛淘汰结论，也不要与 dimensions 机械重复",
   "dimensions": [{"dimension":"FACT_SPECIFICITY|PERSONAL_OWNERSHIP|TECHNICAL_DEPTH|RESULT_IMPACT|SCALE_COMPLEXITY|CREDIBILITY|READABILITY","level":"STRONG|MEDIUM|WEAK|UNKNOWN","comment":"基于证据的判断及对招聘方理解的影响","evidence":["原文连续短句或sectionId指向的事实"],"issueType":"CAPABILITY_GAP|EVIDENCE_INSUFFICIENT|EXPRESSION_PROBLEM|IRRELEVANT_TO_TARGET|NONE"}],
   "strengths": ["判断 + 原文证据"],
   "weaknesses": ["判断 + 原文证据 + 对筛选/面试的具体影响"],
