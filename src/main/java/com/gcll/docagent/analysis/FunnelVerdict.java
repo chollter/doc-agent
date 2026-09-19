@@ -28,7 +28,8 @@ public record FunnelVerdict(
         List<GroundingValidator.Finding> groundingFindings,
         Evaluation evaluation,
         List<EvidenceAssessment> evidenceAssessments,
-        MatchScore matchScore
+        MatchScore matchScore,
+        List<DirectionRecommendation> recommendedDirections
 ) {
 
     /** 匹配模式：JD 对照 / 方向画像（广撒网）/ 未指定。 */
@@ -110,7 +111,8 @@ public record FunnelVerdict(
     public static FunnelVerdict degraded(List<RedFlag> redFlags) {
         return new FunnelVerdict(redFlags != null ? redFlags : List.of(),
                 MODE_NONE, null, List.of(), List.of(), List.of(), null,
-                List.of(), StrengthStats.from(List.of()), null, List.of(), true, List.of(), null, List.of(), null);
+                List.of(), StrengthStats.from(List.of()), null, List.of(), true, List.of(), null, List.of(), null,
+                List.of());
     }
 
     /**

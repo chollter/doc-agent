@@ -98,6 +98,11 @@ function ReportBubble({ verdict, summary, mode }: { verdict: FunnelVerdict; summ
             <Target size={11} /> 方向匹配
           </span>
         )}
+        {verdict.matchMode === 'NONE' && verdict.recommendedDirections && verdict.recommendedDirections.length > 0 && (
+          <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">
+            <Target size={11} /> 最适方向「{(verdict.recommendedDirections.find((d) => d.tier === 'BEST_FIT') ?? verdict.recommendedDirections[0]).direction}」
+          </span>
+        )}
         {mode && <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] text-slate-500">{mode}</span>}
       </div>
 

@@ -89,7 +89,8 @@ public class DocumentAnalysisController {
 
     /** 历史列表（新→旧）。 */
     @GetMapping("/runs")
-    public List<Summary> listRuns() {        return agentRunRepository.findAll().stream()
+    public List<Summary> listRuns() {
+        return agentRunRepository.findAll().stream()
                 .sorted(Comparator.comparing(AgentRun::getCreatedAt).reversed())
                 .limit(50)
                 .map(run -> new Summary(

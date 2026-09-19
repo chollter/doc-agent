@@ -68,11 +68,15 @@
   "variantFit": [
     {"variantId": "子方向id", "name": "子方向名", "fit": "HIGH|MEDIUM|LOW", "reason": "适配理由"}
   ],
-  "positioning": null
+  "positioning": null,
+  "recommendedDirections": [
+    {"direction": "从简历已证明能力推断的方向名（如：AI应用开发/后端开发/数据平台）", "evidence": ["支撑该方向的简历原文连续片段"], "sectionId": "sec-X", "gap": "跳一跳还差哪一块真实证据（证据已充分则留空字符串）"}
+  ]
 }
 
-重要：matchDimensions、mustHaveCoverage、variantFit 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
-positioning 在方向画像模式下为对象：{"anchored": false, "currentAnchor": "当前定位", "suggestedAnchor": "建议定位", "comment": "理由"}；无画像时为 null。
+重要：matchDimensions、mustHaveCoverage、variantFit、recommendedDirections 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
+positioning：方向画像模式或无 JD 时均输出对象 {"anchored": false, "currentAnchor": "简历当前给人的定位", "suggestedAnchor": "更锐利的建议定位", "comment": "理由"}；无 JD 时基于简历自身定位清晰度判断，不参照任何外部岗位要求。
+recommendedDirections：无 JD 时的核心输出——2-4 条，direction 名只能从简历已证明的能力推断，每条至少 1 段 evidence 且必须是原文连续片段（系统会回锚校验，锚不回的整条作废）；不要自己标注"稳妥/跳一跳"，档位由系统按被引证据的强度判定，你只需在 gap 里写清"还差哪块真实证据"。
 
 experienceStrength 评估标准：
 - star.result 判断该条经历是否有可验证的结果（数字、规模、影响）
@@ -80,7 +84,7 @@ experienceStrength 评估标准：
 - attribution：OBSERVER=提及 / PARTICIPANT=参与 / OWNER=负责模块 / LEAD=主导全局
 - 归因与结果不匹配必须写 concern；最多评估 6 条核心经历
 
-无JD且无方向画像时 matchDimensions/mustHaveCoverage/variantFit 设为空数组，positioning 为 null。
+无JD且无方向画像时 matchDimensions/mustHaveCoverage/variantFit 设为空数组；positioning 输出基于简历自身的自锚定对象（非 null）；recommendedDirections 必须输出 2-4 条方向建议。
 
 规则：
 - 无 JD 时先建立“原文主张 → 简历事实 → 证据强度 → 表达问题”的质量证据链，再写 summary、diagnoses 和岗位推荐；不能先按方向画像要求给简历判缺口。

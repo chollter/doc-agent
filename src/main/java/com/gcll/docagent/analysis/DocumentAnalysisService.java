@@ -91,6 +91,7 @@ public class DocumentAnalysisService {
     private final EvidenceAssessmentService evidenceAssessmentService;
     private final AlignmentAnalyzer alignmentAnalyzer;
     private final MatchScoreCalculator matchScoreCalculator;
+    private final DirectionRecommender directionRecommender;
     private final ApplicationEventPublisher eventPublisher;
     private final AgentStepEventPublisher stepEventPublisher;
     private final boolean reactEnabled;
@@ -126,6 +127,7 @@ public class DocumentAnalysisService {
             EvidenceAssessmentService evidenceAssessmentService,
             AlignmentAnalyzer alignmentAnalyzer,
             MatchScoreCalculator matchScoreCalculator,
+            DirectionRecommender directionRecommender,
             ApplicationEventPublisher eventPublisher,
             AgentStepEventPublisher stepEventPublisher,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
@@ -153,6 +155,7 @@ public class DocumentAnalysisService {
         this.evidenceAssessmentService = evidenceAssessmentService;
         this.alignmentAnalyzer = alignmentAnalyzer;
         this.matchScoreCalculator = matchScoreCalculator;
+        this.directionRecommender = directionRecommender;
         this.eventPublisher = eventPublisher;
         this.stepEventPublisher = stepEventPublisher;
         this.reactEnabled = reactEnabled;
@@ -580,20 +583,31 @@ public class DocumentAnalysisService {
             } else {
                 traceParse(tracer, doc);
             }
-            // 简历技能：实体抽取 → 画像构建（供人群推断）→ 红旗筛查（人群调阈值）→ 方向画像解析（仅首轮）
+            // 无 JD 时直接把带 SECTION_ID 的原文交给质量评估；有 JD 时才做语义抽取，供要求对齐使用。
             ResumeContext resumeCtx = ResumeContext.empty();
             if (state.turn() == 0 && state.round() == 0 && "resume-review".equals(skill.name())) {
-                String extractStep = tracer.begin("ENTITY_EXTRACT", null);
-                tracer.recordMeta(extractStep, true, "LLM");
-                try {
-                    // 标题行必须并入全文：Markdown 解析把"### 公司·职位 2021.07-至今"存进
-                    // heading 而 section.text 只有正文——日期全在标题里，漏掉会让实体抽取、
-                    // 红旗扫描、落地校验、词汇 diff 全部拿不到关键信息（md 简历系统性受损）
-                    String fullText = doc.sections().stream()
-                            .map(sec -> (sec.heading() != null && !sec.heading().isBlank()
-                                    ? sec.heading() + "\n" : "") + sec.text())
-                            .reduce((a, b) -> a + "\n" + b)
-                            .orElse("");
+                String fullText = doc.sections().stream()
+                        .map(sec -> (sec.heading() != null && !sec.heading().isBlank()
+                                ? sec.heading() + "\n" : "") + sec.text())
+                        .reduce((a, b) -> a + "\n" + b)
+                        .orElse("");
+                Archetype archetype = resolveArchetype(run);
+                boolean hasJd = run.getJobDescription() != null && !run.getJobDescription().isBlank();
+                if (!hasJd) {
+                    List<RedFlag> redFlags = redFlagChecker.checkFromText(fullText);
+                    TargetProfile targetProfile = resolveTargetProfile(run, archetype);
+                    String matchMode = targetProfile != null && TargetProfile.MODE_DIRECTION.equals(targetProfile.mode())
+                            ? FunnelVerdict.MODE_DIRECTION : FunnelVerdict.MODE_NONE;
+                    resumeCtx = new ResumeContext(new ResumeEntities(List.of()), redFlags, null, archetype,
+                            targetProfile, matchMode, false, fullText, Persona.GENERAL, true);
+                    String stepId = tracer.begin("RESUME_ORIGINAL_TEXT", null);
+                    tracer.recordMeta(stepId, false, "QUALITY_FIRST");
+                    tracer.end(stepId, "semantic extraction skipped (no JD)", null);
+                } else {
+                    String extractStep = tracer.begin("ENTITY_EXTRACT", null);
+                    tracer.recordMeta(extractStep, true, "LLM");
+                    try {
+                        // 标题行必须并入全文：Markdown 解析把标题存进 heading，正文只有 section.text。
                     String extractionText = doc.sections().stream()
                             .map(sec -> "[SECTION_ID=" + sec.id() + "]\n"
                                     + (sec.heading() != null && !sec.heading().isBlank()
@@ -618,18 +632,16 @@ public class DocumentAnalysisService {
                     tracer.recordMeta(checkStep, false, null);
                     tracer.end(checkStep, "found " + redFlags.size() + " red flags, persona=" + persona, null);
 
-                    Archetype archetype = resolveArchetype(run);
                     TargetProfile targetProfile = resolveTargetProfile(run, archetype);
-                    String matchMode = targetProfile != null && TargetProfile.MODE_DIRECTION.equals(targetProfile.mode())
-                            ? FunnelVerdict.MODE_DIRECTION
-                            : run.getJobDescription() != null ? FunnelVerdict.MODE_JD
-                            : FunnelVerdict.MODE_NONE;
                     resumeCtx = new ResumeContext(entities, redFlags, profile, archetype, targetProfile,
-                            matchMode, outcome.degraded(), fullText, persona, true);
+                            FunnelVerdict.MODE_JD, outcome.degraded(), fullText, persona, true);
                 } catch (Exception ex) {
                     tracer.end(extractStep, "extraction failed: " + ex.getMessage(), ex.getMessage());
                     log.warn("Entity extraction / profile build failed: {}", ex.getMessage());
-                    resumeCtx = ResumeContext.empty();
+                    TargetProfile targetProfile = resolveTargetProfile(run, archetype);
+                    resumeCtx = new ResumeContext(new ResumeEntities(List.of()), redFlagChecker.checkFromText(fullText),
+                            null, archetype, targetProfile, FunnelVerdict.MODE_JD, true, fullText, Persona.GENERAL, true);
+                }
                 }
             }
             analyzeAndFinish(runId, run, doc, skill, state, tracer, resumeCtx,
@@ -1167,7 +1179,8 @@ public class DocumentAnalysisService {
                     parseLeverageCards(raw.leverageCards),
                     parseCoverage(raw.mustHaveCoverage),
                     parseVariantFit(raw.variantFit),
-                    parsePositioning(raw.positioning));
+                    parsePositioning(raw.positioning),
+                    parseDirectionProposals(raw.recommendedDirections));
             return new ParsedAnalysis(analysis, funnel);
         } catch (IllegalArgumentException ex) {
             throw ex;
@@ -1256,6 +1269,7 @@ public class DocumentAnalysisService {
         public List<RawCoverage> mustHaveCoverage;
         public List<RawVariantFit> variantFit;
         public RawPositioning positioning;
+        public List<RawDirection> recommendedDirections;
     }
 
     /** P12 LLM 五角度输出——只进 FunnelVerdict，不进 AnalysisResult。评价（v7）走专调，不在此列。 */
@@ -1265,10 +1279,11 @@ public class DocumentAnalysisService {
             List<LeverageCard> leverageCards,
             List<MustHaveCoverage> mustHaveCoverage,
             List<VariantFit> variantFit,
-            PositioningCheck positioning
+            PositioningCheck positioning,
+            List<DirectionRecommendation.Proposal> directionProposals
     ) {
         static LlmFunnelFields empty() {
-            return new LlmFunnelFields(null, List.of(), List.of(), List.of(), List.of(), null);
+            return new LlmFunnelFields(null, List.of(), List.of(), List.of(), List.of(), null, List.of());
         }
     }
 
@@ -1321,6 +1336,14 @@ public class DocumentAnalysisService {
         public String currentAnchor;
         public String suggestedAnchor;
         public String comment;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static class RawDirection {
+        public String direction;
+        public List<String> evidence;
+        public String sectionId;
+        public String gap;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -1500,6 +1523,15 @@ public class DocumentAnalysisService {
         return new PositioningCheck(raw.anchored, raw.currentAnchor, raw.suggestedAnchor, raw.comment);
     }
 
+    /** LLM 提名 → Proposal(未经校验)。grounding 与 tier 判定在 DirectionRecommender 里做。 */
+    private static List<DirectionRecommendation.Proposal> parseDirectionProposals(List<RawDirection> raw) {
+        if (raw == null) return List.of();
+        return raw.stream()
+                .filter(d -> d != null && d.direction != null && !d.direction.isBlank())
+                .map(d -> new DirectionRecommendation.Proposal(d.direction, d.evidence, d.sectionId, d.gap))
+                .toList();
+    }
+
     /** 定性评价（v6）：清洗空白条目；全部为空时返回 null（历史 run/LLM 未产出时前端优雅跳过）。 */
     private static FunnelVerdict.Evaluation parseEvaluation(RawEvaluation raw) {
         if (raw == null) return null;
@@ -1544,6 +1576,9 @@ public class DocumentAnalysisService {
         List<VariantFit> variantFit = mergeVariants(ctx.archetype(), fields.variantFit());
         List<VocabularyGap> vocabGaps = ctx.archetype() != null
                 ? ctx.archetype().findVocabularyGaps(ctx.fullText()) : List.of();
+        // 方向建议:锚定简历自身证据,grounding 校验 + tier 由代码判定(不依赖岗位基准)
+        List<DirectionRecommendation> recommendedDirections = directionRecommender.recommend(
+                fields.directionProposals(), ctx.fullText(), evidenceAssessments);
 
         return new FunnelVerdict(
                 redFlags,
@@ -1558,7 +1593,8 @@ public class DocumentAnalysisService {
                 groundingValidator.validate(suggestions, ctx.fullText()),
                 evaluation,
                 evidenceAssessments,
-                matchScore);
+                matchScore,
+                recommendedDirections);
     }
 
     /**

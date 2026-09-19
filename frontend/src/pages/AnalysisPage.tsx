@@ -329,7 +329,7 @@ export default function AnalysisPage() {
           <div>
             <div className="mb-1.5 flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-500">
-                求职方向（广撒网模式，可选）——没有具体 JD 时按方向画像分析
+                求职方向（可选）——留空则按简历自身质量评估并推荐适合方向；填写且命中方向画像时才做画像对照
               </span>
               {targetDirection && (
                 <button

@@ -158,6 +158,16 @@ export interface FunnelVerdict {
   /** 定性评价（v6）；历史 run 无此字段 */
   evaluation?: Evaluation | null;
   evidenceAssessments?: EvidenceAssessment[] | null;
+  /** 无 JD 时从简历自身证据推断的方向建议；tier 由后端按证据强度判定 */
+  recommendedDirections?: DirectionRecommendation[] | null;
+}
+
+export interface DirectionRecommendation {
+  direction: string;
+  tier: 'BEST_FIT' | 'STRETCH';
+  evidence: string[];
+  sectionId: string | null;
+  gap: string | null;
 }
 
 export interface ResumeDiagnosis {

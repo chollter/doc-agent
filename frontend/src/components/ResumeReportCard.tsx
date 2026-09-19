@@ -251,6 +251,9 @@ function verdictLine(verdict: FunnelVerdict): { text: string; alert: boolean } {
   } else if (verdict.matchMode === 'JD' && verdict.mustHaveCoverage && verdict.mustHaveCoverage.length > 0) {
     const met = verdict.mustHaveCoverage.filter((c) => c.status === 'MET').length;
     parts.push(`共性要求满足 ${met}/${verdict.mustHaveCoverage.length}`);
+  } else if (verdict.matchMode === 'NONE' && verdict.recommendedDirections && verdict.recommendedDirections.length > 0) {
+    const best = verdict.recommendedDirections.find((d) => d.tier === 'BEST_FIT') ?? verdict.recommendedDirections[0];
+    parts.push(`最适方向「${best.direction}」`);
   }
   return { text: `无一票否决项；${parts.join(' · ')}`, alert: false };
 }
@@ -600,6 +603,59 @@ function FunnelVerdictSection({ verdict, onCitation }: {
               {verdict.positioning.comment && <div className="mt-0.5 opacity-80">{verdict.positioning.comment}</div>}
             </div>
           )}
+          </div>
+        </details>
+      )}
+
+      {/* 无 JD：定位 + 适合方向（锚定简历自身证据，稳妥/跳一跳由后端按证据强度判定） */}
+      {verdict.matchMode === 'NONE'
+        && (verdict.positioning || (verdict.recommendedDirections?.length ?? 0) > 0) && (
+        <details className="group rounded-xl border border-emerald-100 bg-emerald-50/50 p-4" open>
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-semibold text-emerald-700">
+            <Lightbulb size={15} />
+            定位与适合方向（未提供 JD，基于简历已证明的能力）
+            <span className="ml-auto text-xs font-normal text-slate-400 group-open:hidden">展开</span>
+            <span className="ml-auto hidden text-xs font-normal text-slate-400 group-open:inline">收起</span>
+          </summary>
+          <div className="mt-3 space-y-3">
+            {verdict.positioning && (
+              <div className={`rounded-lg px-3 py-2 text-xs leading-5 ${verdict.positioning.anchored ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                {verdict.positioning.anchored
+                  ? `定位清晰：${verdict.positioning.currentAnchor ?? ''}`
+                  : `定位模糊：当前锚定「${verdict.positioning.currentAnchor ?? '无'}」，建议改为「${verdict.positioning.suggestedAnchor ?? ''}」`}
+                {verdict.positioning.comment && <div className="mt-0.5 opacity-80">{verdict.positioning.comment}</div>}
+              </div>
+            )}
+            {verdict.recommendedDirections && verdict.recommendedDirections.length > 0 && (
+              <div className="space-y-2">
+                {verdict.recommendedDirections.map((d, i) => (
+                  <div key={i} className="rounded-lg bg-white/80 px-3 py-2 text-xs">
+                    <div className="flex items-start gap-2">
+                      <span className="font-semibold text-slate-700">{d.direction}</span>
+                      <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        d.tier === 'BEST_FIT' ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}`}>
+                        {d.tier === 'BEST_FIT' ? '稳妥' : '跳一跳'}
+                      </span>
+                    </div>
+                    {d.evidence && d.evidence.length > 0 && (
+                      <div className="mt-1 space-y-0.5">
+                        {d.evidence.map((ev, j) => (
+                          <button
+                            key={j}
+                            type="button"
+                            className="block text-left text-[11px] text-emerald-600 hover:underline"
+                            onClick={() => d.sectionId && onCitation?.(d.sectionId)}
+                          >
+                            证据：{ev}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {d.gap && <div className="mt-1 text-[11px] text-amber-600">补齐后可投：{d.gap}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </details>
       )}
