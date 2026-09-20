@@ -38,12 +38,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -71,6 +73,10 @@ public class DocumentAnalysisService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentAnalysisService.class);
     private static final int WORKER_THREADS = 3;
+    /** 演示模式的追问回答 */
+    private static final String MOCK_FOLLOW_UP_ANSWER =
+            "（演示模式）这是一条模拟回答：真实模式下会由 LLM 结合简历原文回答你的问题。"
+                    + "当前分析结论为预置演示数据，全程未调用任何模型。";
 
     private final DocumentParsingService parsingService;
     private final DocumentStore documentStore;
@@ -90,16 +96,19 @@ public class DocumentAnalysisService {
     private final GroundingValidator groundingValidator;
     private final EvidenceAssessmentService evidenceAssessmentService;
     private final AlignmentAnalyzer alignmentAnalyzer;
-    private final MatchScoreCalculator matchScoreCalculator;
     private final DirectionRecommender directionRecommender;
+    private final ResumeCacheService resumeCacheService;
     private final ApplicationEventPublisher eventPublisher;
     private final AgentStepEventPublisher stepEventPublisher;
     private final boolean reactEnabled;
     private final boolean exportEnabled;
+    private final boolean mockResultEnabled;
     private final int requeueStaleMinutes;
     private final String instanceId;
     private final String defaultPromptVersion;
     private final int reactMaxChars;
+    /** 演示模式预置结论（classpath 加载后缓存）；追问的模拟回答 */
+    private volatile String mockResultJson;
 
     private final ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(WORKER_THREADS, r -> {
         Thread t = new Thread(r, "doc-analysis");
@@ -126,12 +135,13 @@ public class DocumentAnalysisService {
             GroundingValidator groundingValidator,
             EvidenceAssessmentService evidenceAssessmentService,
             AlignmentAnalyzer alignmentAnalyzer,
-            MatchScoreCalculator matchScoreCalculator,
             DirectionRecommender directionRecommender,
+            ResumeCacheService resumeCacheService,
             ApplicationEventPublisher eventPublisher,
             AgentStepEventPublisher stepEventPublisher,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
             @Value("${docagent.analysis.export-enabled:true}") boolean exportEnabled,
+            @Value("${docagent.analysis.mock-result-enabled:false}") boolean mockResultEnabled,
             @Value("${docagent.analysis.dispatcher.requeue-stale-minutes:15}") int requeueStaleMinutes,
             @Value("${docagent.prompt-version:}") String defaultPromptVersion,
             @Value("${docagent.analysis.react-max-chars:0}") int reactMaxChars,
@@ -154,25 +164,24 @@ public class DocumentAnalysisService {
         this.groundingValidator = groundingValidator;
         this.evidenceAssessmentService = evidenceAssessmentService;
         this.alignmentAnalyzer = alignmentAnalyzer;
-        this.matchScoreCalculator = matchScoreCalculator;
         this.directionRecommender = directionRecommender;
+        this.resumeCacheService = resumeCacheService;
         this.eventPublisher = eventPublisher;
         this.stepEventPublisher = stepEventPublisher;
         this.reactEnabled = reactEnabled;
         this.exportEnabled = exportEnabled;
+        this.mockResultEnabled = mockResultEnabled;
         this.requeueStaleMinutes = requeueStaleMinutes;
         this.defaultPromptVersion = defaultPromptVersion;
         this.reactMaxChars = reactMaxChars;
         this.instanceId = "p" + port + "-" + UUID.randomUUID().toString().substring(0, 6);
     }
 
-    /** 提交分析：同步解析 + checkpoint-0 + 入队（QUEUED）。
+    /** 提交分析（上传文件）：同步解析 → 建档 → 缓存探测（命中即完成） → checkpoint-0 + 入队（QUEUED）。
      * 执行由 RunQueuedEvent 即时触发认领（快路径），RunQueueScheduler 轮询兜底。 */
     public AgentRun start(MultipartFile file, String instruction, String skillName, String jobDescription,
-                          String targetDirection, String persona, String promptVersion, String optimizationNote) {
-        SkillDefinition skill = skillRegistry.find(skillName)
-                .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST,
-                        "未知技能: " + skillName + "（可用: " + skillRegistry.list().stream().map(SkillDefinition::name).toList() + ")"));
+                          String targetDirection, String persona, String promptVersion, String optimizationNote,
+                          boolean forceRefresh) {
         String fileName = file.getOriginalFilename();
         ParsedDocument doc;
         try {
@@ -180,6 +189,27 @@ public class DocumentAnalysisService {
         } catch (IOException ex) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "读取上传文件失败: " + ex.getMessage());
         }
+        return beginRun(doc, instruction, skillName, jobDescription, targetDirection,
+                persona, promptVersion, optimizationNote, forceRefresh);
+    }
+
+    /** 提交分析（免上传）：从简历档案取已存简历直接进入分析流程。 */
+    public AgentRun startFromResume(String resumeId, String instruction, String skillName, String jobDescription,
+                                    String targetDirection, String persona, String promptVersion,
+                                    String optimizationNote, boolean forceRefresh) {
+        ParsedDocument doc = resumeCacheService.loadDocument(resumeId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST,
+                        "历史简历不存在或已失效: " + resumeId));
+        return beginRun(doc, instruction, skillName, jobDescription, targetDirection,
+                persona, promptVersion, optimizationNote, forceRefresh);
+    }
+
+    private AgentRun beginRun(ParsedDocument doc, String instruction, String skillName, String jobDescription,
+                              String targetDirection, String persona, String promptVersion, String optimizationNote,
+                              boolean forceRefresh) {
+        SkillDefinition skill = skillRegistry.find(skillName)
+                .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST,
+                        "未知技能: " + skillName + "（可用: " + skillRegistry.list().stream().map(SkillDefinition::name).toList() + ")"));
 
         AgentRun run = new AgentRun(
                 "doc-" + UUID.randomUUID(),
@@ -187,7 +217,7 @@ public class DocumentAnalysisService {
                 "web",
                 "demo-user",
                 doc.outline());
-        run.setFileName(fileName);
+        run.setFileName(doc.fileName());
         run.setFileType(doc.fileType());
         run.setSkill(skill.name());
         run.setInstruction(instruction == null || instruction.isBlank()
@@ -207,11 +237,35 @@ public class DocumentAnalysisService {
             // 未手填时自动带上当前 prompt 版本，保证版本链不断裂（手填优先）
             run.setPromptVersion(defaultPromptVersion.trim());
         }
+        if (run.getPromptVersion() == null || run.getPromptVersion().isBlank()) {
+            // 兜底提前到提交时：缓存键需要稳定的 prompt 版本（执行侧兜底保留为防御）
+            run.setPromptVersion(skill.name() + "-v1");
+        }
         if (optimizationNote != null && !optimizationNote.isBlank()) {
             run.setOptimizationNote(optimizationNote.trim());
         }
         run.setSectionCount(doc.sections().size());
         run.setStatus(AgentRunStatus.QUEUED);
+
+        // 简历建档（按内容哈希去重，不受缓存开关影响——免上传再分析依赖它）
+        ResumeCacheService.ProfileRef profile = resumeCacheService.upsertProfile(doc);
+        run.setContentHash(profile.contentHash());
+
+        // 演示模式：不调 LLM，直接用预置结论完成（优先于缓存探测，也不写缓存避免污染真实结论）
+        if (mockResultEnabled && "resume-review".equals(skill.name())) {
+            return completeFromMock(run, skill, doc);
+        }
+
+        // 结论缓存探测：同简历 + 同分析输入 → 直接复制历史结论，跳过整条 LLM 流水线
+        if ("resume-review".equals(skill.name()) && resumeCacheService.cacheEnabled() && !forceRefresh) {
+            String cacheKey = ResumeCacheService.buildCacheKey(run.getContentHash(), run.getSkill(),
+                    run.getInstruction(), run.getJobDescription(), run.getTargetDirection(),
+                    run.getPersona(), run.getPromptVersion());
+            Optional<ResumeCacheService.CachedResult> cached = resumeCacheService.findCached(cacheKey);
+            if (cached.isPresent()) {
+                return completeFromCache(run, skill, doc, cached.get());
+            }
+        }
 
         // checkpoint-0 先落（消息+文档快照）——任何实例认领后都能独立执行
         checkpointStore.save(run.getId(), new LoopState(
@@ -225,9 +279,105 @@ public class DocumentAnalysisService {
         // 入队即触发认领（快路径）——提交到执行有显式链路，轮询仅作兜底
 
         log.info("Analysis run queued, runId={}, skill={}, file={}, sections={}",
-                run.getId(), skill.name(), fileName, doc.sections().size());
+                run.getId(), skill.name(), doc.fileName(), doc.sections().size());
         eventPublisher.publishEvent(new RunQueuedEvent(run.getId()));
         return run;
+    }
+
+    /** 缓存命中：新 run 直接复制历史结论完成。不发布执行事件（无事可执行），链路留一条 CACHE_REUSED 审计步。 */
+    private AgentRun completeFromCache(AgentRun run, SkillDefinition skill, ParsedDocument doc,
+                                       ResumeCacheService.CachedResult cached) {
+        run.setResultJson(cached.resultJson());
+        run.setCurrentSummary(extractSummary(cached.resultJson()));
+        run.setScoreOverall(cached.scoreOverall());
+        run.setScoreDimensions(cached.scoreDimensions());
+        run.setExecutionMode("CACHE_HIT");
+        run.setTokensUsed(0L);
+        run.setStatus(AgentRunStatus.COMPLETED);
+        run.setFinishedAt(Instant.now());
+        // checkpoint-0 照常落库：追问与文档面板与常规 run 完全一致
+        checkpointStore.save(run.getId(), new LoopState(
+                skill.name(),
+                List.of(
+                        LoopMessage.system(effectiveSystemPrompt(skill)),
+                        LoopMessage.user(buildUserMessage(run, doc))),
+                0, 0, 0, doc));
+        agentRunRepository.save(run);
+        documentStore.put(run.getId(), doc);
+        TraceRecorder tracer = traceRecorderFactory.create(run);
+        String stepId = tracer.begin("CACHE_REUSED", null);
+        tracer.recordMeta(stepId, false, "sourceRun=" + cached.sourceRunId());
+        tracer.end(stepId, "命中分析缓存，复用历史结论（未调用 LLM）", null);
+        log.info("Analysis run completed from cache, runId={}, sourceRun={}", run.getId(), cached.sourceRunId());
+        return run;
+    }
+
+    /** 演示模式：预置假结论立即完成——前端联调/展示用，不调 LLM、不写结论缓存。 */
+    private AgentRun completeFromMock(AgentRun run, SkillDefinition skill, ParsedDocument doc) {
+        String resultJson = mockResultJson();
+        run.setResultJson(resultJson);
+        run.setCurrentSummary(extractSummary(resultJson));
+        run.setScoreOverall(66);
+        run.setExecutionMode("MOCK");
+        run.setTokensUsed(0L);
+        run.setStatus(AgentRunStatus.COMPLETED);
+        run.setFinishedAt(Instant.now());
+        checkpointStore.save(run.getId(), new LoopState(
+                skill.name(),
+                List.of(
+                        LoopMessage.system(effectiveSystemPrompt(skill)),
+                        LoopMessage.user(buildUserMessage(run, doc))),
+                0, 0, 0, doc));
+        agentRunRepository.save(run);
+        documentStore.put(run.getId(), doc);
+        TraceRecorder tracer = traceRecorderFactory.create(run);
+        String stepId = tracer.begin("MOCK_RESULT", null);
+        tracer.recordMeta(stepId, false, "preset");
+        tracer.end(stepId, "演示模式：返回预置分析结论（未调用 LLM）", null);
+        log.info("Analysis run completed with mock result, runId={}", run.getId());
+        return run;
+    }
+
+    private String mockResultJson() {
+        String cached = mockResultJson;
+        if (cached == null) {
+            try (java.io.InputStream in = getClass().getResourceAsStream("/mock/resume-review-mock.json")) {
+                if (in == null) {
+                    throw new IllegalStateException("演示数据缺失: /mock/resume-review-mock.json");
+                }
+                cached = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                mockResultJson = cached;
+            } catch (java.io.IOException ex) {
+                throw new IllegalStateException("读取演示数据失败: " + ex.getMessage(), ex);
+            }
+        }
+        return cached;
+    }
+
+    private String extractSummary(String resultJson) {
+        try {
+            JsonNode node = objectMapper.readTree(resultJson);
+            return node.hasNonNull("summary") ? node.get("summary").asText() : null;
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    /** run 文档的三级来源：内存 LRU → run checkpoint → 简历档案（按内容哈希）。 */
+    public Optional<ParsedDocument> findDocument(String runId) {
+        ParsedDocument cached = documentStore.get(runId).orElse(null);
+        if (cached != null) {
+            return Optional.of(cached);
+        }
+        LoopState state = checkpointStore.find(runId).orElse(null);
+        if (state != null && state.document() != null) {
+            return Optional.of(state.document());
+        }
+        AgentRun run = agentRunRepository.findById(runId).orElse(null);
+        if (run != null && run.getContentHash() != null) {
+            return resumeCacheService.findDocumentByHash(run.getContentHash());
+        }
+        return Optional.empty();
     }
 
     private static String buildUserMessage(AgentRun run, ParsedDocument doc) {
@@ -302,7 +452,7 @@ public class DocumentAnalysisService {
                 target.screeningQuestions().forEach(q -> sb.append("\n  - ").append(q));
             }
         } else if (run.getJobDescription() != null && !run.getJobDescription().isBlank()) {
-            sb.append("\n\n## 岗位标准化降级：以下为原始 JD，仅作 matchDimensions 对照，不得补充要求\n")
+            sb.append("\n\n## 岗位标准化降级：以下为原始 JD，仅作匹配对照，不得补充要求\n")
                     .append(run.getJobDescription());
         }
 
@@ -381,6 +531,12 @@ public class DocumentAnalysisService {
         LoopState state = checkpointStore.find(runId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_STATE, "会话状态已过期"));
         saveMessage(runId, state.turn() + 1, "USER", message.trim());
+        // 演示模式：不重跑队列，直接给预置回答（run 保持 COMPLETED）
+        if (mockResultEnabled && "resume-review".equals(run.getSkill())) {
+            saveMessage(runId, state.turn() + 1, "ASSISTANT", MOCK_FOLLOW_UP_ANSWER);
+            log.info("Follow-up answered by mock, runId={}, turn={}", runId, state.turn() + 1);
+            return run;
+        }
         List<LoopMessage> messages = new ArrayList<>(state.messages());
         messages.add(LoopMessage.user("[追问轮] 请直接用自然语言回答以下问题，不要输出JSON格式。引用原文时用 [节ID] 标注。\n\n" + message.trim()));
         checkpointStore.save(runId, state.nextTurn(List.copyOf(messages)));
@@ -698,13 +854,6 @@ public class DocumentAnalysisService {
 
         result = verifyCitations(result, doc, tracer);
 
-        // 附加实体和红旗结果（简历技能）
-        if (!resumeCtx.entities().isEmpty() || !resumeCtx.redFlags().isEmpty()) {
-            result = result.withEntitiesAndFindings(resumeCtx.entities().getAll(),
-                    resumeCtx.redFlags().stream().map(RedFlag::message).toList());
-            result = result.withProjectFacts(resumeCtx.entities().getProjects());
-        }
-
         // P12 漏斗结论：红旗 + 方向画像 + LLM 五角度输出 → FunnelVerdict
         // 按技能判断而非实体非空：降级时空实体仍需组装（LLM 五角度输出基于直读原文，不该陪葬）
         if ("resume-review".equals(skill.name())) {
@@ -746,16 +895,8 @@ public class DocumentAnalysisService {
             List<RequirementVerdict> requirementVerdicts = evidenceAssessmentService
                     .assessRequirements(coverage, evidenceAssessments, resumeCtx.targetProfile());
 
-            // 计算匹配度分数
-            MatchScore matchScore = matchScoreCalculator.calculate(
-                    requirementVerdicts,
-                    evidenceAssessments,
-                    resumeCtx.redFlags()
-            );
-
             FunnelVerdict.Evaluation evaluation = evaluateResume(
                     run, resumeCtx, result, funnelFields, requirementVerdicts, tracer);
-            result = result.withEvidenceAssessments(evidenceAssessments);
 
             if (evaluation != null && evaluation.overall() != null && !evaluation.overall().isBlank()) {
                 // 对外总评使用裁决之后生成的文本，避免候选分析阶段的乐观判断成为最终结论。
@@ -784,11 +925,9 @@ public class DocumentAnalysisService {
             result = result.withActionableSuggestions(suggestions);
 
             FunnelVerdict verdict = assembleVerdict(resumeCtx, funnelFields,
-                    suggestions, evaluation, evidenceAssessments, requirementVerdicts, matchScore);
-            result = result.withResumeDeepAnalysis(resumeCtx.profile(), null,
-                            suggestions, result.enhancedKeyPoints(), result.enhancedRisks())
-                    .withFunnelVerdict(verdict)
-                    .withAlignmentMatrix(alignmentMatrix);
+                    suggestions, evaluation, evidenceAssessments, requirementVerdicts);
+            result = result.withProfile(resumeCtx.profile())
+                    .withFunnelVerdict(verdict);
 
             // 兼容映射：DB 列表排序仍用 score_overall，明细记录各角度档位
             run.setScoreOverall(verdict.legacyOverall());
@@ -814,6 +953,10 @@ public class DocumentAnalysisService {
         run.setExecutionMode(mode);
         run.setCurrentSummary(result.summary());
         run.setTokensUsed(tokensUsed);
+        // 结论落缓存先于置 COMPLETED——run 对外可见完成时缓存必已就绪，提交侧不会竞态漏命中
+        if (resumeReview) {
+            resumeCacheService.storeResult(run, doc);
+        }
         run.setStatus(AgentRunStatus.COMPLETED);
         run.setFinishedAt(Instant.now());
         agentRunRepository.save(run);
@@ -1076,9 +1219,7 @@ public class DocumentAnalysisService {
                 "（规则模式）" + summary,
                 keyPoints,
                 List.of("规则模式不做推断，未识别文档中的风险"),
-                List.of("LLM 当前不可用，建议配置 LLM_API_KEY 后重新分析以获得针对性建议"),
-                citations, null, null, null, null, null, null,
-                null, null, null, null, null, null, null, null, null);
+                citations, null, null, null);
         tracer.end(stepId, "rule fallback completed", null);
         return result;
     }
@@ -1159,26 +1300,15 @@ public class DocumentAnalysisService {
                     raw.summary,
                     raw.keyPoints == null ? List.of() : raw.keyPoints,
                     raw.risks == null ? List.of() : raw.risks,
-                    raw.suggestions == null ? List.of() : raw.suggestions,
                     citations,
-                    parseMatchDimensions(raw.matchDimensions),
-                    parseGaps(raw.gaps),
-                    parseInterviewQuestions(raw.interviewQuestions),
-                    null, null, null,
-                    null, parseQualityScore(raw.qualityScore),
+                    null,
                     parseActionableSuggestions(raw.actionableSuggestions),
-                    parseEnhancedKeyPoints(raw.enhancedKeyPoints),
-                    parseEnhancedRisks(raw.enhancedRisks),
-                    null,
-                    parseDiagnoses(raw.diagnoses),
-                    null,
                     null);
             LlmFunnelFields funnel = new LlmFunnelFields(
                     parsePresentation(raw.presentation),
                     parseExperienceStrength(raw.experienceStrength),
                     parseLeverageCards(raw.leverageCards),
                     parseCoverage(raw.mustHaveCoverage),
-                    parseVariantFit(raw.variantFit),
                     parsePositioning(raw.positioning),
                     parseDirectionProposals(raw.recommendedDirections));
             return new ParsedAnalysis(analysis, funnel);
@@ -1225,11 +1355,7 @@ public class DocumentAnalysisService {
      */
     private static void sanitizeStringElements(JsonNode tree) {
         if (tree == null || !tree.isObject()) return;
-        wrapStringElements(tree, "matchDimensions", "name");
-        wrapStringElements(tree, "gaps", "gap");
-        wrapStringElements(tree, "interviewQuestions", "question");
         wrapStringElements(tree, "mustHaveCoverage", "requirement");
-        wrapStringElements(tree, "variantFit", "name");
     }
 
     private static void wrapStringElements(JsonNode root, String field, String targetKey) {
@@ -1251,23 +1377,13 @@ public class DocumentAnalysisService {
         public String summary;
         public List<String> keyPoints;
         public List<String> risks;
-        public List<String> suggestions;
         public List<RawCitation> citations;
-        public List<RawMatchDimension> matchDimensions;
-        public List<RawGap> gaps;
-        public List<RawInterviewQuestion> interviewQuestions;
-        // 简历深度分析（P11 兼容）
-        public RawQualityScore qualityScore;
         public List<RawActionableSuggestion> actionableSuggestions;
-        public List<RawEnhancedKeyPoint> enhancedKeyPoints;
-        public List<RawEnhancedRisk> enhancedRisks;
-        public List<RawDiagnosis> diagnoses;
         // P12 五角度漏斗字段
         public RawPresentation presentation;
         public List<RawExperienceStrength> experienceStrength;
         public List<RawLeverageCard> leverageCards;
         public List<RawCoverage> mustHaveCoverage;
-        public List<RawVariantFit> variantFit;
         public RawPositioning positioning;
         public List<RawDirection> recommendedDirections;
     }
@@ -1278,12 +1394,11 @@ public class DocumentAnalysisService {
             List<ExperienceStrength> experienceStrength,
             List<LeverageCard> leverageCards,
             List<MustHaveCoverage> mustHaveCoverage,
-            List<VariantFit> variantFit,
             PositioningCheck positioning,
             List<DirectionRecommendation.Proposal> directionProposals
     ) {
         static LlmFunnelFields empty() {
-            return new LlmFunnelFields(null, List.of(), List.of(), List.of(), List.of(), null, List.of());
+            return new LlmFunnelFields(null, List.of(), List.of(), List.of(), null, List.of());
         }
     }
 
@@ -1323,14 +1438,6 @@ public class DocumentAnalysisService {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    static class RawVariantFit {
-        public String variantId;
-        public String name;
-        public String fit;
-        public String reason;
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
     static class RawPositioning {
         public Boolean anchored;
         public String currentAnchor;
@@ -1343,7 +1450,6 @@ public class DocumentAnalysisService {
         public String direction;
         public List<String> evidence;
         public String sectionId;
-        public String gap;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -1364,13 +1470,6 @@ public class DocumentAnalysisService {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    static class RawQualityScore {
-        public Integer clarity;
-        public Integer credibility;
-        public Integer professionalism;
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
     static class RawActionableSuggestion {
         public String severity;
         public String target;
@@ -1378,70 +1477,6 @@ public class DocumentAnalysisService {
         public String before;
         public String after;
         public String reason;
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    static class RawEnhancedKeyPoint {
-        public String point;
-        public String evidence;
-        public String sectionId;
-        public String interviewValue;
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    static class RawEnhancedRisk {
-        public String risk;
-        public String detail;
-        public String sectionId;
-        public String challengeAngle;
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    static class RawDiagnosis {
-        public String severity;
-        public String target;
-        public String sectionId;
-        public String claim;
-        public String problemType;
-        public String whyItHurts;
-        public List<String> missingFacts;
-        public String strengtheningDirection;
-        public String interviewQuestion;
-        public String evidenceLevel;
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    static class RawMatchDimension { public String name; public String level; public String reason; }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    static class RawGap { public String requirement; public String gap; public String suggestion; }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    static class RawInterviewQuestion { public String question; public String intent; public String suggestedAnswer; public Boolean isGapPrep; }
-
-    private static List<AnalysisResult.MatchDimension> parseMatchDimensions(List<RawMatchDimension> raw) {
-        if (raw == null) return null;
-        return raw.stream().filter(Objects::nonNull).map(m -> new AnalysisResult.MatchDimension(m.name, m.level, m.reason)).toList();
-    }
-
-    private static List<AnalysisResult.Gap> parseGaps(List<RawGap> raw) {
-        if (raw == null) return null;
-        return raw.stream().filter(Objects::nonNull).map(g -> new AnalysisResult.Gap(g.requirement, g.gap, g.suggestion)).toList();
-    }
-
-    private static List<AnalysisResult.InterviewQuestion> parseInterviewQuestions(List<RawInterviewQuestion> raw) {
-        if (raw == null) return null;
-        return raw.stream().filter(Objects::nonNull).map(q -> new AnalysisResult.InterviewQuestion(q.question, q.intent, q.suggestedAnswer, Boolean.TRUE.equals(q.isGapPrep))).toList();
-    }
-
-    private static QualityScore parseQualityScore(RawQualityScore raw) {
-        if (raw == null) return null;
-        Map<String, Integer> dims = new LinkedHashMap<>();
-        if (raw.clarity != null) dims.put(QualityScore.DIM_CLARITY, raw.clarity);
-        if (raw.credibility != null) dims.put(QualityScore.DIM_CREDIBILITY, raw.credibility);
-        if (raw.professionalism != null) dims.put(QualityScore.DIM_PROFESSIONALISM, raw.professionalism);
-        if (dims.isEmpty()) return null;
-        return new QualityScore(QualityScore.computeOverall(dims), dims);
     }
 
     private static Presentation parsePresentation(RawPresentation raw) {
@@ -1503,21 +1538,6 @@ public class DocumentAnalysisService {
         return out;
     }
 
-    private static List<VariantFit> parseVariantFit(List<RawVariantFit> raw) {
-        if (raw == null) return List.of();
-        List<VariantFit> out = new ArrayList<>();
-        for (RawVariantFit r : raw) {
-            if (r == null || r.variantId == null || r.fit == null) continue;
-            try {
-                out.add(new VariantFit(r.variantId, r.name,
-                        VariantFit.Fit.valueOf(r.fit.toUpperCase()), r.reason));
-            } catch (IllegalArgumentException ignored) {
-                // 非法适配值丢弃
-            }
-        }
-        return out;
-    }
-
     private static PositioningCheck parsePositioning(RawPositioning raw) {
         if (raw == null || raw.anchored == null) return null;
         return new PositioningCheck(raw.anchored, raw.currentAnchor, raw.suggestedAnchor, raw.comment);
@@ -1528,7 +1548,7 @@ public class DocumentAnalysisService {
         if (raw == null) return List.of();
         return raw.stream()
                 .filter(d -> d != null && d.direction != null && !d.direction.isBlank())
-                .map(d -> new DirectionRecommendation.Proposal(d.direction, d.evidence, d.sectionId, d.gap))
+                .map(d -> new DirectionRecommendation.Proposal(d.direction, d.evidence, d.sectionId))
                 .toList();
     }
 
@@ -1570,12 +1590,8 @@ public class DocumentAnalysisService {
                                           List<ActionableSuggestion> suggestions,
                                           FunnelVerdict.Evaluation evaluation,
                                           List<EvidenceAssessment> evidenceAssessments,
-                                          List<RequirementVerdict> requirementVerdicts,
-                                          MatchScore matchScore) {
+                                          List<RequirementVerdict> requirementVerdicts) {
         List<RedFlag> redFlags = ctx.redFlags();
-        List<VariantFit> variantFit = mergeVariants(ctx.archetype(), fields.variantFit());
-        List<VocabularyGap> vocabGaps = ctx.archetype() != null
-                ? ctx.archetype().findVocabularyGaps(ctx.fullText()) : List.of();
         // 方向建议:锚定简历自身证据,grounding 校验 + tier 由代码判定(不依赖岗位基准)
         List<DirectionRecommendation> recommendedDirections = directionRecommender.recommend(
                 fields.directionProposals(), ctx.fullText(), evidenceAssessments);
@@ -1584,7 +1600,7 @@ public class DocumentAnalysisService {
                 redFlags,
                 ctx.matchMode(),
                 ctx.archetype() != null ? ctx.archetype().getId() : null,
-                requirementVerdicts, variantFit, vocabGaps, fields.positioning(),
+                requirementVerdicts, fields.positioning(),
                 fields.experienceStrength(),
                 StrengthStats.from(fields.experienceStrength()),
                 fields.presentation(),
@@ -1593,7 +1609,6 @@ public class DocumentAnalysisService {
                 groundingValidator.validate(suggestions, ctx.fullText()),
                 evaluation,
                 evidenceAssessments,
-                matchScore,
                 recommendedDirections);
     }
 
@@ -1684,56 +1699,12 @@ public class DocumentAnalysisService {
         return CoverageMerge.merge(target, llm);
     }
 
-    private static List<VariantFit> mergeVariants(Archetype archetype, List<VariantFit> llm) {
-        if (archetype == null) {
-            return llm;
-        }
-        var byId = archetype.getVariants().stream()
-                .collect(java.util.stream.Collectors.toMap(Archetype.Variant::getId, v -> v, (a, b) -> a));
-        List<VariantFit> merged = new ArrayList<>();
-        for (VariantFit v : llm) {
-            Archetype.Variant def = byId.get(v.variantId());
-            merged.add(new VariantFit(v.variantId(),
-                    def != null ? def.getName() : v.name(),
-                    v.fit(), v.reason()));
-        }
-        return merged;
-    }
-
     private static List<ActionableSuggestion> parseActionableSuggestions(List<RawActionableSuggestion> raw) {
         if (raw == null) return null;
         return raw.stream().filter(Objects::nonNull)
                 .map(s -> new ActionableSuggestion(
                         s.severity, s.target, s.sectionId, s.before, s.after, s.reason))
                 .toList();
-    }
-
-    private static List<AnalysisResult.EnhancedKeyPoint> parseEnhancedKeyPoints(List<RawEnhancedKeyPoint> raw) {
-        if (raw == null) return null;
-        return raw.stream().filter(Objects::nonNull)
-                .map(k -> new AnalysisResult.EnhancedKeyPoint(k.point, k.evidence, k.sectionId, k.interviewValue))
-                .toList();
-    }
-
-    private static List<AnalysisResult.EnhancedRisk> parseEnhancedRisks(List<RawEnhancedRisk> raw) {
-        if (raw == null) return null;
-        return raw.stream().filter(Objects::nonNull)
-                .map(r -> new AnalysisResult.EnhancedRisk(r.risk, r.detail, r.sectionId, r.challengeAngle))
-                .toList();
-    }
-
-    private static List<ResumeDiagnosis> parseDiagnoses(List<RawDiagnosis> raw) {
-        if (raw == null) return null;
-        return raw.stream().filter(Objects::nonNull).map(d -> new ResumeDiagnosis(
-                d.severity, d.target, d.sectionId, d.claim, d.problemType, d.whyItHurts,
-                d.missingFacts, d.strengtheningDirection, d.interviewQuestion,
-                parseEvidenceLevel(d.evidenceLevel))).toList();
-    }
-
-    private static EvidenceLevel parseEvidenceLevel(String value) {
-        if (value == null) return null;
-        try { return EvidenceLevel.valueOf(value.trim().toUpperCase()); }
-        catch (IllegalArgumentException ex) { return null; }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

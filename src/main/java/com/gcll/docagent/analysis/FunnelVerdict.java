@@ -17,8 +17,6 @@ public record FunnelVerdict(
         String matchMode,
         String archetypeId,
         List<RequirementVerdict> requirementVerdicts,
-        List<VariantFit> variantFit,
-        List<VocabularyGap> vocabularyGaps,
         PositioningCheck positioning,
         List<ExperienceStrength> experienceStrength,
         StrengthStats strength,
@@ -28,7 +26,6 @@ public record FunnelVerdict(
         List<GroundingValidator.Finding> groundingFindings,
         Evaluation evaluation,
         List<EvidenceAssessment> evidenceAssessments,
-        MatchScore matchScore,
         List<DirectionRecommendation> recommendedDirections
 ) {
 
@@ -67,17 +64,6 @@ public record FunnelVerdict(
         return MatchBand.NONE;
     }
 
-    /** 推荐主投的子方向（适配度最高的 variant）。 */
-    public VariantFit bestVariant() {
-        if (variantFit == null || variantFit.isEmpty()) {
-            return null;
-        }
-        return variantFit.stream()
-                .filter(v -> v.fit() == VariantFit.Fit.HIGH)
-                .findFirst()
-                .orElse(variantFit.get(0));
-    }
-
     /**
      * 兼容映射：档位 → 0-100 分，仅供 DB score_overall 列表排序与旧前端。
      * 强度 40/65/85 × 0.4 + 表达分 × 0.3 + 匹配档位 30/50/70/80 × 0.3，
@@ -110,8 +96,8 @@ public record FunnelVerdict(
 
     public static FunnelVerdict degraded(List<RedFlag> redFlags) {
         return new FunnelVerdict(redFlags != null ? redFlags : List.of(),
-                MODE_NONE, null, List.of(), List.of(), List.of(), null,
-                List.of(), StrengthStats.from(List.of()), null, List.of(), true, List.of(), null, List.of(), null,
+                MODE_NONE, null, List.of(), null,
+                List.of(), StrengthStats.from(List.of()), null, List.of(), true, List.of(), null, List.of(),
                 List.of());
     }
 

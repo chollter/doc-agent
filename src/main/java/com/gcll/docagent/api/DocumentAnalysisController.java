@@ -2,6 +2,7 @@ package com.gcll.docagent.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.gcll.docagent.analysis.DocumentStore;
 import com.gcll.docagent.analysis.DocumentAnalysisService;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Detail;
@@ -12,6 +13,7 @@ import com.gcll.docagent.api.dto.AnalysisRunDtos.OptimizationHistoryItem;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.RunPipelineDto;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Start;
 import com.gcll.docagent.api.dto.AnalysisRunDtos.Summary;
+import com.gcll.docagent.api.dto.AnalysisRunDtos.ResumeItem;
 import com.gcll.docagent.domain.AgentRun;
 import com.gcll.docagent.domain.AgentStep;
 import com.gcll.docagent.human.PendingAction;
@@ -50,6 +52,7 @@ public class DocumentAnalysisController {
     private final PendingActionRepository pendingActionRepository;
     private final LlmInteractionMapper interactionMapper;
     private final AgentStepRepository agentStepRepository;
+    private final com.gcll.docagent.analysis.ResumeCacheService resumeCacheService;
     private final com.gcll.docagent.analysis.CalibrationService calibrationService;
 
     public DocumentAnalysisController(DocumentAnalysisService analysisService,
@@ -59,6 +62,7 @@ public class DocumentAnalysisController {
                                       PendingActionRepository pendingActionRepository,
                                       LlmInteractionMapper interactionMapper,
                                       AgentStepRepository agentStepRepository,
+                                      com.gcll.docagent.analysis.ResumeCacheService resumeCacheService,
                                       com.gcll.docagent.analysis.CalibrationService calibrationService) {
         this.analysisService = analysisService;
         this.agentRunRepository = agentRunRepository;
@@ -67,24 +71,46 @@ public class DocumentAnalysisController {
         this.pendingActionRepository = pendingActionRepository;
         this.interactionMapper = interactionMapper;
         this.agentStepRepository = agentStepRepository;
+        this.resumeCacheService = resumeCacheService;
         this.calibrationService = calibrationService;
     }
 
-    /** 提交分析：同步解析建档（解析错误直接 400），异步执行（SSE/轮询获取进度）。 */
+    /** 提交分析：file/resumeId 二选一（同步解析建档，解析错误直接 400），异步执行（SSE/轮询获取进度）。
+     * forceRefresh=true 跳过结论缓存，强制重跑并覆盖历史结论。 */
     @PostMapping(path = "/runs", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.ACCEPTED)
     public Start submit(
-            @RequestPart("file") MultipartFile file,
+            @RequestPart(name = "file", required = false) MultipartFile file,
+            @RequestParam(required = false) String resumeId,
             @RequestParam(required = false) String instruction,
             @RequestParam(required = false) String skill,
             @RequestParam(required = false) String jobDescription,
             @RequestParam(required = false) String targetDirection,
             @RequestParam(required = false) String persona,
             @RequestParam(required = false) String promptVersion,
-            @RequestParam(required = false) String optimizationNote) {
-        AgentRun run = analysisService.start(file, instruction, skill, jobDescription,
-                targetDirection, persona, promptVersion, optimizationNote);
+            @RequestParam(required = false) String optimizationNote,
+            @RequestParam(required = false, defaultValue = "false") boolean forceRefresh) {
+        AgentRun run;
+        if (file != null) {
+            run = analysisService.start(file, instruction, skill, jobDescription,
+                    targetDirection, persona, promptVersion, optimizationNote, forceRefresh);
+        } else if (resumeId != null && !resumeId.isBlank()) {
+            run = analysisService.startFromResume(resumeId.trim(), instruction, skill, jobDescription,
+                    targetDirection, persona, promptVersion, optimizationNote, forceRefresh);
+        } else {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "请上传简历文件，或通过 resumeId 选择历史简历");
+        }
         return new Start(run.getId(), run.getStatus().name());
+    }
+
+    /** 简历档案列表（最近使用在前）——前端"历史简历"选择的数据源。 */
+    @GetMapping("/resumes")
+    public List<ResumeItem> listResumes() {
+        return resumeCacheService.listProfiles().stream()
+                .map(p -> new ResumeItem(
+                        p.getId(), p.getFileName(), p.getFileType(), p.getCharCount(),
+                        p.getRunCount(), p.getCreatedAt(), p.getLastUsedAt()))
+                .toList();
     }
 
     /** 历史列表（新→旧）。 */
@@ -94,9 +120,8 @@ public class DocumentAnalysisController {
                 .sorted(Comparator.comparing(AgentRun::getCreatedAt).reversed())
                 .limit(50)
                 .map(run -> new Summary(
-                        run.getId(), run.getFileName(), run.getFileType(), run.getSkill(), run.getInstruction(),
-                        run.getStatus().name(), run.getExecutionMode(), run.getSectionCount(),
-                        run.getTokensUsed(), run.getCreatedAt(), run.getFinishedAt()))
+                        run.getId(), run.getFileName(), run.getSkill(), run.getInstruction(),
+                        run.getStatus().name(), run.getExecutionMode(), run.getCreatedAt()))
                 .toList();
     }
 
@@ -107,7 +132,7 @@ public class DocumentAnalysisController {
         JsonNode result = null;
         if (run.getResultJson() != null) {
             try {
-                result = objectMapper.readTree(run.getResultJson());
+                result = readResultForApi(run.getResultJson());
             } catch (IOException ignored) {
                 // 结果 JSON 损坏时返回 null，前端按无结果渲染
             }
@@ -118,12 +143,32 @@ public class DocumentAnalysisController {
                         a.getStatus().name(), a.getPayload(), a.getReason(), a.getCreatedAt()))
                 .toList();
         return new Detail(
-                run.getId(), run.getFileName(), run.getFileType(), run.getSkill(), run.getInstruction(),
-                run.getStatus().name(), run.getExecutionMode(), run.getSectionCount(),
+                run.getId(), run.getFileName(), run.getSkill(), run.getInstruction(),
+                run.getStatus().name(), run.getExecutionMode(),
                 run.getCurrentSummary(), result, run.getLastError(),
-                run.getTokensUsed(), run.getClaimedBy(), pending,
+                pending,
                 run.getCreatedAt(), run.getFinishedAt());
     }
+
+    /**
+     * API 投影：funnelVerdict 下的管线中间产物不出接口——分析、评测、校准在服务内部
+     * 继续使用完整模型（DB result_json 仍存全量），仅在出接口时剥除，新旧 run 一视同仁。
+     */
+    private JsonNode readResultForApi(String resultJson) throws IOException {
+        JsonNode result = objectMapper.readTree(resultJson);
+        JsonNode verdict = result.get("funnelVerdict");
+        if (verdict instanceof ObjectNode verdictObj) {
+            for (String field : PIPELINE_ONLY_VERDICT_FIELDS) {
+                verdictObj.remove(field);
+            }
+        }
+        return result;
+    }
+
+    /** 仅服务内部消费的字段（mustHaveCoverage 是 requirementVerdicts 的派生投影，一并剥除）。 */
+    private static final List<String> PIPELINE_ONLY_VERDICT_FIELDS = List.of(
+            "requirementVerdicts", "mustHaveCoverage", "evidenceAssessments",
+            "experienceStrength", "groundingFindings");
 
     /** 追问：向已完成的 run 追加用户消息，重回队列续跑。 */
     @org.springframework.web.bind.annotation.PostMapping("/runs/{runId}/messages")
@@ -145,11 +190,12 @@ public class DocumentAnalysisController {
                 .toList();
     }
 
-    /** 文档分节视图：右侧文档面板渲染 + 引用点击定位。缓存过期后返回 404（历史 run 的正文不再保留）。 */
+    /** 文档分节视图：右侧文档面板渲染 + 引用点击定位。
+     * 三级兜底：内存 LRU → run checkpoint → 简历档案（重启/逐出后正文仍可取回）。 */
     @GetMapping("/runs/{runId}/document")
     public DocumentView getDocument(@PathVariable String runId) {
         requireRun(runId);
-        return documentStore.get(runId)
+        return analysisService.findDocument(runId)
                 .map(doc -> new DocumentView(runId, doc.fileName(), doc.fileType(),
                         doc.sections().size(),
                         doc.sections().stream()
@@ -157,7 +203,7 @@ public class DocumentAnalysisController {
                                         s.id(), s.heading(), s.page(), s.charCount(), s.text()))
                                 .toList()))
                 .orElseThrow(() -> new BusinessException(ErrorCode.AGENT_RUN_NOT_FOUND,
-                        "文档缓存已过期（服务重启或超过容量），仅保留该 run 的大纲与结果"));
+                        "文档正文不存在（档案未建立且缓存已过期），仅保留该 run 的大纲与结果"));
     }
 
     private AgentRun requireRun(String runId) {

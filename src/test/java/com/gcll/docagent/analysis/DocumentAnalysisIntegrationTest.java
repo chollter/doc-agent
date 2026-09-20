@@ -126,19 +126,18 @@ class DocumentAnalysisIntegrationTest {
     }
 
     /**
-     * 回归锁（真实故障复现）：模型违反对象契约把 gaps 输出为字符串数组时，
-     * 解析必须容错幸存其余字段，而不是整个结果作废落入 FALLBACK。
+     * 回归锁（真实故障复现）：模型违反对象契约把对象数组字段输出为字符串数组时，
+     * 解析必须容错幸存，而不是整个结果作废落入 FALLBACK。
+     * 载体用仍在契约内的 mustHaveCoverage（gaps/interviewQuestions 已下线）。
      */
     @Test
-    void toleratesStringArrayGapsInsteadOfFallingBack() throws Exception {
+    void toleratesStringArrayCoverageInsteadOfFallingBack() throws Exception {
         String llmJson = """
                 {"summary":"候选人具备后端经验。",
                  "keyPoints":["Java 开发"],
                  "risks":[],
-                 "suggestions":["补充量化成果"],
-                 "gaps":["缺少微服务经验","未说明团队规模"],
-                 "interviewQuestions":["你怎么设计高并发系统？"],
-                 "citations":[]}
+                 "citations":[],
+                 "mustHaveCoverage":["缺少微服务经验","未说明团队规模"]}
                 """;
         when(llmGateway.invokeStream(anyString(), anyString(), anyString(), anyString(), any()))
                 .thenReturn(LlmResponse.of(llmJson, 100, 50, "qwen-plus"));
@@ -150,14 +149,10 @@ class DocumentAnalysisIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         var node = objectMapper.readTree(detail.getResponse().getContentAsString(StandardCharsets.UTF_8));
-        // 修复前：整个结果反序列化失败 → FALLBACK；修复后：容错解析，保持 LLM 模式
+        // 修复前：字符串数组导致整个结果反序列化失败 → FALLBACK；修复后：容错解析，保持 LLM 模式
         assertThat(node.get("executionMode").asText()).isEqualTo("LLM");
-        // 字符串元素被包成对象：内容幸存在 gap 字段里
-        var gaps = node.get("result").get("gaps");
-        assertThat(gaps.size()).isEqualTo(2);
-        assertThat(gaps.get(0).get("gap").asText()).contains("微服务");
-        var questions = node.get("result").get("interviewQuestions");
-        assertThat(questions.get(0).get("question").asText()).contains("高并发");
+        // LLM 结论幸存（未被 FALLBACK 规则结果替换）
+        assertThat(node.get("result").get("summary").asText()).contains("后端经验");
     }
 
     @Test

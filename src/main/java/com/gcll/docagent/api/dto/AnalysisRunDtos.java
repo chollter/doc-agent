@@ -20,15 +20,11 @@ public final class AnalysisRunDtos {
     public record Summary(
             String runId,
             String fileName,
-            String fileType,
             String skill,
             String instruction,
             String status,
             String executionMode,
-            Integer sectionCount,
-            Long tokensUsed,
-            Instant createdAt,
-            Instant finishedAt
+            Instant createdAt
     ) {
     }
 
@@ -36,17 +32,13 @@ public final class AnalysisRunDtos {
     public record Detail(
             String runId,
             String fileName,
-            String fileType,
             String skill,
             String instruction,
             String status,
             String executionMode,
-            Integer sectionCount,
             String summary,
             JsonNode result,
             String lastError,
-            Long tokensUsed,
-            String claimedBy,
             java.util.List<HumanActionDto> pending,
             Instant createdAt,
             Instant finishedAt
@@ -55,6 +47,18 @@ public final class AnalysisRunDtos {
 
     /** 追问消息。 */
     public record MessageDto(Integer turn, String role, String content, String createdAt) {
+    }
+
+    /** 简历档案条目（历史简历列表——免上传再分析的数据源）。 */
+    public record ResumeItem(
+            String id,
+            String fileName,
+            String fileType,
+            Integer charCount,
+            Integer runCount,
+            java.time.LocalDateTime createdAt,
+            java.time.LocalDateTime lastUsedAt
+    ) {
     }
 
     /** 文档分节视图（右侧文档面板 + 引用定位）。 */

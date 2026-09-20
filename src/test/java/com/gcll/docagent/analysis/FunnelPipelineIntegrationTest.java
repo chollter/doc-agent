@@ -123,11 +123,9 @@ class FunnelPipelineIntegrationTest {
              "risks":["时间空窗"],
              "suggestions":["补结果量化"],
              "citations":[{"sectionId":"sec-2","quote":"主导检索增强知识库问答系统"}],
-             "matchDimensions":[],"gaps":[],"interviewQuestions":[],
              "mustHaveCoverage":[
                {"requirementId":"llm-api","status":"MET","evidence":"主导检索增强知识库问答系统","sectionId":"sec-2"},
                {"requirementId":"prompt-eng","status":"MISSING","evidence":null,"sectionId":null}],
-             "variantFit":[{"variantId":"agent","fit":"HIGH","reason":"编排经验"}],
              "positioning":{"anchored":false,"currentAnchor":"后端工程师","suggestedAnchor":"AI 应用工程师（RAG 方向）","comment":"建议锚定"}}
             """;
 
@@ -174,13 +172,9 @@ class FunnelPipelineIntegrationTest {
         assertThat(flags.toString()).contains("TIMELINE_GAP");
         assertThat(flags.toString()).contains("HIGH");
 
-        // ② 方向画像模式 + 词汇diff：正文写"检索增强"未写 RAG → 建议 RAG
+        // ② 方向画像模式：命中 ai-app-dev 画像
         assertThat(path(verdict, "matchMode").asText()).isEqualTo("DIRECTION");
         assertThat(path(verdict, "archetypeId").asText()).isEqualTo("ai-app-dev");
-        JsonNode vocab = verdict.get("vocabularyGaps");
-        assertThat(vocab.size()).isEqualTo(1);
-        assertThat(path(vocab.get(0), "term").asText()).isEqualTo("RAG");
-        assertThat(path(vocab.get(0), "usedSynonym").asText()).contains("检索增强");
 
         // ③ 覆盖（对齐矩阵路径）：关键词找证据 → coverage-judge 未桩走 fallback 按证据等级判；
         //    llm-api 命中星河（L3）→ MET；backend-3y 仅命中云海方法级（L2）→ PARTIAL；
@@ -197,22 +191,19 @@ class FunnelPipelineIntegrationTest {
         assertThat(path(coverage.get(2), "requirementId").asText()).isEqualTo("prompt-eng");
         assertThat(path(coverage.get(2), "status").asText()).isEqualTo("MISSING");
 
-        // ④ 子方向：名称从画像合并（LLM 只给 variantId）
-        assertThat(path(verdict.get("variantFit").get(0), "name").asText()).isEqualTo("AI Agent开发");
-
-        // ⑤ 强度：1/2 有结果（BUSINESS/LEAD）+ 1/2 无结果（NONE/PARTICIPANT）→ MIXED
+        // ④ 强度：1/2 有结果（BUSINESS/LEAD）+ 1/2 无结果（NONE/PARTICIPANT）→ MIXED
         assertThat(path(path(verdict, "strength"), "band").asText()).isEqualTo("MIXED");
         assertThat(path(path(verdict, "strength"), "entryCount").asInt()).isEqualTo(2);
 
-        // ⑥ 表达：62 分 → C 档（代码档位映射）
+        // ⑤ 表达：62 分 → C 档（代码档位映射）
         assertThat(path(path(verdict, "presentation"), "score").asInt()).isEqualTo(62);
         assertThat(path(path(verdict, "presentation"), "band").asText()).isEqualTo("C");
 
-        // ⑦ 定位与杠杆卡
+        // ⑥ 定位与杠杆卡
         assertThat(path(path(verdict, "positioning"), "anchored").asBoolean()).isFalse();
         assertThat(verdict.get("leverageCards").size()).isEqualTo(2);
 
-        // ⑧ 兼容分映射（确定性）：MIXED(65)×0.4 + 62×0.3 + WEAK(50)×0.3 - HIGH红旗10 = 49
+        // ⑦ 兼容分映射（确定性）：MIXED(65)×0.4 + 62×0.3 + WEAK(50)×0.3 - HIGH红旗10 = 49
         //    画像 3 要求 MET 率 1/3 → WEAK，不再是 PARTIAL(70)
         assertThat(scoreOverallOf(runId)).isEqualTo(49);
 

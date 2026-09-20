@@ -32,6 +32,8 @@ public class AgentRun {
     private String optimizationNote;
     private Integer scoreOverall;
     private String scoreDimensions;
+    /** 简历内容哈希——关联 resume_profile 档案与文档视图兜底 */
+    private String contentHash;
     private Instant startedAt;
     private Instant finishedAt;
     private String idempotencyKey;
@@ -128,6 +130,9 @@ public class AgentRun {
 
     public String getScoreDimensions() { return scoreDimensions; }
     public void setScoreDimensions(String scoreDimensions) { this.scoreDimensions = scoreDimensions; }
+
+    public String getContentHash() { return contentHash; }
+    public void setContentHash(String contentHash) { this.contentHash = contentHash; }
 
     public Instant getStartedAt() { return startedAt; }
     public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }

@@ -10,14 +10,12 @@ import java.util.Map;
 
 /**
  * 方向建议的可靠性闸门:把 LLM 的"提名"过滤成可落地结论。
- * <p>三条不变量,全部确定性、可单测:
+ * <p>两条不变量,全部确定性、可单测:
  * <ol>
  *   <li>反编造——方向的每条 evidence 必须是简历原文的连续片段(空白规整后匹配),
  *       一条都锚不回原文的方向直接丢弃,不进入结论。</li>
  *   <li>tier 由代码定——被引证据能匹配到的最高 {@link EvidenceLevel} ≥ L3_RESULT
  *       才算 BEST_FIT(稳妥),否则 STRETCH(跳一跳)。LLM 不能自称稳妥。</li>
- *   <li>gap 来自证据评估——STRETCH 的缺口优先取匹配评估的 missingFacts,
- *       而非 LLM 自由发挥,保证"补哪块"与质量诊断口径一致。</li>
  * </ol>
  */
 @Service
@@ -49,11 +47,8 @@ public class DirectionRecommender {
             DirectionRecommendation.Tier tier = level.ordinal() >= EvidenceLevel.L3_RESULT.ordinal()
                     ? DirectionRecommendation.Tier.BEST_FIT
                     : DirectionRecommendation.Tier.STRETCH;
-            String gap = tier == DirectionRecommendation.Tier.STRETCH
-                    ? stretchGap(best, p.gap())
-                    : clean(p.gap());
             DirectionRecommendation rec = new DirectionRecommendation(
-                    p.direction().trim(), tier, grounded, clean(p.sectionId()), gap);
+                    p.direction().trim(), tier, grounded, clean(p.sectionId()));
             String key = normalize(p.direction());
             DirectionRecommendation existing = byDirection.get(key);
             if (existing == null || rec.tier() == DirectionRecommendation.Tier.BEST_FIT
@@ -75,18 +70,6 @@ public class DirectionRecommender {
                                 .anyMatch(q -> overlaps(found, q))))
                 .max(Comparator.comparingInt(a -> a.evidenceLevel().ordinal()))
                 .orElse(null);
-    }
-
-    private static String stretchGap(EvidenceAssessment best, String proposedGap) {
-        if (best != null) {
-            String first = best.missingFacts().stream()
-                    .filter(m -> m != null && !m.isBlank())
-                    .findFirst().orElse(null);
-            if (first != null) {
-                return first;
-            }
-        }
-        return clean(proposedGap);
     }
 
     private static boolean overlaps(String a, String b) {

@@ -106,7 +106,7 @@ public class EvalRunner {
                 byte[] bytes = new ClassPathResource(evalCase.file()).getInputStream().readAllBytes();
                 AgentRun submitted = analysisService.start(
                         new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(),
-                        evalCase.jobDescription(), evalCase.targetDirection(), null, null, null);
+                        evalCase.jobDescription(), evalCase.targetDirection(), null, null, null, true);
                 int timeoutSeconds = evalCase.timeoutSeconds() > 0 ? evalCase.timeoutSeconds() : DEFAULT_TIMEOUT_SECONDS;
                 finishedRuns.add(awaitTerminal(submitted.getId(), timeoutSeconds));
             }
@@ -229,42 +229,9 @@ public class EvalRunner {
             }
         }
 
-        // ---- P10: 岗位匹配断言（仅 LLM 模式下检查；FALLBACK 不产出这些字段） ----
+        // ---- FALLBACK 模式不产出深度字段，后续断言跳过 ----
         if ("FALLBACK".equals(run.getExecutionMode())) {
             return;
-        }
-        int gaps = result.gaps() == null ? 0 : result.gaps().size();
-        if (a.minGaps() != null && gaps < a.minGaps()) {
-            failures.add("gaps=" + gaps + " 少于下限 " + a.minGaps());
-        }
-        int dims = result.matchDimensions() == null ? 0 : result.matchDimensions().size();
-        if (a.minMatchDimensions() != null && dims < a.minMatchDimensions()) {
-            failures.add("matchDimensions=" + dims + " 少于下限 " + a.minMatchDimensions());
-        }
-        int questions = result.interviewQuestions() == null ? 0 : result.interviewQuestions().size();
-        if (a.minInterviewQuestions() != null && questions < a.minInterviewQuestions()) {
-            failures.add("interviewQuestions=" + questions + " 少于下限 " + a.minInterviewQuestions());
-        }
-        if (a.mustContainGapKeywords() != null && !a.mustContainGapKeywords().isEmpty()) {
-            String gapText = result.gaps() == null ? "" : result.gaps().stream()
-                    .map(g -> String.valueOf(g.getOrDefault("requirement", "")) + " "
-                            + String.valueOf(g.getOrDefault("gap", "")))
-                    .reduce("", (x, y) -> x + " " + y);
-            for (String kw : a.mustContainGapKeywords()) {
-                if (!gapText.contains(kw)) {
-                    failures.add("差距清单缺少关键词: " + kw + "（漏检）");
-                }
-            }
-        }
-        if (a.mustNotContainGapKeywords() != null && !a.mustNotContainGapKeywords().isEmpty()) {
-            String gapText = result.gaps() == null ? "" : result.gaps().stream()
-                    .map(g -> String.valueOf(g.getOrDefault("requirement", "")))
-                    .reduce("", (x, y) -> x + " " + y);
-            for (String kw : a.mustNotContainGapKeywords()) {
-                if (gapText.contains(kw)) {
-                    failures.add("差距清单不应包含关键词: " + kw + "（误报）");
-                }
-            }
         }
 
         // ---- 简历深度分析断言（P11；hasQualityScore 仅供历史 run 兼容） ----
@@ -273,18 +240,9 @@ public class EvalRunner {
                 failures.add("缺少候选人画像 (profile)");
             }
         }
-        if (a.hasQualityScore() != null && a.hasQualityScore()) {
-            if (result.qualityScore() == null || result.qualityScore().isEmpty()) {
-                failures.add("缺少质量评分 (qualityScore)");
-            }
-        }
         int actionableSuggestions = result.actionableSuggestions() == null ? 0 : result.actionableSuggestions().size();
         if (a.minActionableSuggestions() != null && actionableSuggestions < a.minActionableSuggestions()) {
             failures.add("actionableSuggestions=" + actionableSuggestions + " 少于下限 " + a.minActionableSuggestions());
-        }
-        int enhancedKeyPoints = result.enhancedKeyPoints() == null ? 0 : result.enhancedKeyPoints().size();
-        if (a.minEnhancedKeyPoints() != null && enhancedKeyPoints < a.minEnhancedKeyPoints()) {
-            failures.add("enhancedKeyPoints=" + enhancedKeyPoints + " 少于下限 " + a.minEnhancedKeyPoints());
         }
 
         // ---- P12: 漏斗分角度断言 ----
@@ -334,15 +292,6 @@ public class EvalRunner {
         }
         if (a.maxCoverageMet() != null && metCount > a.maxCoverageMet()) {
             failures.add("共性要求 MET=" + metCount + " 超过上限 " + a.maxCoverageMet() + "（该缺陷未检出）");
-        }
-        if (a.mustContainVocabularyTerms() != null && verdict.vocabularyGaps() != null) {
-            java.util.Set<String> gapTerms = verdict.vocabularyGaps().stream()
-                    .map(v -> v.get("term")).collect(java.util.stream.Collectors.toSet());
-            for (String term : a.mustContainVocabularyTerms()) {
-                if (!gapTerms.contains(term)) {
-                    failures.add("词汇缺口缺失: " + term + "（表述升级建议漏检）");
-                }
-            }
         }
         // summary 结论式三要素：判断/风险/行动各至少命中一组关键词（纯描述式复述=失败）
         if (a.summaryKeywordGroups() != null) {
@@ -412,13 +361,8 @@ public class EvalRunner {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ResultJson(String summary, List<String> keyPoints, List<Map<String, String>> citations,
-            List<Map<String, String>> gaps, List<Map<String, String>> matchDimensions,
-            List<Map<String, String>> interviewQuestions, List<String> risks,
-            // 简历深度分析
-            Map<String, Object> qualityScore,
+            List<String> risks,
             List<Map<String, String>> actionableSuggestions,
-            List<Map<String, String>> enhancedKeyPoints,
-            List<Map<String, String>> enhancedRisks,
             Map<String, Object> profile,
             // P12 漏斗结论
             FunnelJson funnelVerdict) {
@@ -433,9 +377,7 @@ public class EvalRunner {
             List<Map<String, String>> redFlags,
             Map<String, Object> strength,
             Map<String, Object> presentation,
-            List<Map<String, String>> vocabularyGaps,
             List<Map<String, String>> mustHaveCoverage,
-            List<Map<String, String>> variantFit,
             List<Map<String, String>> leverageCards,
             Map<String, Object> positioning,
             List<Map<String, String>> groundingFindings) {

@@ -7,7 +7,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 方向建议闸门:grounding 反编造 + tier 由证据等级代码判定 + gap 取证据评估缺口。
+ * 方向建议闸门:grounding 反编造 + tier 由证据等级代码判定。
  */
 class DirectionRecommenderTest {
 
@@ -24,7 +24,7 @@ class DirectionRecommenderTest {
     @Test
     void dropsDirectionWhoseEvidenceIsNotGrounded() {
         var proposals = List.of(new DirectionRecommendation.Proposal(
-                "数据平台", List.of("熟悉 Flink 实时数仓建设"), "sec-9", ""));
+                "数据平台", List.of("熟悉 Flink 实时数仓建设"), "sec-9"));
         List<DirectionRecommendation> out = recommender.recommend(proposals, FULL_TEXT, List.of());
         assertThat(out).isEmpty();
     }
@@ -32,7 +32,7 @@ class DirectionRecommenderTest {
     @Test
     void bestFitWhenCitedEvidenceReachesResultLevel() {
         var proposals = List.of(new DirectionRecommendation.Proposal(
-                "AI应用开发", List.of("主导检索增强知识库问答系统"), "sec-2", ""));
+                "AI应用开发", List.of("主导检索增强知识库问答系统"), "sec-2"));
         var assessments = List.of(assessment("主导检索增强知识库问答系统", EvidenceLevel.L3_RESULT, List.of()));
 
         List<DirectionRecommendation> out = recommender.recommend(proposals, FULL_TEXT, assessments);
@@ -43,9 +43,9 @@ class DirectionRecommenderTest {
     }
 
     @Test
-    void stretchAndGapFromMissingFactsWhenEvidenceBelowResultLevel() {
+    void stretchWhenEvidenceBelowResultLevel() {
         var proposals = List.of(new DirectionRecommendation.Proposal(
-                "后端开发", List.of("参与订单中心开发"), "sec-5", "LLM 自己写的缺口"));
+                "后端开发", List.of("参与订单中心开发"), "sec-5"));
         var assessments = List.of(assessment("参与订单中心开发", EvidenceLevel.L2_METHOD,
                 List.of("可核验的规模、结果或指标")));
 
@@ -53,28 +53,25 @@ class DirectionRecommenderTest {
 
         assertThat(out).hasSize(1);
         assertThat(out.get(0).tier()).isEqualTo(DirectionRecommendation.Tier.STRETCH);
-        // gap 取证据评估的 missingFacts,而非 LLM 自由发挥
-        assertThat(out.get(0).gap()).isEqualTo("可核验的规模、结果或指标");
     }
 
     @Test
     void groundedButUnmatchedAssessmentFallsBackToStretch() {
         var proposals = List.of(new DirectionRecommendation.Proposal(
-                "后端开发", List.of("参与订单中心开发"), "sec-5", "补结果量化"));
+                "后端开发", List.of("参与订单中心开发"), "sec-5"));
 
         List<DirectionRecommendation> out = recommender.recommend(proposals, FULL_TEXT, List.of());
 
         assertThat(out).hasSize(1);
         assertThat(out.get(0).tier()).isEqualTo(DirectionRecommendation.Tier.STRETCH);
-        assertThat(out.get(0).gap()).isEqualTo("补结果量化");
     }
 
     @Test
     void dedupsSameDirectionKeepingBestFitAndSortsBestFitFirst() {
         var proposals = List.of(
-                new DirectionRecommendation.Proposal("AI应用开发", List.of("参与订单中心开发"), "sec-5", "缺口"),
-                new DirectionRecommendation.Proposal("AI应用开发", List.of("主导检索增强知识库问答系统"), "sec-2", ""),
-                new DirectionRecommendation.Proposal("后端开发", List.of("参与订单中心开发"), "sec-5", "缺口"));
+                new DirectionRecommendation.Proposal("AI应用开发", List.of("参与订单中心开发"), "sec-5"),
+                new DirectionRecommendation.Proposal("AI应用开发", List.of("主导检索增强知识库问答系统"), "sec-2"),
+                new DirectionRecommendation.Proposal("后端开发", List.of("参与订单中心开发"), "sec-5"));
         var assessments = List.of(
                 assessment("主导检索增强知识库问答系统", EvidenceLevel.L3_RESULT, List.of()),
                 assessment("参与订单中心开发", EvidenceLevel.L2_METHOD, List.of("结果指标")));

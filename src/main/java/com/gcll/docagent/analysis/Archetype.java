@@ -2,7 +2,6 @@ package com.gcll.docagent.analysis;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -23,7 +22,6 @@ public class Archetype {
     private List<String> aliases = List.of();
     private List<MustHave> mustHaves = List.of();
     private List<Variant> variants = List.of();
-    private List<Vocabulary> vocabulary = List.of();
     private List<String> screeningQuestions = List.of();
 
     /** 共性要求：簇内几乎每份 JD 都要，缺失时广撒网救不了。 */
@@ -70,21 +68,6 @@ public class Archetype {
         }
     }
 
-    /** 高频术语与同义词映射——词汇覆盖检查的数据源。 */
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class Vocabulary {
-        private String term;
-        private List<String> synonyms = List.of();
-
-        public String getTerm() { return term; }
-        public List<String> getSynonyms() { return synonyms; }
-
-        public void setTerm(String term) { this.term = term; }
-        public void setSynonyms(List<String> synonyms) {
-            this.synonyms = synonyms == null ? List.of() : synonyms;
-        }
-    }
-
     /** 方向短语是否命中此画像（id/name/aliases，忽略大小写与空白）。 */
     public boolean matches(String direction) {
         if (direction == null || direction.isBlank()) {
@@ -95,33 +78,6 @@ public class Archetype {
             return true;
         }
         return aliases.stream().anyMatch(a -> d.contains(normalize(a)) || normalize(a).contains(d));
-    }
-
-    /**
-     * 词汇覆盖检查（纯代码）：术语本身未出现、但其同义词在简历中出现 →
-     * 建议补术语。同义词也没出现则不建议——只做"表述升级"，不教关键词造假。
-     */
-    public List<VocabularyGap> findVocabularyGaps(String resumeText) {
-        List<VocabularyGap> gaps = new ArrayList<>();
-        if (resumeText == null || resumeText.isBlank()) {
-            return gaps;
-        }
-        String text = resumeText.toLowerCase(Locale.ROOT);
-        for (Vocabulary v : vocabulary) {
-            String term = v.getTerm().toLowerCase(Locale.ROOT);
-            if (text.contains(term)) {
-                continue;
-            }
-            for (String syn : v.getSynonyms()) {
-                String s = syn.toLowerCase(Locale.ROOT);
-                if (text.contains(s)) {
-                    gaps.add(new VocabularyGap(v.getTerm(), syn,
-                            "简历使用「" + syn + "」，建议补充行业术语「" + v.getTerm() + "」以命中关键词检索"));
-                    break;
-                }
-            }
-        }
-        return gaps;
     }
 
     private static String normalize(String s) {
@@ -135,7 +91,6 @@ public class Archetype {
     public List<String> getAliases() { return aliases; }
     public List<MustHave> getMustHaves() { return mustHaves; }
     public List<Variant> getVariants() { return variants; }
-    public List<Vocabulary> getVocabulary() { return vocabulary; }
     public List<String> getScreeningQuestions() { return screeningQuestions; }
 
     public void setId(String id) { this.id = id; }
@@ -145,6 +100,5 @@ public class Archetype {
     public void setAliases(List<String> aliases) { this.aliases = aliases == null ? List.of() : aliases; }
     public void setMustHaves(List<MustHave> mustHaves) { this.mustHaves = mustHaves == null ? List.of() : mustHaves; }
     public void setVariants(List<Variant> variants) { this.variants = variants == null ? List.of() : variants; }
-    public void setVocabulary(List<Vocabulary> vocabulary) { this.vocabulary = vocabulary == null ? List.of() : vocabulary; }
     public void setScreeningQuestions(List<String> screeningQuestions) { this.screeningQuestions = screeningQuestions == null ? List.of() : screeningQuestions; }
 }

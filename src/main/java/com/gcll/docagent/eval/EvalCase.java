@@ -8,10 +8,9 @@ import java.util.List;
  * 评测用例——固定输入 + 结果断言，让"引用防幻觉""降级可靠"这类主张变得可度量。
  * <p>断言覆盖直连 LLM 与通用文档分析的 FALLBACK 路径；resume-review 在无可用 LLM
  * 时按 fail-closed 策略结束为 LLM_UNAVAILABLE，不伪造内容结果。
- * <p>P10 起支持配对缺陷注入：简历×JD 埋已知匹配/差距/幻觉陷阱，
- * 断言差距检出率、匹配维度完整性与面试题 grounding。
+ * <p>P10 起支持配对缺陷注入：简历×JD 埋已知匹配/差距/幻觉陷阱。
  * <p>P12 起支持方向画像模式（targetDirection）与漏斗分角度断言：
- * 红旗类型必现/必不现、强度档位、词汇缺口、覆盖条数，
+ * 红旗类型必现/必不现、强度档位、覆盖条数，
  * 以及 expectWorseThan 配对单调性——注入缺陷后对应角度必须严格变差，
  * 这是"分数/档位反映好坏"的直接证据。
  *
@@ -45,12 +44,6 @@ public record EvalCase(
             Integer minKeyPoints,
             Integer minCitations,
             List<String> keywords,
-            // ---- P10: 岗位匹配断言 ----
-            Integer minGaps,
-            Integer minMatchDimensions,
-            Integer minInterviewQuestions,
-            List<String> mustContainGapKeywords,
-            List<String> mustNotContainGapKeywords,
             // ---- P11 简历深度分析断言（P12 起部分字段由漏斗断言替代） ----
             Integer minActionableSuggestions,
             Integer minEnhancedKeyPoints,
@@ -62,7 +55,6 @@ public record EvalCase(
             List<String> mustHaveRedFlagTypes,
             List<String> mustNotHaveRedFlagTypes,
             String strengthBandAtMost,
-            List<String> mustContainVocabularyTerms,
             String matchMode,
             Integer minCoverageMet,
             Integer maxCoverageMet,

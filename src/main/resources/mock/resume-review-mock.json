@@ -1,0 +1,68 @@
+{
+  "summary": "（演示数据）5年AI应用开发经验，工程完整度扎实，方向清晰；主要短板是量化结果密度不足与早期经历的归属表述模糊。",
+  "keyPoints": [
+    "主导检索增强问答系统并稳定支撑日均12万次调用",
+    "具备从分块、重排到评估的完整 RAG 链路经验",
+    "后端工程基础扎实，服务化与稳定性实践完整"
+  ],
+  "risks": ["早期经历缺少量化结果", "岗位术语与目标方向存在词汇差"],
+  "actionableSuggestions": [
+    {"severity": "HIGH", "target": "云海经历", "sectionId": "sec-3", "before": "参与订单中心开发",
+     "after": "负责订单模块重构，QPS 800→2000，错误率下降 40%", "reason": "补 Result 与归因，从参与者改为主导者"},
+    {"severity": "MEDIUM", "target": "技能段", "sectionId": "sec-5", "before": "Java / Spring Boot / LangChain",
+     "after": "Java / Spring Boot / LangChain / RAG（分块-重排-评估全链路）", "reason": "补齐 RAG 术语，通过关键词初筛"}
+  ],
+  "citations": [
+    {"sectionId": "sec-2", "quote": "主导检索增强知识库问答系统，日均调用 12 万次"}
+  ],
+  "funnelVerdict": {
+    "redFlags": [
+      {"type": "TIMELINE_GAP", "severity": "MEDIUM", "message": "2020.10–2021.07 存在约9个月空窗，建议准备口径"}
+    ],
+    "matchMode": "DIRECTION",
+    "archetypeId": "ai-app-dev",
+    "requirementVerdicts": [
+      {"requirementId": "llm-api", "requirement": "LLM API 调用与集成", "priority": "MUST", "status": "MET",
+       "evidenceLevel": "L3_RESULT", "claim": "基于 OpenAI 兼容接口封装 LLM 调用",
+       "supportingEvidence": ["流式输出与错误重试"], "sectionIds": ["sec-2"], "missingFacts": [],
+       "reason": "有落地案例与结果佐证", "interviewQuestion": "重试与限流策略怎么设计？", "hasOriginalBasis": true},
+      {"requirementId": "rag", "requirement": "检索增强（RAG）链路", "priority": "MUST", "status": "PARTIAL",
+       "evidenceLevel": "L2_METHOD", "claim": "主导检索增强知识库问答系统",
+       "supportingEvidence": ["分块与重排"], "sectionIds": ["sec-2"], "missingFacts": ["召回率、忠实度等评估数据"],
+       "reason": "有方法描述但缺评估指标", "interviewQuestion": "RAG 效果怎么评估与调优？", "hasOriginalBasis": true},
+      {"requirementId": "deploy", "requirement": "上线与运维", "priority": "PLUS", "status": "MISSING",
+       "evidenceLevel": "L0_KEYWORD", "claim": null, "supportingEvidence": [], "sectionIds": [],
+       "missingFacts": ["上线与监控经验"], "reason": "简历未体现", "interviewQuestion": "服务上线后怎么监控与降级？", "hasOriginalBasis": false}
+    ],
+    "positioning": {"anchored": true, "currentAnchor": "AI 应用工程师", "suggestedAnchor": "AI 应用工程师（RAG 方向）", "comment": "锚定清晰，可聚焦 RAG 子方向"},
+    "experienceStrength": [],
+    "strength": {"entryCount": 3, "resultRate": 0.67, "strongResultRate": 0.33, "ownerRate": 0.67, "starCompleteRate": 0.5, "band": "MIXED"},
+    "presentation": {"score": 72, "band": "B", "issues": ["部分 bullet 动词强度偏弱"]},
+    "leverageCards": [
+      {"kind": "STRENGTH", "point": "检索增强问答系统日均12万次调用", "sectionId": "sec-2",
+       "likelyQuestion": "召回率怎么优化？", "prepHint": "准备分块策略与重排前后对比数据", "defenseStrategy": null},
+      {"kind": "RISK", "point": "9个月空窗期", "sectionId": "sec-3",
+       "likelyQuestion": "解释这段空窗", "prepHint": null, "defenseStrategy": "说明转型学习与期间产出"}
+    ],
+    "analysisDegraded": false,
+    "groundingFindings": [],
+    "evaluation": {
+      "overall": "（演示数据）在5年档候选人中处于中上游：检索增强问答系统有日均12万次调用的业务级结果，工程完整度扎实；量化结果密度与术语规范是主要提升点，初筛大概率通过，空窗期必被追问。",
+      "dimensions": [
+        {"dimension": "真实性与可信度", "level": "STRONG", "comment": "核心项目有量化结果佐证，可信度较高", "evidence": ["日均调用 12 万次"], "issueType": "NONE"},
+        {"dimension": "项目经历含金量", "level": "MEDIUM", "comment": "RAG 链路经验完整，但缺评估指标支撑", "evidence": [], "issueType": "EVIDENCE_INSUFFICIENT"},
+        {"dimension": "岗位匹配", "level": "STRONG", "comment": "与 AI 应用开发方向画像高度匹配", "evidence": [], "issueType": "NONE"},
+        {"dimension": "表达质量", "level": "MEDIUM", "comment": "结构清晰，部分动词强度偏弱，重点被稀释", "evidence": [], "issueType": "EXPRESSION_PROBLEM"},
+        {"dimension": "职业轨迹", "level": "STRONG", "comment": "后端→AI应用方向转型路径连贯", "evidence": [], "issueType": "NONE"}
+      ],
+      "strengths": ["有真实流量见证的 RAG 落地经验", "工程与稳定性实践完整"],
+      "weaknesses": ["量化结果密度不足", "空窗期需要准备口径"]
+    },
+    "evidenceAssessments": [
+      {"claim": "主导检索增强问答系统", "evidenceLevel": "L3_RESULT", "evidenceFound": ["日均调用 12 万次"],
+       "missingFacts": ["召回率与忠实度数据"], "likelyInterviewQuestions": ["效果怎么评估？"],
+       "preparationAdvice": ["准备评估指标与优化前后对比"], "hasOriginalBasis": true}
+    ],
+    "recommendedDirections": []
+  }
+}

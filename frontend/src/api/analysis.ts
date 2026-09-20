@@ -42,11 +42,6 @@ export interface ResumeProfile {
   education: EducationEntry[];
 }
 
-export interface QualityScore {
-  overall: number;
-  dimensions: Record<string, number>;
-}
-
 export interface ActionableSuggestion {
   severity: 'HIGH' | 'MEDIUM' | 'LOW';
   target: string;
@@ -54,20 +49,6 @@ export interface ActionableSuggestion {
   before: string;
   after: string;
   reason: string;
-}
-
-export interface EnhancedKeyPoint {
-  point: string;
-  evidence: string;
-  sectionId: string | null;
-  interviewValue: string;
-}
-
-export interface EnhancedRisk {
-  risk: string;
-  detail: string;
-  sectionId: string | null;
-  challengeAngle: string;
 }
 
 // ---- P12 漏斗式结论类型 ----
@@ -78,41 +59,11 @@ export interface RedFlag {
   message: string;
 }
 
-export interface MustHaveCoverage {
-  requirementId: string;
-  requirement: string;
-  status: 'MET' | 'PARTIAL' | 'MISSING';
-  evidence: string | null;
-  sectionId: string | null;
-}
-
-export interface VariantFit {
-  variantId: string;
-  name: string;
-  fit: 'HIGH' | 'MEDIUM' | 'LOW';
-  reason: string;
-}
-
-export interface VocabularyGap {
-  term: string;
-  usedSynonym: string;
-  suggestion: string;
-}
-
 export interface PositioningCheck {
   anchored: boolean;
   currentAnchor: string | null;
   suggestedAnchor: string | null;
   comment: string | null;
-}
-
-export interface ExperienceStrength {
-  sectionId: string | null;
-  entryRef: string | null;
-  star: Record<string, boolean> | null;
-  resultQuality: 'NONE' | 'TASK' | 'PROJECT' | 'BUSINESS' | null;
-  attribution: 'OBSERVER' | 'PARTICIPANT' | 'OWNER' | 'LEAD' | null;
-  concern: string | null;
 }
 
 export interface StrengthStats {
@@ -143,21 +94,13 @@ export interface FunnelVerdict {
   redFlags: RedFlag[] | null;
   matchMode: 'JD' | 'DIRECTION' | 'NONE';
   archetypeId: string | null;
-  mustHaveCoverage: MustHaveCoverage[] | null;
-  /** 唯一岗位匹配真相源；mustHaveCoverage 仅为兼容派生视图 */
-  requirementVerdicts?: RequirementVerdict[] | null;
-  variantFit: VariantFit[] | null;
-  vocabularyGaps: VocabularyGap[] | null;
   positioning: PositioningCheck | null;
-  experienceStrength: ExperienceStrength[] | null;
   strength: StrengthStats | null;
   presentation: Presentation | null;
   leverageCards: LeverageCard[] | null;
   analysisDegraded: boolean;
-  groundingFindings?: GroundingFinding[] | null;
   /** 定性评价（v6）；历史 run 无此字段 */
   evaluation?: Evaluation | null;
-  evidenceAssessments?: EvidenceAssessment[] | null;
   /** 无 JD 时从简历自身证据推断的方向建议；tier 由后端按证据强度判定 */
   recommendedDirections?: DirectionRecommendation[] | null;
 }
@@ -167,55 +110,6 @@ export interface DirectionRecommendation {
   tier: 'BEST_FIT' | 'STRETCH';
   evidence: string[];
   sectionId: string | null;
-  gap: string | null;
-}
-
-export interface ResumeDiagnosis {
-  severity: 'HIGH' | 'MEDIUM' | 'LOW';
-  target: string;
-  sectionId: string | null;
-  claim: string;
-  problemType: string;
-  whyItHurts: string;
-  missingFacts: string[];
-  strengtheningDirection: string;
-  interviewQuestion: string;
-  evidenceLevel: 'L0_KEYWORD' | 'L1_ACTIVITY' | 'L2_METHOD' | 'L3_RESULT' | 'L4_TRADE_OFF' | null;
-}
-
-export interface EvidenceAssessment {
-  claim: string;
-  evidenceLevel: 'L0_KEYWORD' | 'L1_ACTIVITY' | 'L2_METHOD' | 'L3_RESULT' | 'L4_TRADE_OFF';
-  evidenceFound: string[];
-  missingFacts: string[];
-  likelyInterviewQuestions: string[];
-  preparationAdvice: string[];
-  hasOriginalBasis: boolean;
-}
-
-export interface RequirementVerdict {
-  requirementId: string;
-  requirement: string;
-  priority: string | null;
-  status: 'MET' | 'PARTIAL' | 'MISSING';
-  evidenceLevel: 'L0_KEYWORD' | 'L1_ACTIVITY' | 'L2_METHOD' | 'L3_RESULT' | 'L4_TRADE_OFF';
-  claim: string | null;
-  supportingEvidence: string[];
-  sectionIds: string[];
-  missingFacts: string[];
-  reason: string;
-  interviewQuestion: string;
-  hasOriginalBasis: boolean;
-  fix?: SuggestionFix | null;
-}
-
-export interface SuggestionFix {
-  type: string;
-  before: string;
-  after: string;
-  roiScore: number;
-  reason: string;
-  effort: string;
 }
 
 /** 维度评语：档位由代码侧计算，评语归 LLM */
@@ -232,12 +126,6 @@ export interface Evaluation {
   dimensions: EvaluationDimension[] | null;
   strengths: string[] | null;
   weaknesses: string[] | null;
-}
-
-export interface GroundingFinding {
-  type: 'FABRICATED_NUMBER' | 'UNGROUNDED_BEFORE';
-  ref: string;
-  detail: string;
 }
 
 // ---- 校准对照类型（53→75 的证据链） ----
@@ -296,68 +184,17 @@ export interface AppliedRevision {
   changedSectionIds: string[];
 }
 
-// ---- JD 匹配类型 ----
-
-export interface MatchDimension {
-  name: string;
-  level: '高' | '中' | '低';
-  reason: string;
-}
-
-export interface Gap {
-  requirement: string;
-  gap: string;
-  suggestion: string;
-}
-
-export interface InterviewQuestion {
-  question: string;
-  intent: string;
-  suggestedAnswer: string;
-  isGapPrep: boolean;
-}
-
 export interface AnalysisResult {
   summary: string;
   keyPoints: string[];
   risks: string[];
-  suggestions: string[];
   citations: Citation[];
-  // JD 匹配（resume-review + JD 时产出）
-  matchDimensions?: MatchDimension[] | null;
-  gaps?: Gap[] | null;
-  interviewQuestions?: InterviewQuestion[] | null;
-  // 简历深度分析（resume-review skill 产出）
+  // 候选人画像
   profile?: ResumeProfile | null;
-  qualityScore?: QualityScore | null;
+  // 可执行建议（before→after）
   actionableSuggestions?: ActionableSuggestion[] | null;
-  enhancedKeyPoints?: EnhancedKeyPoint[] | null;
-  enhancedRisks?: EnhancedRisk[] | null;
-  // P12 漏斗式结论（新主结果；历史 run 为 null）
+  // P12 漏斗式结论（主结果）
   funnelVerdict?: FunnelVerdict | null;
-  evidenceAssessments?: EvidenceAssessment[] | null;
-  diagnoses?: ResumeDiagnosis[] | null;
-  projectFacts?: ResumeProjectFact[] | null;
-}
-
-export interface ResumeFact {
-  value: string | null;
-  status: 'explicit' | 'inferred' | 'missing' | string;
-  sourceQuote: string | null;
-}
-
-export interface ResumeProjectFact {
-  projectId: string | null;
-  sectionId: string | null;
-  context: ResumeFact | null;
-  problem: ResumeFact | null;
-  responsibilities: ResumeFact[];
-  technologies: ResumeFact[];
-  aiPipeline: ResumeFact | null;
-  decisions: ResumeFact[];
-  results: ResumeFact | null;
-  scale: ResumeFact | null;
-  deployment: ResumeFact | null;
 }
 
 export interface RunStart {
@@ -365,17 +202,25 @@ export interface RunStart {
   status: string;
 }
 
+/** 简历档案条目（历史简历——免上传再分析的数据源） */
+export interface ResumeItem {
+  id: string;
+  fileName: string | null;
+  fileType: string | null;
+  charCount: number | null;
+  runCount: number | null;
+  createdAt: string;
+  lastUsedAt: string;
+}
+
 export interface RunSummary {
   runId: string;
   fileName: string;
-  fileType: string;
   skill: string | null;
   instruction: string;
   status: string;
   executionMode: string | null;
-  sectionCount: number | null;
   createdAt: string;
-  finishedAt: string | null;
 }
 
 export interface HumanActionDto {
@@ -389,6 +234,7 @@ export interface HumanActionDto {
 }
 
 export interface RunDetail extends RunSummary {
+  finishedAt: string | null;
   summary: string | null;
   result: AnalysisResult | null;
   lastError: string | null;
@@ -478,8 +324,9 @@ export interface TokenEvent {
 }
 
 export const analysisApi = {
+  /** 提交分析：file 与 opts.resumeId 二选一（免上传用 resumeId）；forceRefresh 跳过结论缓存强制重跑 */
   submit(
-    file: File,
+    file: File | null,
     instruction: string,
     skill?: string,
     jobDescription?: string,
@@ -487,9 +334,10 @@ export const analysisApi = {
     persona?: string,
     promptVersion?: string,
     optimizationNote?: string,
+    opts?: { resumeId?: string; forceRefresh?: boolean },
   ): Promise<RunStart> {
     const form = new FormData();
-    form.append('file', file);
+    if (file) form.append('file', file);
     form.append('instruction', instruction);
     if (skill) form.append('skill', skill);
     if (jobDescription) form.append('jobDescription', jobDescription);
@@ -497,7 +345,14 @@ export const analysisApi = {
     if (persona) form.append('persona', persona);
     if (promptVersion) form.append('promptVersion', promptVersion);
     if (optimizationNote) form.append('optimizationNote', optimizationNote);
+    if (opts?.resumeId) form.append('resumeId', opts.resumeId);
+    if (opts?.forceRefresh) form.append('forceRefresh', 'true');
     return request.upload('/api/analysis/runs', form);
+  },
+
+  /** 简历档案列表（最近使用在前） */
+  listResumes(): Promise<ResumeItem[]> {
+    return request.get('/api/analysis/resumes');
   },
 
   confirmAction(id: string): Promise<void> {

@@ -62,13 +62,10 @@
   "mustHaveCoverage": [
     {"requirementId": "画像共性要求id", "requirement": "要求描述", "status": "MET|PARTIAL|MISSING", "evidence": "简历原文证据（MET时必填）", "sectionId": "sec-X"}
   ],
-  "variantFit": [
-    {"variantId": "子方向id", "name": "子方向名", "fit": "HIGH|MEDIUM|LOW", "reason": "适配理由"}
-  ],
   "positioning": null
 }
 
-重要：matchDimensions、mustHaveCoverage、variantFit 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
+重要：matchDimensions、mustHaveCoverage 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
 
 ## experienceStrength 评估标准
 - star.result 判断该条经历是否给出可验证的结果（数字、规模、影响）
@@ -81,7 +78,6 @@
 - **如果用户消息包含"目标岗位JD"**：matchDimensions 必须逐条对照 JD 要求填写实际内容，reason 必须引用简历内容。
 - **如果用户消息包含"方向画像"（广撒网模式）**：
   - mustHaveCoverage 必须逐条对照画像的共性要求：status 取 MET/PARTIAL/MISSING，MET 必须给出简历原文证据，宁缺勿滥——共性要求缺失时广撒网救不了
-  - variantFit 按画像子方向逐个给 HIGH/MEDIUM/LOW 适配与理由（分化要求不报缺口，转为定位）
   - positioning 判断简历摘要/头衔是否锚定到最适合的子方向：{"anchored": false, "currentAnchor": "后端工程师", "suggestedAnchor": "AI 应用工程师（Agent 方向）", "comment": "..."}
 - **两者都没有**：以上匹配字段全部设为空数组/null。
 

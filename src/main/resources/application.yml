@@ -97,6 +97,14 @@ docagent:
     connect-timeout-seconds: ${LLM_CONNECT_TIMEOUT_SEC:10}
     read-timeout-seconds: ${LLM_READ_TIMEOUT_SEC:180}
   analysis:
+    # 演示模式：简历分析不调 LLM，直接返回预置假结论（mock/resume-review-mock.json），
+    # 前端联调/展示用；追问同样返回预置回答。不写结论缓存。
+    # 【当前默认开启】回到真实分析：设环境变量 ANALYSIS_MOCK_ENABLED=false，或把下面的默认值改回 false。
+    mock-result-enabled: ${ANALYSIS_MOCK_ENABLED:true}
+    # 结论缓存：同简历（内容哈希）+ 同分析输入（技能/指令/JD/方向/人群/prompt 版本）直接复用
+    # 历史结论，跳过整条 LLM 流水线；forceRefresh 提交参数可强制重跑并覆盖。
+    # 简历档案（resume_profile）不受此开关影响——免上传再分析始终可用。
+    result-cache-enabled: true
     # 短文档路由：字符数低于此值的文档跳过 ReAct 直接单轮分析（短文档迭代精读无信息增量，
     # 实测只烧 token 且易循环不收敛）；0=关闭阈值恢复全量走循环。
     react-max-chars: 8000

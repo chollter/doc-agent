@@ -12,8 +12,7 @@ public record DirectionRecommendation(
         String direction,
         Tier tier,
         List<String> evidence,
-        String sectionId,
-        String gap
+        String sectionId
 ) {
     /** BEST_FIT=现有证据已支撑;STRETCH=差一块真实证据即可投。 */
     public enum Tier { BEST_FIT, STRETCH }
@@ -23,7 +22,7 @@ public record DirectionRecommendation(
     }
 
     /** LLM 提议的原始方向(未经 grounding 校验与 tier 判定)。 */
-    public record Proposal(String direction, List<String> evidence, String sectionId, String gap) {
+    public record Proposal(String direction, List<String> evidence, String sectionId) {
         public Proposal {
             evidence = evidence == null ? List.of() : List.copyOf(evidence);
         }
