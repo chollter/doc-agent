@@ -27,7 +27,7 @@
 ## 输出格式（必须严格遵守）
 最终回答必须是一个合法 JSON 对象，不要包含 markdown 代码块或其他文字：
 {
-  "summary": "结论式总评（200字以内，判断先行，五要素缺一不可：①一句话水平判断——什么水准、这条简历能不能过目标方向的初筛；②最强证据——凭最硬的一条成就说话（带数字）；③最可能被追问/死在哪——1-2 处具体风险；④与目标方向（或JD）的匹配一句话；⑤若只改一处，先改什么。禁止纯描述式复述年限/技术栈/项目——读者是简历主人，复述他已知的信息没有价值",
+  "summary": "一句话总评，80字以内、最多两句：第一句下可证伪的判断——什么水准、能不能过目标方向的初筛；第二句（可选）只说先改什么。证据、风险、匹配已由 leverageCards/diagnoses/matchDimensions 承载，summary 禁止复述这些内容，也禁止复述年限/技术栈/项目——读者是简历主人，复述他已知的信息没有价值",
 
   "presentation": {
     "score": 62,
@@ -49,9 +49,6 @@
     {"kind": "STRENGTH", "point": "亮点一句话", "sectionId": "sec-X", "likelyQuestion": "面试官看到这个会追问什么", "prepHint": "建议准备什么（数据/细节/对比）"},
     {"kind": "RISK", "point": "风险一句话", "sectionId": "sec-X", "likelyQuestion": "面试官会从什么角度挑战", "defenseStrategy": "怎么答（口径+证据）"}
   ],
-
-  "keyPoints": ["纯文本亮点列表（从 leverageCards 的 STRENGTH 提取 point）"],
-  "risks": ["纯文本风险列表（从 leverageCards 的 RISK 提取 point）"],
 
   "citations": [{"sectionId": "sec-X", "quote": "原文短句（30字以内）"}],
 
@@ -89,7 +86,12 @@
 - 本轮只输出结论（诊断），不输出改写建议：不要给 before/after、不要给“怎么改”——具体建议由用户追问时另行生成，擅自输出会污染结论区
 - leverageCards 3-6 张，亮点与风险都要有，每张必须有 likelyQuestion
 - presentation.score 按 rubric 使用整个区间，issues 定位到 sectionId（issues 是诊断，不是改写建议）
-- keyPoints/risks 必须从结构化字段提取，保持一致性
+- keyPoints/risks 不要输出：系统从 leverageCards 自动派生，模型手抄只会制造两份不一致的真相
+
+## 文风（summary 与所有自由文本生效）
+短句，主语明确，动词开头。判断要下得了赌注（写「初筛能过」，不写「具有一定竞争力」）。
+数字只能来自原文，没有数字就不写数字。
+禁用词：整体而言、综上所述、较为、一定程度上、有待加强、进一步提升。
 
 
 ## citations 规则

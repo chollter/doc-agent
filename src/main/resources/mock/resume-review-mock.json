@@ -1,68 +1,44 @@
 {
-  "summary": "（演示数据）5年AI应用开发经验，工程完整度扎实，方向清晰；主要短板是量化结果密度不足与早期经历的归属表述模糊。",
+  "summary": "（演示数据）6年Java后端转AI应用方向：混合检索RAG与长任务工程均有真实落地，初筛能过；量化密度与当前空窗口径是两个待处理点。",
   "keyPoints": [
-    "主导检索增强问答系统并稳定支撑日均12万次调用",
-    "具备从分块、重排到评估的完整 RAG 链路经验",
-    "后端工程基础扎实，服务化与稳定性实践完整"
+    "医疗知识库平台：RRF 混合检索+离线索引落地，17 人运维组约 4 人转向新业务",
+    "AI 模型调度平台：状态机分层+Outbox+DB Lease，长任务恢复体系完整",
+    "简历分析 Agent：140+ 自动化测试，P50 63.8s，双实例断点续跑"
   ],
-  "risks": ["早期经历缺少量化结果", "岗位术语与目标方向存在词汇差"],
+  "risks": ["模型调度平台五个设计点全部无量化结果", "2026.02 起无在职经历，需准备口径"],
   "actionableSuggestions": [
-    {"severity": "HIGH", "target": "云海经历", "sectionId": "sec-3", "before": "参与订单中心开发",
-     "after": "负责订单模块重构，QPS 800→2000，错误率下降 40%", "reason": "补 Result 与归因，从参与者改为主导者"},
-    {"severity": "MEDIUM", "target": "技能段", "sectionId": "sec-5", "before": "Java / Spring Boot / LangChain",
-     "after": "Java / Spring Boot / LangChain / RAG（分块-重排-评估全链路）", "reason": "补齐 RAG 术语，通过关键词初筛"}
+    {"severity": "HIGH", "target": "AI模型调度平台", "sectionId": "sec-8", "before": "参与平台后端开发，负责模型实例加载、迁移、回收相关流程，以及长任务状态持久化和异常恢复",
+     "after": "负责模型调度与长任务恢复模块：迁移中断、回调丢失等场景已验证，补充迁移成功率、恢复耗时等真实指标", "reason": "从「参与」改「负责」，并挂上可验证的结果指标"},
+    {"severity": "MEDIUM", "target": "某软件科技企业经历", "sectionId": "sec-6", "before": "参与面向日本市场的 SaaS 平台开发与维护，承担业务功能开发、问题排查和日常版本迭代",
+     "after": "负责 N 个业务模块的开发与迭代，服务 M 家租户（补充真实规模）", "reason": "职责堆砌无边界无规模，早期经历最需要一处「负责了什么、多大」"}
   ],
   "citations": [
-    {"sectionId": "sec-2", "quote": "主导检索增强知识库问答系统，日均调用 12 万次"}
+    {"sectionId": "sec-9", "quote": "17 人运维小组中约 4 人转向新业务线支持"},
+    {"sectionId": "sec-10", "quote": "文档分析技能阶段实测 P50 63.8s、7.5 任务/分钟"}
   ],
   "funnelVerdict": {
     "redFlags": [
-      {"type": "TIMELINE_GAP", "severity": "MEDIUM", "message": "2020.10–2021.07 存在约9个月空窗，建议准备口径"}
+      {"type": "TIMELINE_GAP", "severity": "MEDIUM", "message": "2026.02 离职至今约 7 个月无在职记录（个人项目 2026.04 起可作覆盖口径，建议主动说明）"},
+      {"type": "TIMELINE_GAP", "severity": "LOW", "message": "2019.01 毕业至 2020.03 首份工作约 13 个月间隔，建议准备口径"}
     ],
     "matchMode": "DIRECTION",
     "archetypeId": "ai-app-dev",
-    "requirementVerdicts": [
-      {"requirementId": "llm-api", "requirement": "LLM API 调用与集成", "priority": "MUST", "status": "MET",
-       "evidenceLevel": "L3_RESULT", "claim": "基于 OpenAI 兼容接口封装 LLM 调用",
-       "supportingEvidence": ["流式输出与错误重试"], "sectionIds": ["sec-2"], "missingFacts": [],
-       "reason": "有落地案例与结果佐证", "interviewQuestion": "重试与限流策略怎么设计？", "hasOriginalBasis": true},
-      {"requirementId": "rag", "requirement": "检索增强（RAG）链路", "priority": "MUST", "status": "PARTIAL",
-       "evidenceLevel": "L2_METHOD", "claim": "主导检索增强知识库问答系统",
-       "supportingEvidence": ["分块与重排"], "sectionIds": ["sec-2"], "missingFacts": ["召回率、忠实度等评估数据"],
-       "reason": "有方法描述但缺评估指标", "interviewQuestion": "RAG 效果怎么评估与调优？", "hasOriginalBasis": true},
-      {"requirementId": "deploy", "requirement": "上线与运维", "priority": "PLUS", "status": "MISSING",
-       "evidenceLevel": "L0_KEYWORD", "claim": null, "supportingEvidence": [], "sectionIds": [],
-       "missingFacts": ["上线与监控经验"], "reason": "简历未体现", "interviewQuestion": "服务上线后怎么监控与降级？", "hasOriginalBasis": false}
-    ],
-    "positioning": {"anchored": true, "currentAnchor": "AI 应用工程师", "suggestedAnchor": "AI 应用工程师（RAG 方向）", "comment": "锚定清晰，可聚焦 RAG 子方向"},
-    "experienceStrength": [],
+    "positioning": {"anchored": true, "currentAnchor": "Java / AI 应用开发工程师", "suggestedAnchor": "AI 应用开发工程师（RAG/Agent 方向）", "comment": "三个项目已构成 AI 应用主线，成都市场建议突出 RAG 与调度编排"},
     "strength": {"entryCount": 3, "resultRate": 0.67, "strongResultRate": 0.33, "ownerRate": 0.67, "starCompleteRate": 0.5, "band": "MIXED"},
-    "presentation": {"score": 72, "band": "B", "issues": ["部分 bullet 动词强度偏弱"]},
-    "leverageCards": [
-      {"kind": "STRENGTH", "point": "检索增强问答系统日均12万次调用", "sectionId": "sec-2",
-       "likelyQuestion": "召回率怎么优化？", "prepHint": "准备分块策略与重排前后对比数据", "defenseStrategy": null},
-      {"kind": "RISK", "point": "9个月空窗期", "sectionId": "sec-3",
-       "likelyQuestion": "解释这段空窗", "prepHint": null, "defenseStrategy": "说明转型学习与期间产出"}
-    ],
+    "presentation": {"score": 78, "band": "B", "issues": ["sec-8 五个 bullet 均以设计点命名开头，动词结构单一", "工作经历段以「参与/维护」口径为主，主导性弱"]},
     "analysisDegraded": false,
-    "groundingFindings": [],
     "evaluation": {
-      "overall": "（演示数据）在5年档候选人中处于中上游：检索增强问答系统有日均12万次调用的业务级结果，工程完整度扎实；量化结果密度与术语规范是主要提升点，初筛大概率通过，空窗期必被追问。",
+      "overall": "（演示数据）6年Java后端转AI应用：混合检索RAG与长任务工程均有真实落地，初筛能过；量化密度与空窗口径决定面试上限。",
       "dimensions": [
-        {"dimension": "真实性与可信度", "level": "STRONG", "comment": "核心项目有量化结果佐证，可信度较高", "evidence": ["日均调用 12 万次"], "issueType": "NONE"},
-        {"dimension": "项目经历含金量", "level": "MEDIUM", "comment": "RAG 链路经验完整，但缺评估指标支撑", "evidence": [], "issueType": "EVIDENCE_INSUFFICIENT"},
-        {"dimension": "岗位匹配", "level": "STRONG", "comment": "与 AI 应用开发方向画像高度匹配", "evidence": [], "issueType": "NONE"},
-        {"dimension": "表达质量", "level": "MEDIUM", "comment": "结构清晰，部分动词强度偏弱，重点被稀释", "evidence": [], "issueType": "EXPRESSION_PROBLEM"},
-        {"dimension": "职业轨迹", "level": "STRONG", "comment": "后端→AI应用方向转型路径连贯", "evidence": [], "issueType": "NONE"}
+        {"dimension": "真实性与可信度", "level": "STRONG", "comment": "关键主张有证据链，测试与压测数据具体可信", "evidence": ["P50 63.8s、单次约 ¥0.004"], "issueType": "NONE"},
+        {"dimension": "项目经历含金量", "level": "MEDIUM", "comment": "调度平台全是方法无结果；知识库与个人项目含金量硬", "evidence": ["17 人小组中约 4 人转向新业务"], "issueType": "EVIDENCE_INSUFFICIENT"},
+        {"dimension": "岗位匹配", "level": "STRONG", "comment": "RAG、Agent、工程治理与 AI 应用开发画像高度重合", "evidence": [], "issueType": "NONE"},
+        {"dimension": "表达质量", "level": "MEDIUM", "comment": "结构清晰；设计点罗列式表达稀释了主导性与结果", "evidence": [], "issueType": "EXPRESSION_PROBLEM"},
+        {"dimension": "职业轨迹", "level": "STRONG", "comment": "后端→医疗检索→AI调度→AI应用，转型路径连贯递进", "evidence": [], "issueType": "NONE"}
       ],
-      "strengths": ["有真实流量见证的 RAG 落地经验", "工程与稳定性实践完整"],
-      "weaknesses": ["量化结果密度不足", "空窗期需要准备口径"]
+      "strengths": ["知识库落地有业务级结果：17人组约4人转岗", "个人项目有完整评测与压测数据"],
+      "weaknesses": ["模型调度平台五个设计点零量化", "工作经历段动词偏弱（参与/维护为主）"]
     },
-    "evidenceAssessments": [
-      {"claim": "主导检索增强问答系统", "evidenceLevel": "L3_RESULT", "evidenceFound": ["日均调用 12 万次"],
-       "missingFacts": ["召回率与忠实度数据"], "likelyInterviewQuestions": ["效果怎么评估？"],
-       "preparationAdvice": ["准备评估指标与优化前后对比"], "hasOriginalBasis": true}
-    ],
     "recommendedDirections": []
   }
 }

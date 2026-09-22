@@ -81,15 +81,6 @@ export interface Presentation {
   issues: string[];
 }
 
-export interface LeverageCard {
-  kind: 'STRENGTH' | 'RISK';
-  point: string;
-  sectionId: string | null;
-  likelyQuestion: string | null;
-  prepHint: string | null;
-  defenseStrategy: string | null;
-}
-
 export interface FunnelVerdict {
   redFlags: RedFlag[] | null;
   matchMode: 'JD' | 'DIRECTION' | 'NONE';
@@ -97,7 +88,6 @@ export interface FunnelVerdict {
   positioning: PositioningCheck | null;
   strength: StrengthStats | null;
   presentation: Presentation | null;
-  leverageCards: LeverageCard[] | null;
   analysisDegraded: boolean;
   /** 定性评价（v6）；历史 run 无此字段 */
   evaluation?: Evaluation | null;

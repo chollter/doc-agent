@@ -86,6 +86,7 @@ public class DocumentAnalysisService {
     private final ObjectProvider<LlmGateway> llmGatewayProvider;
     private final SkillRegistry skillRegistry;
     private final AgentLoop agentLoop;
+    private final EvidenceExplorer evidenceExplorer;
     private final LoopCheckpointStore checkpointStore;
     private final AgentMessageMapper agentMessageMapper;
     private final ResumeEntityExtractor entityExtractor;
@@ -103,6 +104,9 @@ public class DocumentAnalysisService {
     private final boolean reactEnabled;
     private final boolean exportEnabled;
     private final boolean mockResultEnabled;
+    private final AnalysisExecutionMode executionMode;
+    private final String evalReplayResource;
+    private final boolean evidenceExploreEnabled;
     private final int requeueStaleMinutes;
     private final String instanceId;
     private final String defaultPromptVersion;
@@ -125,6 +129,7 @@ public class DocumentAnalysisService {
             ObjectProvider<LlmGateway> llmGatewayProvider,
             SkillRegistry skillRegistry,
             AgentLoop agentLoop,
+            EvidenceExplorer evidenceExplorer,
             LoopCheckpointStore checkpointStore,
             AgentMessageMapper agentMessageMapper,
             ResumeEntityExtractor entityExtractor,
@@ -142,6 +147,9 @@ public class DocumentAnalysisService {
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
             @Value("${docagent.analysis.export-enabled:true}") boolean exportEnabled,
             @Value("${docagent.analysis.mock-result-enabled:false}") boolean mockResultEnabled,
+            @Value("${docagent.analysis.execution-mode:MOCK}") String executionMode,
+            @Value("${docagent.analysis.eval-replay-resource:/mock/resume-review-mock.json}") String evalReplayResource,
+            @Value("${docagent.analysis.evidence-explore-enabled:false}") boolean evidenceExploreEnabled,
             @Value("${docagent.analysis.dispatcher.requeue-stale-minutes:15}") int requeueStaleMinutes,
             @Value("${docagent.prompt-version:}") String defaultPromptVersion,
             @Value("${docagent.analysis.react-max-chars:0}") int reactMaxChars,
@@ -154,6 +162,7 @@ public class DocumentAnalysisService {
         this.llmGatewayProvider = llmGatewayProvider;
         this.skillRegistry = skillRegistry;
         this.agentLoop = agentLoop;
+        this.evidenceExplorer = evidenceExplorer;
         this.checkpointStore = checkpointStore;
         this.agentMessageMapper = agentMessageMapper;
         this.entityExtractor = entityExtractor;
@@ -171,6 +180,11 @@ public class DocumentAnalysisService {
         this.reactEnabled = reactEnabled;
         this.exportEnabled = exportEnabled;
         this.mockResultEnabled = mockResultEnabled;
+        // 兼容旧配置：显式开启 mock-result-enabled 时仍保持演示行为。
+        AnalysisExecutionMode parsedMode = AnalysisExecutionMode.parse(executionMode, AnalysisExecutionMode.MOCK);
+        this.executionMode = mockResultEnabled ? AnalysisExecutionMode.MOCK : parsedMode;
+        this.evalReplayResource = evalReplayResource;
+        this.evidenceExploreEnabled = evidenceExploreEnabled;
         this.requeueStaleMinutes = requeueStaleMinutes;
         this.defaultPromptVersion = defaultPromptVersion;
         this.reactMaxChars = reactMaxChars;
@@ -246,14 +260,17 @@ public class DocumentAnalysisService {
         }
         run.setSectionCount(doc.sections().size());
         run.setStatus(AgentRunStatus.QUEUED);
+        // 在提交阶段就记录请求模式，便于历史列表和故障排查区分 MOCK/REAL/EVAL。
+        run.setExecutionMode(executionMode.name());
 
         // 简历建档（按内容哈希去重，不受缓存开关影响——免上传再分析依赖它）
         ResumeCacheService.ProfileRef profile = resumeCacheService.upsertProfile(doc);
         run.setContentHash(profile.contentHash());
 
-        // 演示模式：不调 LLM，直接用预置结论完成（优先于缓存探测，也不写缓存避免污染真实结论）
-        if (mockResultEnabled && "resume-review".equals(skill.name())) {
-            return completeFromMock(run, skill, doc);
+        // 演示/回放模式：不调 LLM，直接使用固定结果（优先于缓存探测，也不污染真实结论缓存）。
+        if ((executionMode == AnalysisExecutionMode.MOCK || executionMode == AnalysisExecutionMode.EVAL)
+                && "resume-review".equals(skill.name())) {
+            return completeFromReplay(run, skill, doc, executionMode);
         }
 
         // 结论缓存探测：同简历 + 同分析输入 → 直接复制历史结论，跳过整条 LLM 流水线
@@ -312,13 +329,19 @@ public class DocumentAnalysisService {
         return run;
     }
 
-    /** 演示模式：预置假结论立即完成——前端联调/展示用，不调 LLM、不写结论缓存。 */
-    private AgentRun completeFromMock(AgentRun run, SkillDefinition skill, ParsedDocument doc) {
-        String resultJson = mockResultJson();
+    /**
+     * 演示/回放模式：预置结果立即完成——不调 LLM、不写结论缓存。
+     * MOCK 面向前端展示；EVAL_REPLAY 面向可重复回放，二者在 run/trace 中明确区分。
+     */
+    private AgentRun completeFromReplay(AgentRun run, SkillDefinition skill, ParsedDocument doc,
+                                        AnalysisExecutionMode mode) {
+        String resultJson = mode == AnalysisExecutionMode.EVAL
+                ? replayResultJson(evalReplayResource)
+                : mockResultJson();
         run.setResultJson(resultJson);
         run.setCurrentSummary(extractSummary(resultJson));
         run.setScoreOverall(66);
-        run.setExecutionMode("MOCK");
+        run.setExecutionMode(mode == AnalysisExecutionMode.EVAL ? "EVAL_REPLAY" : "MOCK");
         run.setTokensUsed(0L);
         run.setStatus(AgentRunStatus.COMPLETED);
         run.setFinishedAt(Instant.now());
@@ -331,10 +354,13 @@ public class DocumentAnalysisService {
         agentRunRepository.save(run);
         documentStore.put(run.getId(), doc);
         TraceRecorder tracer = traceRecorderFactory.create(run);
-        String stepId = tracer.begin("MOCK_RESULT", null);
-        tracer.recordMeta(stepId, false, "preset");
-        tracer.end(stepId, "演示模式：返回预置分析结论（未调用 LLM）", null);
-        log.info("Analysis run completed with mock result, runId={}", run.getId());
+        String stepId = tracer.begin(mode == AnalysisExecutionMode.EVAL ? "EVAL_REPLAY" : "MOCK_RESULT", null);
+        tracer.recordMeta(stepId, false, mode == AnalysisExecutionMode.EVAL
+                ? "resource=" + evalReplayResource : "preset");
+        tracer.end(stepId, mode == AnalysisExecutionMode.EVAL
+                ? "评测回放：返回固定结果（未调用 LLM）"
+                : "演示模式：返回预置分析结论（未调用 LLM）", null);
+        log.info("Analysis run completed with replay result, runId={}, mode={}", run.getId(), run.getExecutionMode());
         return run;
     }
 
@@ -352,6 +378,20 @@ public class DocumentAnalysisService {
             }
         }
         return cached;
+    }
+
+    private String replayResultJson(String resource) {
+        if (resource == null || resource.isBlank()) {
+            throw new IllegalStateException("EVAL 回放资源未配置");
+        }
+        try (java.io.InputStream in = getClass().getResourceAsStream(resource)) {
+            if (in == null) {
+                throw new IllegalStateException("EVAL 回放资源不存在: " + resource);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (java.io.IOException ex) {
+            throw new IllegalStateException("读取 EVAL 回放资源失败: " + resource, ex);
+        }
     }
 
     private String extractSummary(String resultJson) {
@@ -739,71 +779,76 @@ public class DocumentAnalysisService {
             } else {
                 traceParse(tracer, doc);
             }
-            // 无 JD 时直接把带 SECTION_ID 的原文交给质量评估；有 JD 时才做语义抽取，供要求对齐使用。
-            ResumeContext resumeCtx = ResumeContext.empty();
-            if (state.turn() == 0 && state.round() == 0 && "resume-review".equals(skill.name())) {
-                String fullText = doc.sections().stream()
-                        .map(sec -> (sec.heading() != null && !sec.heading().isBlank()
-                                ? sec.heading() + "\n" : "") + sec.text())
-                        .reduce((a, b) -> a + "\n" + b)
-                        .orElse("");
-                Archetype archetype = resolveArchetype(run);
-                boolean hasJd = run.getJobDescription() != null && !run.getJobDescription().isBlank();
-                if (!hasJd) {
-                    List<RedFlag> redFlags = redFlagChecker.checkFromText(fullText);
-                    TargetProfile targetProfile = resolveTargetProfile(run, archetype);
-                    String matchMode = targetProfile != null && TargetProfile.MODE_DIRECTION.equals(targetProfile.mode())
-                            ? FunnelVerdict.MODE_DIRECTION : FunnelVerdict.MODE_NONE;
-                    resumeCtx = new ResumeContext(new ResumeEntities(List.of()), redFlags, null, archetype,
-                            targetProfile, matchMode, false, fullText, Persona.GENERAL, true);
-                    String stepId = tracer.begin("RESUME_ORIGINAL_TEXT", null);
-                    tracer.recordMeta(stepId, false, "QUALITY_FIRST");
-                    tracer.end(stepId, "semantic extraction skipped (no JD)", null);
-                } else {
-                    String extractStep = tracer.begin("ENTITY_EXTRACT", null);
-                    tracer.recordMeta(extractStep, true, "LLM");
-                    try {
-                        // 标题行必须并入全文：Markdown 解析把标题存进 heading，正文只有 section.text。
-                    String extractionText = doc.sections().stream()
-                            .map(sec -> "[SECTION_ID=" + sec.id() + "]\n"
-                                    + (sec.heading() != null && !sec.heading().isBlank()
-                                    ? sec.heading() + "\n" : "") + sec.text())
-                            .reduce((a, b) -> a + "\n" + b)
-                            .orElse("");
-                    ExtractionOutcome outcome = entityExtractor.extract(extractionText, doc.fileName(), runId);
-                    ResumeEntities entities = outcome.entities();
-                    tracer.end(extractStep, "extracted " + entities.getAll().size()
-                            + " entities" + (outcome.degraded() ? " (DEGRADED)" : ""), null);
-
-                    String profileStep = tracer.begin("PROFILE_BUILD", null);
-                    tracer.recordMeta(profileStep, false, null);
-                    ResumeProfile profile = profileBuilder.build(entities);
-                    tracer.end(profileStep, "profile built", null);
-
-                    Persona persona = resolvePersona(run, profile);
-                    List<RedFlag> redFlags = outcome.degraded()
-                            ? redFlagChecker.checkFromText(fullText)
-                            : redFlagChecker.check(entities, fullText, persona);
-                    String checkStep = tracer.begin("RED_FLAG_CHECK", null);
-                    tracer.recordMeta(checkStep, false, null);
-                    tracer.end(checkStep, "found " + redFlags.size() + " red flags, persona=" + persona, null);
-
-                    TargetProfile targetProfile = resolveTargetProfile(run, archetype);
-                    resumeCtx = new ResumeContext(entities, redFlags, profile, archetype, targetProfile,
-                            FunnelVerdict.MODE_JD, outcome.degraded(), fullText, persona, true);
-                } catch (Exception ex) {
-                    tracer.end(extractStep, "extraction failed: " + ex.getMessage(), ex.getMessage());
-                    log.warn("Entity extraction / profile build failed: {}", ex.getMessage());
-                    TargetProfile targetProfile = resolveTargetProfile(run, archetype);
-                    resumeCtx = new ResumeContext(new ResumeEntities(List.of()), redFlagChecker.checkFromText(fullText),
-                            null, archetype, targetProfile, FunnelVerdict.MODE_JD, true, fullText, Persona.GENERAL, true);
-                }
-                }
-            }
+            ResumeContext resumeCtx = prepareResumeContext(runId, run, doc, skill, state, tracer);
             analyzeAndFinish(runId, run, doc, skill, state, tracer, resumeCtx,
                     buildUserMessage(run, doc, resumeCtx));
         } catch (Exception fatalEx) {
             fatal(run, runId, tracer, fatalEx);
+        }
+    }
+
+    private ResumeContext prepareResumeContext(String runId, AgentRun run, ParsedDocument doc,
+                                               SkillDefinition skill, LoopState state, TraceRecorder tracer) {
+        if (state.turn() != 0 || state.round() != 0 || !"resume-review".equals(skill.name())) {
+            return ResumeContext.empty();
+        }
+        String fullText = doc.sections().stream()
+                .map(sec -> (sec.heading() != null && !sec.heading().isBlank()
+                        ? sec.heading() + "\n" : "") + sec.text())
+                .reduce((a, b) -> a + "\n" + b).orElse("");
+        Archetype archetype = resolveArchetype(run);
+        if (run.getJobDescription() == null || run.getJobDescription().isBlank()) {
+            List<RedFlag> redFlags = redFlagChecker.checkFromText(fullText);
+            TargetProfile targetProfile = resolveTargetProfile(run, archetype);
+            String matchMode = targetProfile != null && TargetProfile.MODE_DIRECTION.equals(targetProfile.mode())
+                    ? FunnelVerdict.MODE_DIRECTION : FunnelVerdict.MODE_NONE;
+            String stepId = tracer.begin("RESUME_ORIGINAL_TEXT", null);
+            tracer.recordMeta(stepId, false, "QUALITY_FIRST");
+            tracer.end(stepId, "semantic extraction skipped (no JD)", null);
+            return new ResumeContext(new ResumeEntities(List.of()), redFlags, null, archetype,
+                    targetProfile, matchMode, false, fullText, Persona.GENERAL, true);
+        }
+        return prepareJdResumeContext(runId, run, doc, tracer, fullText, archetype);
+    }
+
+    private ResumeContext prepareJdResumeContext(String runId, AgentRun run, ParsedDocument doc,
+                                                  TraceRecorder tracer, String fullText, Archetype archetype) {
+        String extractStep = tracer.begin("ENTITY_EXTRACT", null);
+        tracer.recordMeta(extractStep, true, "LLM");
+        try {
+            // Markdown 标题保存在 heading，抽取时必须与节 ID 一起传入。
+            String extractionText = doc.sections().stream()
+                    .map(sec -> "[SECTION_ID=" + sec.id() + "]\n"
+                            + (sec.heading() != null && !sec.heading().isBlank()
+                            ? sec.heading() + "\n" : "") + sec.text())
+                    .reduce((a, b) -> a + "\n" + b).orElse("");
+            ExtractionOutcome outcome = entityExtractor.extract(extractionText, doc.fileName(), runId);
+            ResumeEntities entities = outcome.entities();
+            tracer.end(extractStep, "extracted " + entities.getAll().size()
+                    + " entities" + (outcome.degraded() ? " (DEGRADED)" : ""), null);
+
+            String profileStep = tracer.begin("PROFILE_BUILD", null);
+            tracer.recordMeta(profileStep, false, null);
+            ResumeProfile profile = profileBuilder.build(entities);
+            tracer.end(profileStep, "profile built", null);
+
+            Persona persona = resolvePersona(run, profile);
+            List<RedFlag> redFlags = outcome.degraded()
+                    ? redFlagChecker.checkFromText(fullText)
+                    : redFlagChecker.check(entities, fullText, persona);
+            String checkStep = tracer.begin("RED_FLAG_CHECK", null);
+            tracer.recordMeta(checkStep, false, null);
+            tracer.end(checkStep, "found " + redFlags.size() + " red flags, persona=" + persona, null);
+
+            return new ResumeContext(entities, redFlags, profile, archetype,
+                    resolveTargetProfile(run, archetype), FunnelVerdict.MODE_JD,
+                    outcome.degraded(), fullText, persona, true);
+        } catch (Exception ex) {
+            tracer.end(extractStep, "extraction failed: " + ex.getMessage(), ex.getMessage());
+            log.warn("Entity extraction / profile build failed: {}", ex.getMessage());
+            return new ResumeContext(new ResumeEntities(List.of()), redFlagChecker.checkFromText(fullText),
+                    null, archetype, resolveTargetProfile(run, archetype), FunnelVerdict.MODE_JD,
+                    true, fullText, Persona.GENERAL, true);
         }
     }
 
@@ -816,47 +861,65 @@ public class DocumentAnalysisService {
             analyzeFollowUp(runId, run, doc, skill, resumeFrom, tracer);
             return;
         }
-        AnalysisResult result = null;
-        LlmFunnelFields funnelFields = LlmFunnelFields.empty();
-        String mode = null;
-        List<AgentLoop.ObservedFragment> observations = List.of();
-        Long tokensUsed = null;
-
         boolean resumeReview = "resume-review".equals(skill.name());
+        CandidateAnalysis candidate = generateCandidate(runId, run, doc, skill, resumeFrom,
+                tracer, enrichedUserMessage);
+        AnalysisResult result = verifyCitations(candidate.result(), doc, tracer);
+        result = supplementEvidence(runId, doc, skill, tracer, result);
+        if (resumeReview) {
+            result = assembleResumeResult(runId, run, resumeCtx, tracer, result, candidate.funnelFields());
+        }
+        completeAnalysis(runId, run, doc, skill, tracer, result, candidate.mode(), candidate.tokensUsed(), resumeReview);
+    }
+
+    private record CandidateAnalysis(AnalysisResult result, LlmFunnelFields funnelFields,
+                                     String mode, Long tokensUsed) {
+    }
+
+    private CandidateAnalysis generateCandidate(String runId, AgentRun run, ParsedDocument doc,
+                                                SkillDefinition skill, LoopState resumeFrom,
+                                                TraceRecorder tracer, String enrichedUserMessage) {
+        boolean resumeReview = "resume-review".equals(skill.name());
+        List<AgentLoop.ObservedFragment> observations = List.of();
         if (reactEnabled && !resumeReview && shouldUseReact(runId, doc, tracer)) {
             LoopOutcome outcome = runLoop(runId, run, doc, skill, resumeFrom, tracer, enrichedUserMessage);
             if (outcome.parsed() != null && outcome.parsed().analysis() != null) {
-                result = outcome.parsed().analysis();
-                funnelFields = outcome.parsed().funnel();
-                mode = "REACT";
-                tokensUsed = outcome.tokensUsed();
-            } else {
-                observations = outcome.observations();
+                return new CandidateAnalysis(outcome.parsed().analysis(), outcome.parsed().funnel(),
+                        "REACT", outcome.tokensUsed());
             }
+            observations = outcome.observations();
         }
-        if (result == null) {
-            LlmOutcome llm = runDirectLlm(runId, run, doc, skill, tracer, observations, enrichedUserMessage);
-            if (llm.parsed() != null && llm.parsed().analysis() != null) {
-                result = llm.parsed().analysis();
-                funnelFields = llm.parsed().funnel();
-                mode = "LLM";
-                tokensUsed = llm.tokensUsed();
-            }
+        LlmOutcome llm = runDirectLlm(runId, run, doc, skill, tracer, observations, enrichedUserMessage);
+        if (llm.parsed() != null && llm.parsed().analysis() != null) {
+            return new CandidateAnalysis(llm.parsed().analysis(), llm.parsed().funnel(),
+                    "LLM", llm.tokensUsed());
         }
-        if (result == null) {
-            if (resumeReview) {
-                throw new IllegalStateException("LLM_UNAVAILABLE: 简历分析需要可用的 LLM，未生成不完整或可能误导的报告");
-            }
-            result = ruleFallback(doc, tracer);
-            mode = "FALLBACK";
-            tokensUsed = 0L;
+        if (resumeReview) {
+            throw new IllegalStateException("LLM_UNAVAILABLE: 简历分析需要可用的 LLM，未生成不完整或可能误导的报告");
         }
+        return new CandidateAnalysis(ruleFallback(doc, tracer), LlmFunnelFields.empty(), "FALLBACK", 0L);
+    }
 
-        result = verifyCitations(result, doc, tracer);
+    private AnalysisResult supplementEvidence(String runId, ParsedDocument doc, SkillDefinition skill,
+                                              TraceRecorder tracer, AnalysisResult result) {
+        // 仅在主结果没有任何有效引用时触发一次只读探索，避免 ReAct 接管确定性主流程。
+        if (evidenceExploreEnabled && executionMode == AnalysisExecutionMode.REAL
+                && "resume-review".equals(skill.name()) && result.citations().isEmpty()) {
+            EvidenceExplorer.ExploreResult explored = evidenceExplorer.explore(
+                    runId, "请寻找能够支持这份简历分析的 1-3 条关键原文证据。", doc, tracer, null);
+            if (!explored.evidence().isEmpty()) {
+                result = result.withCitations(explored.evidence());
+            }
+        }
+        return result;
+    }
 
+    private AnalysisResult assembleResumeResult(String runId, AgentRun run, ResumeContext resumeCtx,
+                                                 TraceRecorder tracer, AnalysisResult result,
+                                                 LlmFunnelFields funnelFields) {
         // P12 漏斗结论：红旗 + 方向画像 + LLM 五角度输出 → FunnelVerdict
         // 按技能判断而非实体非空：降级时空实体仍需组装（LLM 五角度输出基于直读原文，不该陪葬）
-        if ("resume-review".equals(skill.name())) {
+        {
             // 新增：对齐分析（优先使用对齐矩阵，降级时回退到LLM五角度）
             List<AlignmentEntry> alignmentMatrix = List.of();
             if (resumeCtx.targetProfile() != null && !resumeCtx.targetProfile().requirements().isEmpty()) {
@@ -944,6 +1007,12 @@ public class DocumentAnalysisService {
                 // 序列化失败不影响主流程
             }
         }
+        return result;
+    }
+
+    private void completeAnalysis(String runId, AgentRun run, ParsedDocument doc, SkillDefinition skill,
+                                  TraceRecorder tracer, AnalysisResult result, String mode,
+                                  Long tokensUsed, boolean resumeReview) throws JsonProcessingException {
         // prompt 版本标记（初始硬编码，后续可从配置读取）
         if (run.getPromptVersion() == null) {
             run.setPromptVersion(skill.name() + "-v1");
@@ -1296,10 +1365,25 @@ public class DocumentAnalysisService {
                     }
                 }
             }
+            // keyPoints/risks 已从 LLM 输出契约下线（v8）：优先用显式输出（兼容 mock/评测旧数据），
+            // 缺失时从 leverageCards 派生——避免模型手抄结构化字段造成两份不一致的真相。
+            List<LeverageCard> leverageCards = parseLeverageCards(raw.leverageCards);
+            List<String> keyPoints = raw.keyPoints != null && !raw.keyPoints.isEmpty()
+                    ? raw.keyPoints
+                    : leverageCards.stream()
+                            .filter(c -> c.kind() == LeverageCard.Kind.STRENGTH)
+                            .map(LeverageCard::point)
+                            .toList();
+            List<String> risks = raw.risks != null && !raw.risks.isEmpty()
+                    ? raw.risks
+                    : leverageCards.stream()
+                            .filter(c -> c.kind() == LeverageCard.Kind.RISK)
+                            .map(LeverageCard::point)
+                            .toList();
             AnalysisResult analysis = new AnalysisResult(
                     raw.summary,
-                    raw.keyPoints == null ? List.of() : raw.keyPoints,
-                    raw.risks == null ? List.of() : raw.risks,
+                    keyPoints,
+                    risks,
                     citations,
                     null,
                     parseActionableSuggestions(raw.actionableSuggestions),
@@ -1307,7 +1391,7 @@ public class DocumentAnalysisService {
             LlmFunnelFields funnel = new LlmFunnelFields(
                     parsePresentation(raw.presentation),
                     parseExperienceStrength(raw.experienceStrength),
-                    parseLeverageCards(raw.leverageCards),
+                    leverageCards,
                     parseCoverage(raw.mustHaveCoverage),
                     parsePositioning(raw.positioning),
                     parseDirectionProposals(raw.recommendedDirections));

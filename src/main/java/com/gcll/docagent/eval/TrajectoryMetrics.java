@@ -26,6 +26,9 @@ public record TrajectoryMetrics(
         int redundantReads,
         int citationKept,
         int citationDropped,
+        boolean evidenceExploreTriggered,
+        boolean evidenceExploreSucceeded,
+        long evidenceExploreCostMs,
         long reactCostMs,
         long totalCostMs
 ) {
@@ -75,6 +78,15 @@ public record TrajectoryMetrics(
             }
         }
 
+        AgentStep evidenceStep = steps.stream()
+                .filter(s -> "EVIDENCE_EXPLORE".equals(s.getStepName()))
+                .findFirst().orElse(null);
+        boolean evidenceTriggered = evidenceStep != null;
+        boolean evidenceSucceeded = evidenceStep != null
+                && evidenceStep.getErrorMessage() == null
+                && evidenceStep.getOutputSnapshot() != null
+                && !evidenceStep.getOutputSnapshot().contains("evidence=0");
+
         return new TrajectoryMetrics(
                 (int) steps.stream().filter(s -> "REACT_LLM_RESPONSE".equals(s.getStepName())).count(),
                 (int) steps.stream().filter(s -> s.getStepName() != null && s.getStepName().startsWith("REACT_TOOL_CALL: ")).count(),
@@ -82,6 +94,9 @@ public record TrajectoryMetrics(
                 redundant,
                 kept,
                 dropped,
+                evidenceTriggered,
+                evidenceSucceeded,
+                evidenceStep == null ? 0 : evidenceStep.getCostMs(),
                 reactCost,
                 totalCostMs);
     }

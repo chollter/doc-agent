@@ -165,10 +165,11 @@ public class DocumentAnalysisController {
         return result;
     }
 
-    /** 仅服务内部消费的字段（mustHaveCoverage 是 requirementVerdicts 的派生投影，一并剥除）。 */
+    /** 仅服务内部消费的字段（mustHaveCoverage 是 requirementVerdicts 的派生投影；
+     *  leverageCards 是 keyPoints/risks 的代码派生源，一并剥除）。 */
     private static final List<String> PIPELINE_ONLY_VERDICT_FIELDS = List.of(
             "requirementVerdicts", "mustHaveCoverage", "evidenceAssessments",
-            "experienceStrength", "groundingFindings");
+            "experienceStrength", "groundingFindings", "leverageCards");
 
     /** 追问：向已完成的 run 追加用户消息，重回队列续跑。 */
     @org.springframework.web.bind.annotation.PostMapping("/runs/{runId}/messages")

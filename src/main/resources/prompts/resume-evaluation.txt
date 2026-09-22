@@ -11,7 +11,7 @@
 把每条经历拆成：背景/问题、个人动作、技术方法、关键决策、结果/影响、规模/复杂度、上线/约束、原文证据。技术名词不是深度；“负责/参与”不是贡献证据；“提升效率”不是结果指标。
 
 ## 七个质量维度
-逐维输出 level=STRONG|MEDIUM|WEAK|UNKNOWN：
+只输出值得说明的维度（非 STRONG，或 STRONG 但有最硬证据要点名），最多 6 条；无话可说的维度直接省略，不要硬凑。level=STRONG|MEDIUM|WEAK|UNKNOWN：
 1. FACT_SPECIFICITY 事实具体性：是否说清做了什么、对象和场景。
 2. PERSONAL_OWNERSHIP 个人贡献边界：能否分辨本人负责的模块、动作和决策。
 3. TECHNICAL_DEPTH 技术深度：是否说明机制、取舍、异常处理、评测或性能，而非名词堆砌。
@@ -27,13 +27,18 @@
 - IRRELEVANT_TO_TARGET：能力真实，但与当前目标方向无关。
 - NONE：没有明显问题。
 
+## 文风（所有文本字段生效）
+短句，主语明确，动词开头。判断要下得了赌注（写「初筛能过」，不写「具有一定竞争力」）。
+数字只能来自原文，没有数字就不写数字。
+禁用词：整体而言、综上所述、较为、一定程度上、有待加强、进一步提升。
+
 ## 输出要求
 只输出合法 JSON，不要 markdown：
 {
-  "overall": "250-400字完整评价。结论先行，但必须展开说明简历质量档位、最硬证据、主要问题及其影响；没有JD时不得输出初筛淘汰结论，也不要与 dimensions 机械重复",
-  "dimensions": [{"dimension":"FACT_SPECIFICITY|PERSONAL_OWNERSHIP|TECHNICAL_DEPTH|RESULT_IMPACT|SCALE_COMPLEXITY|CREDIBILITY|READABILITY","level":"STRONG|MEDIUM|WEAK|UNKNOWN","comment":"基于证据的判断及对招聘方理解的影响","evidence":["原文连续短句或sectionId指向的事实"],"issueType":"CAPABILITY_GAP|EVIDENCE_INSUFFICIENT|EXPRESSION_PROBLEM|IRRELEVANT_TO_TARGET|NONE"}],
-  "strengths": ["判断 + 原文证据"],
-  "weaknesses": ["判断 + 原文证据 + 对筛选/面试的具体影响"],
+  "overall": "80字以内，最多两句。第一句是可证伪的判断：当前方向处于什么档位、初筛能否通过、最可能卡在哪。第二句只说最优先要改的一件事。没有JD时不得输出初筛淘汰结论",
+  "dimensions": [{"dimension":"FACT_SPECIFICITY|PERSONAL_OWNERSHIP|TECHNICAL_DEPTH|RESULT_IMPACT|SCALE_COMPLEXITY|CREDIBILITY|READABILITY","level":"STRONG|MEDIUM|WEAK|UNKNOWN","comment":"40字以内：一句判断加一个证据，不展开影响分析","evidence":["原文连续短句或sectionId指向的事实"],"issueType":"CAPABILITY_GAP|EVIDENCE_INSUFFICIENT|EXPRESSION_PROBLEM|IRRELEVANT_TO_TARGET|NONE"}],
+  "strengths": ["最多2条，每条25字以内，写最硬的证据（优先带原文数字）"],
+  "weaknesses": ["最多4条，每条30字以内，格式：问题——对筛选或面试的影响。空窗/跳槽等红旗类问题不要写（代码已单独产出），只写证据与表达问题；不与 dimensions 机械重复"],
   "citations": [{"sectionId":"sec-X","quote":"原文连续片段（30字以内）"}]
 }
 

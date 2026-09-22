@@ -9,11 +9,13 @@ function ModeBadge({ mode }: { mode: string | null | undefined }) {
     REACT: 'bg-violet-100 text-violet-700',
     LLM: 'bg-blue-100 text-blue-700',
     FALLBACK: 'bg-amber-100 text-amber-700',
+    MOCK: 'bg-slate-100 text-slate-500',
   };
   const label: Record<string, string> = {
     REACT: 'ReAct 工具循环',
     LLM: '直连 LLM（降级）',
     FALLBACK: '规则摘要（兜底）',
+    MOCK: '演示数据',
   };
   return (
     <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${config[mode] ?? 'bg-slate-100 text-slate-600'}`}>

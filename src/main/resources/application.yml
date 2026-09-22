@@ -89,7 +89,9 @@ logging:
 docagent:
   # 当前 prompt/分析行为版本——校准对照的版本锚点；每次改 prompt 或分析行为后递增，
   # 提交时未手填版本标注的运行自动带上此值（手填优先）。
-  prompt-version: v7
+  # v8：总评/summary 收紧为一句话（80字）、strengths/weaknesses 加条数字数预算、
+  #     keyPoints/risks 退出输出契约（代码从 leverageCards 派生）、新增文风禁词约束。
+  prompt-version: v8
   llm:
     # LLM HTTP 客户端超时（秒）：连接超时防握手挂起，读超时防响应僵死。
     # （log.txt 事故：JDK HttpClient 无默认读超时，单次调用挂 15 分钟触发 stale 重排双执行）。
@@ -97,10 +99,18 @@ docagent:
     connect-timeout-seconds: ${LLM_CONNECT_TIMEOUT_SEC:10}
     read-timeout-seconds: ${LLM_READ_TIMEOUT_SEC:180}
   analysis:
+    # 运行模式：MOCK 用于前端联调（不消耗 token），REAL 执行真实分析，EVAL 供 Fake/Replay LLM 评测。
+    # 默认保留 MOCK，避免启动项目或调试前端产生模型费用；真实验证时设置 ANALYSIS_MODE=REAL。
+    execution-mode: ${ANALYSIS_MODE:MOCK}
+    # EVAL 固定回放文件；可按评测 case 覆盖，不需要调用外部模型。
+    eval-replay-resource: ${EVAL_REPLAY_RESOURCE:/mock/resume-review-mock.json}
+    # 只读证据探索默认关闭；REAL 模式下开启后，仅在主结果无有效引用时触发一次 ReAct。
+    evidence-explore-enabled: ${EVIDENCE_EXPLORE_ENABLED:false}
     # 演示模式：简历分析不调 LLM，直接返回预置假结论（mock/resume-review-mock.json），
     # 前端联调/展示用；追问同样返回预置回答。不写结论缓存。
-    # 【当前默认开启】回到真实分析：设环境变量 ANALYSIS_MOCK_ENABLED=false，或把下面的默认值改回 false。
-    mock-result-enabled: ${ANALYSIS_MOCK_ENABLED:true}
+    # 兼容旧配置；默认关闭。演示模式由 execution-mode=MOCK 控制，真实模式可设置 ANALYSIS_MODE=REAL。
+    # 旧环境若显式设置 ANALYSIS_MOCK_ENABLED=true，仍会强制进入 MOCK。
+    mock-result-enabled: ${ANALYSIS_MOCK_ENABLED:false}
     # 结论缓存：同简历（内容哈希）+ 同分析输入（技能/指令/JD/方向/人群/prompt 版本）直接复用
     # 历史结论，跳过整条 LLM 流水线；forceRefresh 提交参数可强制重跑并覆盖。
     # 简历档案（resume_profile）不受此开关影响——免上传再分析始终可用。
@@ -119,6 +129,9 @@ docagent:
       max-tool-calls: 16
       max-total-tokens: 60000
       parallel-tools: true
+      # ReAct 运行时边界：防止重复工具调用和超大观察结果吞噬上下文。
+      max-observation-chars: ${REACT_MAX_OBSERVATION_CHARS:6000}
+      max-duplicate-tool-calls: ${REACT_MAX_DUPLICATE_TOOL_CALLS:2}
 
 opsmind:
   llm:

@@ -23,7 +23,9 @@ spring:
 
 docagent:
   analysis:
-    # 测试默认真实行为：演示模式（主配置当前默认开启）与结论缓存都在此显式关闭，
+    # 测试默认真实行为：显式绕过前端演示 Mock，保证集成测试验证真实执行链路。
+    execution-mode: REAL
+    # 演示模式与结论缓存都在此显式关闭，
     # 需要的测试类用 @TestPropertySource 显式打开。
     mock-result-enabled: false
     # 现有集成测试大量重复提交相同内容（校准轮/多用例同简历）——默认关闭结论缓存，

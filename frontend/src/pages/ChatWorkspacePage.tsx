@@ -130,7 +130,7 @@ function ReportBubble({ result, mode, onReanalyze }: {
   }
   if (mode) {
     const modeLabel: Record<string, string> = {
-      REACT: '完整分析', LLM: '降级直连', FALLBACK: '规则兜底', CACHE_HIT: '历史结论·未重新分析',
+      REACT: '完整分析', LLM: '降级直连', FALLBACK: '规则兜底', MOCK: '演示数据', CACHE_HIT: '历史结论·未重新分析',
     };
     foot.push(modeLabel[mode] ?? mode);
   }
