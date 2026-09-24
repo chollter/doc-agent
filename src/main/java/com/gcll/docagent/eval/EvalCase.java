@@ -6,8 +6,8 @@ import java.util.List;
 
 /**
  * 评测用例——固定输入 + 结果断言，让"引用防幻觉""降级可靠"这类主张变得可度量。
- * <p>断言覆盖直连 LLM 与通用文档分析的 FALLBACK 路径；resume-review 在无可用 LLM
- * 时按 fail-closed 策略结束为 LLM_UNAVAILABLE，不伪造内容结果。
+ * <p>断言覆盖直连 LLM 分析；所有技能在无可用 LLM 时按 fail-closed 策略结束为
+ * LLM_UNAVAILABLE，不伪造内容结果。
  * <p>P10 起支持配对缺陷注入：简历×JD 埋已知匹配/差距/幻觉陷阱。
  * <p>P12 起支持方向画像模式（targetDirection）与漏斗分角度断言：
  * 红旗类型必现/必不现、强度档位、覆盖条数，

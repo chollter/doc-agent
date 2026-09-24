@@ -336,6 +336,29 @@ function FunnelVerdictSection({ verdict, onCitation }: {
         </details>
       )}
 
+      {(verdict.evidenceAssessments ?? []).some((item) => item.evidenceSource === 'REACT') && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-emerald-700">
+            <Sparkles size={15} />
+            跨章节补充到的量化结果
+          </div>
+          <div className="space-y-2">
+            {(verdict.evidenceAssessments ?? []).filter((item) => item.evidenceSource === 'REACT').map((item, i) => (
+              <button
+                key={`${item.sectionId ?? 'unknown'}-${i}`}
+                type="button"
+                className="block w-full rounded-lg bg-white/80 px-3 py-2 text-left text-xs leading-5 text-slate-700 hover:bg-white"
+                onClick={() => item.sectionId && onCitation?.(item.sectionId)}
+              >
+                <span className="font-medium">{item.claim}</span>
+                <span className="ml-2 text-emerald-700">{item.sourceQuote}</span>
+                {item.sectionId && <span className="ml-2 text-slate-400">查看原文 · {item.sectionId}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 第四关：表达质量，默认折叠 */}
       {verdict.presentation && (
         <details className="group rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">

@@ -93,6 +93,18 @@ export interface FunnelVerdict {
   evaluation?: Evaluation | null;
   /** 无 JD 时从简历自身证据推断的方向建议；tier 由后端按证据强度判定 */
   recommendedDirections?: DirectionRecommendation[] | null;
+  /** 只展示由证据探索器补充并通过原文锚定的结果证据。 */
+  evidenceAssessments?: EvidenceAssessment[] | null;
+}
+
+export interface EvidenceAssessment {
+  claim: string;
+  sectionId: string | null;
+  sourceQuote: string;
+  evidenceLevel: 'L0_KEYWORD' | 'L1_ACTIVITY' | 'L2_METHOD' | 'L3_RESULT' | 'L4_TRADE_OFF';
+  evidenceFound: string[];
+  missingFacts: string[];
+  evidenceSource?: 'RULE' | 'REACT' | string;
 }
 
 export interface DirectionRecommendation {

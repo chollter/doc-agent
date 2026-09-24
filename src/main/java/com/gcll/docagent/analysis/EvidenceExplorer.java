@@ -78,8 +78,8 @@ public class EvidenceExplorer {
                     });
                 }
             }
-            return new ExploreResult(root.path("sufficient").asBoolean(!evidence.isEmpty()),
-                    List.copyOf(evidence), root.path("reason").asText(""));
+            List<AnalysisResult.Citation> unique = evidence.stream().distinct().limit(3).toList();
+            return new ExploreResult(!unique.isEmpty(), unique, root.path("reason").asText(""));
         } catch (Exception ignored) {
             return ExploreResult.insufficient("INVALID_EXPLORER_OUTPUT");
         }

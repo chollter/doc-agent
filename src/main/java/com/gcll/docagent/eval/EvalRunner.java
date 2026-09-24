@@ -183,13 +183,13 @@ public class EvalRunner {
 
     private void checkAssertions(EvalCase evalCase, AgentRun run, List<String> failures,
                                  Map<String, FunnelJson> verdictsByName) {
-        // resume-review intentionally fails closed when no usable LLM is configured.
+        // Any skill fails closed when no usable LLM is configured.
         // In offline CI this is an expected availability outcome, not a content failure;
         // with a working/stubbed LLM the normal golden assertions below still apply.
         if (run.getStatus() == AgentRunStatus.FAILED
-                && "resume-review".equals(evalCase.skill())
                 && ((run.getLastError() != null && run.getLastError().contains("LLM_UNAVAILABLE"))
-                    || (run.getExecutionMode() == null && run.getResultJson() == null))) {
+                    || ("resume-review".equals(evalCase.skill())
+                        && run.getExecutionMode() == null && run.getResultJson() == null))) {
             return;
         }
         EvalCase.Assertions a = evalCase.assertions();
@@ -229,7 +229,7 @@ public class EvalRunner {
             }
         }
 
-        // ---- FALLBACK 模式不产出深度字段，后续断言跳过 ----
+        // ---- 历史 FALLBACK 结果兼容：不产出深度字段，后续断言跳过 ----
         if ("FALLBACK".equals(run.getExecutionMode())) {
             return;
         }

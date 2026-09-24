@@ -110,19 +110,21 @@ class DocumentAnalysisIntegrationTest {
     }
 
     @Test
-    void fallsBackToRuleModeWhenLlmFails() throws Exception {
+    void failsWithoutPresentingRuleSummaryWhenLlmFails() throws Exception {
         when(llmGateway.invokeStream(anyString(), anyString(), anyString(), anyString(), any()))
                 .thenThrow(new RuntimeException("llm down"));
 
         String runId = submit(MD, "提炼要点");
-        awaitStatus(runId, "COMPLETED");
+        awaitStatus(runId, "FAILED");
 
         MvcResult detail = mockMvc.perform(get("/api/analysis/runs/" + runId))
                 .andExpect(status().isOk())
                 .andReturn();
         var node = objectMapper.readTree(detail.getResponse().getContentAsString(StandardCharsets.UTF_8));
-        assertThat(node.get("executionMode").asText()).isEqualTo("FALLBACK");
-        assertThat(node.get("summary").asText()).contains("规则模式");
+        assertThat(node.get("executionMode").asText()).isEqualTo("REAL");
+        assertThat(node.get("lastError").asText()).contains("LLM_UNAVAILABLE")
+                .contains("API Key").contains("模型配置");
+        assertThat(node.get("result").isNull()).isTrue();
     }
 
     /**

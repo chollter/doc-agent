@@ -24,6 +24,7 @@ public final class DomainEntityConverter {
         entity.setStatus(run.getStatus().name());
         entity.setOriginalContent(run.getOriginalContent());
         entity.setCurrentSummary(run.getCurrentSummary());
+        entity.setLastError(run.getLastError());
         entity.setFileName(run.getFileName());
         entity.setFileType(run.getFileType());
         entity.setSkill(run.getSkill());
@@ -61,6 +62,7 @@ public final class DomainEntityConverter {
         );
         run.setStatus(AgentRunStatus.valueOf(entity.getStatus()));
         run.setCurrentSummary(entity.getCurrentSummary());
+        run.setLastError(entity.getLastError());
         run.setFileName(entity.getFileName());
         run.setFileType(entity.getFileType());
         run.setSkill(entity.getSkill());

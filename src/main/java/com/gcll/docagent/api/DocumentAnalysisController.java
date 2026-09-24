@@ -54,6 +54,8 @@ public class DocumentAnalysisController {
     private final AgentStepRepository agentStepRepository;
     private final com.gcll.docagent.analysis.ResumeCacheService resumeCacheService;
     private final com.gcll.docagent.analysis.CalibrationService calibrationService;
+    private final com.gcll.docagent.analysis.SuggestionApplier suggestionApplier;
+    private final com.gcll.docagent.analysis.RunMessageStore runMessageStore;
 
     public DocumentAnalysisController(DocumentAnalysisService analysisService,
                                       AgentRunRepository agentRunRepository,
@@ -63,7 +65,9 @@ public class DocumentAnalysisController {
                                       LlmInteractionMapper interactionMapper,
                                       AgentStepRepository agentStepRepository,
                                       com.gcll.docagent.analysis.ResumeCacheService resumeCacheService,
-                                      com.gcll.docagent.analysis.CalibrationService calibrationService) {
+                                      com.gcll.docagent.analysis.CalibrationService calibrationService,
+                                      com.gcll.docagent.analysis.SuggestionApplier suggestionApplier,
+                                      com.gcll.docagent.analysis.RunMessageStore runMessageStore) {
         this.analysisService = analysisService;
         this.agentRunRepository = agentRunRepository;
         this.documentStore = documentStore;
@@ -73,6 +77,8 @@ public class DocumentAnalysisController {
         this.agentStepRepository = agentStepRepository;
         this.resumeCacheService = resumeCacheService;
         this.calibrationService = calibrationService;
+        this.suggestionApplier = suggestionApplier;
+        this.runMessageStore = runMessageStore;
     }
 
     /** 提交分析：file/resumeId 二选一（同步解析建档，解析错误直接 400），异步执行（SSE/轮询获取进度）。
@@ -168,7 +174,7 @@ public class DocumentAnalysisController {
     /** 仅服务内部消费的字段（mustHaveCoverage 是 requirementVerdicts 的派生投影；
      *  leverageCards 是 keyPoints/risks 的代码派生源，一并剥除）。 */
     private static final List<String> PIPELINE_ONLY_VERDICT_FIELDS = List.of(
-            "requirementVerdicts", "mustHaveCoverage", "evidenceAssessments",
+            "requirementVerdicts", "mustHaveCoverage",
             "experienceStrength", "groundingFindings", "leverageCards");
 
     /** 追问：向已完成的 run 追加用户消息，重回队列续跑。 */
@@ -185,7 +191,7 @@ public class DocumentAnalysisController {
     @org.springframework.web.bind.annotation.GetMapping("/runs/{runId}/messages")
     public java.util.List<com.gcll.docagent.api.dto.AnalysisRunDtos.MessageDto> getMessages(
             @org.springframework.web.bind.annotation.PathVariable String runId) {
-        return analysisService.getMessages(runId).stream()
+        return runMessageStore.getMessages(runId).stream()
                 .map(m -> new com.gcll.docagent.api.dto.AnalysisRunDtos.MessageDto(
                         m.getTurn(), m.getRole(), m.getContent(), m.getCreatedAt().toString()))
                 .toList();
@@ -214,9 +220,9 @@ public class DocumentAnalysisController {
 
     /** 采纳建议：对指定建议做 before→after 替换，返回修改稿（Markdown）与失锚明细。 */
     @PostMapping("/runs/{runId}/apply-suggestions")
-    public com.gcll.docagent.analysis.DocumentAnalysisService.AppliedRevision applySuggestions(
+    public com.gcll.docagent.analysis.AppliedRevision applySuggestions(
             @PathVariable String runId, @RequestBody ApplyRequest request) {
-        return analysisService.applySuggestions(runId, request.indices());
+        return suggestionApplier.applySuggestions(runId, request.indices());
     }
 
     /** 采纳请求体。 */

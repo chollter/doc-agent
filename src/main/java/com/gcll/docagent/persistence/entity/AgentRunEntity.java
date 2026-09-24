@@ -18,6 +18,7 @@ public class AgentRunEntity {
     private String status;
     private String originalContent;
     private String currentSummary;
+    private String lastError;
     private String fileName;
     private String fileType;
     private String skill;
@@ -98,6 +99,14 @@ public class AgentRunEntity {
 
     public void setCurrentSummary(String currentSummary) {
         this.currentSummary = currentSummary;
+    }
+
+    public String getLastError() {
+        return lastError;
+    }
+
+    public void setLastError(String lastError) {
+        this.lastError = lastError;
     }
 
     public String getFileName() { return fileName; }

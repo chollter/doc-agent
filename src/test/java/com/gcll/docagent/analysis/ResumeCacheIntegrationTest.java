@@ -3,6 +3,8 @@ package com.gcll.docagent.analysis;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gcll.docagent.llm.LlmGateway;
+import com.gcll.docagent.domain.AgentRun;
+import com.gcll.docagent.persistence.repository.AgentRunRepository;
 import com.gcll.docagent.resilience.LlmResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +54,9 @@ class ResumeCacheIntegrationTest {
 
     @Autowired
     private ResumeCacheService resumeCacheService;
+
+    @Autowired
+    private AgentRunRepository agentRunRepository;
 
     @MockitoBean
     private LlmGateway llmGateway;
@@ -106,7 +111,24 @@ class ResumeCacheIntegrationTest {
         assertThat(secondResult.get("executionMode").asText()).isEqualTo("CACHE_HIT");
         assertThat(secondResult.get("result").get("summary").asText()).isEqualTo(summary);
         assertThat(secondResult.get("result").get("funnelVerdict")).isNotNull();
+        // evidenceAssessments 是简历报告需要展示/定位的证据，不应被 API 管线字段投影剥除。
+        assertThat(secondResult.get("result").get("funnelVerdict").has("evidenceAssessments")).isTrue();
         assertThat(secondResult.get("result").has("suggestions")).isFalse();
+
+        // API 投影应保留补充证据及来源字段，而不只是保留空数组字段。
+        AgentRun cachedRun = agentRunRepository.findById(second).orElseThrow();
+        cachedRun.setResultJson("""
+                {"summary":"test","citations":[],"funnelVerdict":{"evidenceAssessments":[
+                  {"claim":"支付平台","sectionId":"sec-2","sourceQuote":"故障率从 2% 降低到 0.5%",
+                   "evidenceLevel":"L3_RESULT","evidenceFound":["故障率从 2% 降低到 0.5%"],
+                   "missingFacts":[],"likelyInterviewQuestions":[],"preparationAdvice":[],
+                   "hasOriginalBasis":true,"evidenceSource":"REACT"}
+                ]}}
+                """);
+        agentRunRepository.save(cachedRun);
+        JsonNode apiEvidence = resultOf(second).get("result").get("funnelVerdict").get("evidenceAssessments").get(0);
+        assertThat(apiEvidence.get("evidenceSource").asText()).isEqualTo("REACT");
+        assertThat(apiEvidence.get("sectionId").asText()).isEqualTo("sec-2");
 
         verify(llmGateway, times(1)).invokeStream(anyString(), eq("resume-review.txt"), anyString(), anyString(), any());
         verify(llmGateway, times(1)).invoke(anyString(), eq("resume-evaluation.txt"), anyString(), anyString());
