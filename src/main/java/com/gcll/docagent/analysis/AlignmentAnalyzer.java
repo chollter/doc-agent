@@ -88,7 +88,7 @@ public class AlignmentAnalyzer {
         CoverageJudgment judgment = judgeCoverage(req, assessed, fullText, runId);
 
         // 4. 生成改进建议
-        AlignmentEntry.SuggestionFix fix = generateFix(req, judgment, assessed);
+        AlignmentEntry.SuggestionFix fix = generateFix(req, judgment, assessed, candidates);
 
         return new AlignmentEntry(
                 req.id(),
@@ -286,7 +286,8 @@ public class AlignmentAnalyzer {
      */
     private AlignmentEntry.SuggestionFix generateFix(TargetProfile.Requirement req,
                                                      CoverageJudgment judgment,
-                                                     List<EvidenceAssessment> evidence) {
+                                                     List<EvidenceAssessment> evidence,
+                                                     List<EvidenceCandidate> candidates) {
         if (judgment.status() == MustHaveCoverage.Status.MET) {
             return null;  // 已满足，无需建议
         }
@@ -297,11 +298,17 @@ public class AlignmentAnalyzer {
         int coverageGap = (int)((1.0 - judgment.coverage()) * priorityWeight);
 
         boolean hasEvidence = !evidence.isEmpty();
+        boolean constrainedPhase = hasEvidence && hasConstraintPhase(evidence, candidates);
         AlignmentEntry.FixType type;
         String effort;
         int roi;
 
-        if (hasEvidence) {
+        if (constrainedPhase) {
+            // 简历已写明建设期/移交等约束——业务指标不存在也不该编，改口径而非索要数字
+            type = AlignmentEntry.FixType.REFRAME;
+            effort = "LOW";
+            roi = coverageGap / 2;  // 只能改表述，覆盖度提升有限
+        } else if (hasEvidence) {
             // 有证据但不足 → ENHANCE（补充细节）
             type = AlignmentEntry.FixType.ENHANCE;
             effort = "LOW";  // 现有内容加细节，5-10分钟
@@ -314,7 +321,7 @@ public class AlignmentAnalyzer {
         }
 
         String before = hasEvidence ? evidence.get(0).claim() : "";
-        String after = generateAfterExample(req, judgment.gap(), hasEvidence);
+        String after = generateAfterExample(req, judgment.gap(), hasEvidence, constrainedPhase);
 
         return new AlignmentEntry.SuggestionFix(
                 type, before, after, roi, effort, judgment.gap());
@@ -325,14 +332,42 @@ public class AlignmentAnalyzer {
      */
     private String generateAfterExample(TargetProfile.Requirement req,
                                        String gap,
-                                       boolean hasEvidence) {
+                                       boolean hasEvidence,
+                                       boolean constrainedPhase) {
         // after 会被采纳引擎直接替换进修改稿，必须是可粘贴文稿；缺的事实用【填：…】槽位
         // （GroundingValidator 豁免【】内数字），不把"补充xx"这类指令句混进文稿。
+        if (constrainedPhase) {
+            return "写明项目阶段与个人边界：项目处于【填：阶段，如建设期/试点期】，"
+                    + "本人完成【填：已交付的工作】后移交【填：接手方】，在线业务指标由后续阶段产生";
+        }
         if (hasEvidence) {
             return "保留既有事实并补上可验证结果：【填：结果指标与具体数值】";
         } else {
             return "补一段「" + req.requirement() + "」的真实案例：【填：案例背景、你的角色、可验证结果】";
         }
+    }
+
+    /**
+     * 约束阶段口径：简历已说明项目未上线/建设期/移交——业务指标事实上不存在，
+     * 再出【填：结果指标】就是逼用户编数字（违反 grounding 原则），应改为写清约束。
+     */
+    private static final List<String> CONSTRAINT_PHASE_MARKERS = List.of(
+            "未上线", "建设期", "移交", "交接给", "交付后", "试点阶段", "开发阶段", "尚未上线");
+
+    private boolean hasConstraintPhase(List<EvidenceAssessment> evidence, List<EvidenceCandidate> candidates) {
+        boolean inEvidence = evidence.stream().anyMatch(e -> {
+            String text = (e.claim() == null ? "" : e.claim())
+                    + " " + (e.sourceQuote() == null ? "" : e.sourceQuote());
+            return containsMarker(text);
+        });
+        // 约束口径常写在 results/context 槽位而非 claim——项目全文兜底
+        boolean inProjectText = candidates.stream()
+                .anyMatch(c -> containsMarker(buildProjectText(c.project())));
+        return inEvidence || inProjectText;
+    }
+
+    private static boolean containsMarker(String text) {
+        return text != null && CONSTRAINT_PHASE_MARKERS.stream().anyMatch(text::contains);
     }
 
     private String stripFences(String content) {
