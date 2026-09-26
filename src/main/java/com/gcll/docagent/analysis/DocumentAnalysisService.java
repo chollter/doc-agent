@@ -96,8 +96,6 @@ public class DocumentAnalysisService {
     private final String instanceId;
     private final String defaultPromptVersion;
     private final int reactMaxChars;
-    /** 演示模式预置结论（classpath 加载后缓存）；追问的模拟回答 */
-    private volatile String mockResultJson;
 
     private final ThreadPoolExecutor executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(WORKER_THREADS, r -> {
         Thread t = new Thread(r, "doc-analysis");
@@ -344,19 +342,15 @@ public class DocumentAnalysisService {
     }
 
     private String mockResultJson() {
-        String cached = mockResultJson;
-        if (cached == null) {
-            try (java.io.InputStream in = getClass().getResourceAsStream("/mock/resume-review-mock.json")) {
-                if (in == null) {
-                    throw new IllegalStateException("演示数据缺失: /mock/resume-review-mock.json");
-                }
-                cached = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                mockResultJson = cached;
-            } catch (java.io.IOException ex) {
-                throw new IllegalStateException("读取演示数据失败: " + ex.getMessage(), ex);
+        // 不缓存：演示数据改动应下次运行即生效，重启才刷新是纯陷阱；文件几 KB，每次读盘可忽略
+        try (java.io.InputStream in = getClass().getResourceAsStream("/mock/resume-review-mock.json")) {
+            if (in == null) {
+                throw new IllegalStateException("演示数据缺失: /mock/resume-review-mock.json");
             }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (java.io.IOException ex) {
+            throw new IllegalStateException("读取演示数据失败: " + ex.getMessage(), ex);
         }
-        return cached;
     }
 
     private String replayResultJson(String resource) {

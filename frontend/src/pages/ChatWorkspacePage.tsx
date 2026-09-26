@@ -42,6 +42,12 @@ const ISSUE_BUCKETS: Array<[string, RegExp]> = [
 const bucketOf = (text: string): string | null =>
   ISSUE_BUCKETS.find(([, re]) => re.test(text))?.[0] ?? null;
 
+/** 展示层分类：一眼区分时间线硬伤与内容/表达问题；只加前缀，不参与去重 */
+const TAG_TIMELINE = /空窗|空白期|待业|中断|间隔|无在职|无就业|任期/;
+const TAG_CONTENT = /量化|结果佐证|数据支撑|指标|动词|表述|表达|措辞|格式|排版|术语|关键词/;
+const tagOf = (text: string): string | null =>
+  TAG_TIMELINE.test(text) ? '时间线' : TAG_CONTENT.test(text) ? '内容' : null;
+
 /**
  * 行动清单：红旗（按严重度）→ 需注意（与红旗去重）→ 未被引用的改写建议，≤4 条。
  * 每条尽量挂 actionableSuggestions 的 after 作为改法，匹配不上就只陈述问题——宁缺毋滥，不硬配。
@@ -56,6 +62,10 @@ function buildActionItems(
   const taken = new Set<string>();
   const usedSug = new Set<number>();
   const lines: string[] = [];
+  // 下方会渲染成「原文→判断→改法」卡片的建议（与 ReportBubble 的 slice(0,3) 保持一致）
+  const cardTags = new Set(
+    suggestions.slice(0, 3).map((s) => tagOf(`${s.target} ${s.reason}`)).filter((t): t is string => t !== null),
+  );
 
   const matchFix = (text: string): string | null => {
     const b = bucketOf(text);
@@ -66,17 +76,21 @@ function buildActionItems(
     return suggestions[idx].after;
   };
 
-  const push = (text: string, fix?: string) => {
+  const push = (text: string, fix?: string, severity?: string) => {
     const b = bucketOf(text);
     if (b && taken.has(b)) return;
     if (b) taken.add(b);
     const resolved = fix ?? matchFix(text);
-    lines.push(resolved ? `${text} → 「${resolved}」` : text);
+    const tag = tagOf(text);
+    const head = severity ? `【${tag ? `${tag}·` : ''}${severity}】` : tag ? `【${tag}】` : '';
+    // 同类问题下方已有卡片给改法时只指路，不在清单里复述改法
+    const tail = !resolved && tag !== null && cardTags.has(tag) ? '（对应改法见下方卡片）' : '';
+    lines.push(resolved ? `${head}${text} → 「${resolved}」` : `${head}${text}${tail}`);
   };
 
   [...(verdict?.redFlags ?? [])]
     .sort((a, b) => rank[a.severity] - rank[b.severity])
-    .forEach((f) => push(`【${sevLabel[f.severity] ?? f.severity}】${f.message}`));
+    .forEach((f) => push(f.message, undefined, sevLabel[f.severity] ?? f.severity));
   weaknesses.forEach((w) => push(w));
   suggestions.forEach((s, i) => {
     if (!usedSug.has(i)) push(`${s.target}「${s.before}」`, s.after);
@@ -84,7 +98,59 @@ function buildActionItems(
   return lines.slice(0, 4);
 }
 
-/** 报告消息（精简版）：结论 → 先处理 → 可以主打 → 页脚，四层倒金字塔；论据留在完整报告卡片里 */
+/** 把已有的原文引用带进摘要，避免结论只剩标签。这里只展示已有证据，不让前端自行推断。 */
+function buildEvidenceItems(result: AnalysisResult | null): string[] {
+  if (!result) return [];
+  const items: string[] = [];
+  const dimensions = result.funnelVerdict?.evaluation?.dimensions ?? [];
+  dimensions.forEach((dimension) => {
+    (dimension.evidence ?? []).forEach((evidence) => {
+      if (evidence && !items.includes(evidence)) items.push(`${dimension.dimension}：${evidence}`);
+    });
+  });
+  (result.funnelVerdict?.evidenceAssessments ?? []).forEach((assessment) => {
+    const quote = assessment.sourceQuote || assessment.evidenceFound?.[0];
+    if (quote && !items.includes(quote)) {
+      items.push(`${assessment.sectionId ? `[${assessment.sectionId}] ` : ''}${quote}`);
+    }
+  });
+  result.citations?.forEach((citation) => {
+    const item = `[${citation.sectionId}] ${citation.quote}`;
+    if (!items.some((existing) => existing.includes(citation.quote))) items.push(item);
+  });
+  return items.slice(0, 3);
+}
+
+/** 证据链：把一条原文、一个判断和一个改法放在同一张卡片里。 */
+function EvidenceChain({ suggestion, citation }: {
+  suggestion: ActionableSuggestion;
+  citation?: { sectionId: string; quote: string };
+}) {
+  const quote = citation?.quote || suggestion.before;
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs leading-5">
+      <div className="mb-1 font-semibold text-slate-800">{suggestion.target}</div>
+      <div className="rounded border-l-2 border-indigo-300 bg-white px-2 py-1 text-slate-600">
+        <span className="mr-1 font-medium text-indigo-600">原文{citation?.sectionId ? ` · ${citation.sectionId}` : ''}</span>
+        {quote || '未找到可展示的原文片段'}
+      </div>
+      <div className="mt-1 text-amber-700"><span className="font-medium">判断：</span>{suggestion.reason}</div>
+      <div className="mt-1 text-emerald-700"><span className="font-medium">改法：</span>{suggestion.after}</div>
+    </div>
+  );
+}
+
+/** 区块小标题：左侧色条 + 灰色小字，统一气泡内总评/先处理/可以主打/依据的层级 */
+function SectionTitle({ children }: { children: string }) {
+  return (
+    <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-slate-500">
+      <span className="h-3 w-1 rounded-full bg-indigo-300" />
+      {children}
+    </div>
+  );
+}
+
+/** 报告消息（精简版）：总评 → 先处理 → 可以主打 → 改法卡片 → 页脚倒金字塔；维度判断融进总评叙事，不单独成块 */
 function ReportBubble({ result, mode, onReanalyze }: {
   result: AnalysisResult | null;
   mode: string | null;
@@ -102,17 +168,18 @@ function ReportBubble({ result, mode, onReanalyze }: {
 
   // L3 可以主打：strengths，无评价时回退旧字段 keyPoints。
   const highlights = (ev?.strengths?.length ? ev.strengths : result?.keyPoints ?? []).slice(0, 2);
+  const evidence = buildEvidenceItems(result);
+  const suggestions = result?.actionableSuggestions ?? [];
+  const citations = result?.citations ?? [];
+  const evidenceChains = suggestions.slice(0, 3).map((suggestion) => ({
+    suggestion,
+    citation: citations.find((citation) => citation.sectionId === suggestion.sectionId),
+  }));
 
-  const blocks: string[] = [];
-  if (conclusion) blocks.push(`**总评**：${conclusion}`);
-  if (actions.length) blocks.push(`**先处理**\n\n${actions.map((a, i) => `${i + 1}. ${a}`).join('\n')}`);
-  if (highlights.length) blocks.push(`**可以主打**\n\n${highlights.map((h) => `- ${h}`).join('\n')}`);
-  if (verdict?.analysisDegraded) {
-    blocks.push('> ⚠️ **注意**：事实层抽取降级，红旗为文本级粗查、画像缺失；其余角度基于 LLM 直读原文。');
-  }
-  const markdown = blocks.join('\n\n');
+  const degraded = !!verdict?.analysisDegraded;
+  const empty = !conclusion && actions.length === 0 && highlights.length === 0;
 
-  // L4 页脚：画像/指标/定位压成一行小字（评价明细五维、推荐方向等论据不进聊天回复）。
+  // 页脚：画像/指标/定位压成一行小字（分维评价已在上方折叠给出，推荐方向等论据不进聊天回复）。
   const foot: string[] = [];
   if (result?.profile) {
     const p = result.profile;
@@ -120,9 +187,12 @@ function ReportBubble({ result, mode, onReanalyze }: {
   }
   if (verdict?.strength) {
     const band = verdict.strength.band === 'STRONG' ? '强' : verdict.strength.band === 'MIXED' ? '混合' : '弱';
-    foot.push(`内容强度${band}（结果${Math.round(verdict.strength.resultRate * 100)}%）`);
+    const s = verdict.strength;
+    // 给条数而非百分比：resultRate 是"有可核验结果的经历占比"，百分号会被误读成打分
+    const counted = s.entryCount > 0 ? `（${Math.round(s.resultRate * s.entryCount)}/${s.entryCount}条有可验证结果）` : '';
+    foot.push(`内容强度${band}${counted}`);
   }
-  if (verdict?.presentation) foot.push(`表达${verdict.presentation.score}分`);
+  if (verdict?.presentation) foot.push(`表达${verdict.presentation.score}分（${verdict.presentation.band}档）`);
   if (verdict?.positioning) {
     foot.push(verdict.positioning.anchored
       ? `定位「${verdict.positioning.currentAnchor ?? '—'}」`
@@ -130,19 +200,56 @@ function ReportBubble({ result, mode, onReanalyze }: {
   }
   if (mode) {
     const modeLabel: Record<string, string> = {
-      REACT: '完整分析', LLM: '降级直连', FALLBACK: '规则兜底', MOCK: '演示数据', CACHE_HIT: '历史结论·未重新分析',
+      REACT: '完整分析', LLM: '降级直连', FALLBACK: '历史规则结果', MOCK: '演示数据（非真实分析）', CACHE_HIT: '历史结论·未重新分析',
     };
     foot.push(modeLabel[mode] ?? mode);
   }
 
   return (
     <div className="max-w-[92%] rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-2.5 text-sm leading-7 text-slate-700 shadow-sm">
-      {markdown ? (
-        <div className="prose prose-sm prose-slate max-w-none [&_p]:my-1.5 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_blockquote]:my-1.5 [&_strong]:text-slate-900">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+      {conclusion ? (
+        <section>
+          <SectionTitle>总评</SectionTitle>
+          <p className="leading-7 text-slate-700">{conclusion}</p>
+        </section>
+      ) : null}
+      {actions.length > 0 && (
+        <section className="mt-3">
+          <SectionTitle>先处理</SectionTitle>
+          <ol className="list-decimal space-y-1 pl-5 leading-6 marker:text-slate-400">
+            {actions.map((a, i) => <li key={i}>{a}</li>)}
+          </ol>
+        </section>
+      )}
+      {highlights.length > 0 && (
+        <section className="mt-3">
+          <SectionTitle>可以主打</SectionTitle>
+          <ul className="list-disc space-y-1 pl-5 leading-6 marker:text-slate-400">
+            {highlights.map((h, i) => <li key={i}>{h}</li>)}
+          </ul>
+        </section>
+      )}
+      {evidence.length > 0 && evidenceChains.length === 0 && (
+        <section className="mt-3">
+          <SectionTitle>依据（原文）</SectionTitle>
+          <ul className="list-disc space-y-1 pl-5 leading-6 marker:text-slate-400">
+            {evidence.map((e, i) => <li key={i}>{e}</li>)}
+          </ul>
+        </section>
+      )}
+      {degraded && (
+        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs leading-5 text-amber-700">
+          ⚠️ 事实层抽取降级，红旗为文本级粗查、画像缺失；其余角度基于 LLM 直读原文。
         </div>
-      ) : (
-        <div className="whitespace-pre-wrap">（无分析结论）</div>
+      )}
+      {empty && <div className="whitespace-pre-wrap">（无分析结论）</div>}
+      {evidenceChains.length > 0 && (
+        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+          <SectionTitle>原文 → 判断 → 改法</SectionTitle>
+          {evidenceChains.map(({ suggestion, citation }) => (
+            <EvidenceChain key={`${suggestion.target}-${suggestion.sectionId ?? 'unknown'}`} suggestion={suggestion} citation={citation} />
+          ))}
+        </div>
       )}
       {foot.length > 0 && (
         <div className="mt-2 border-t border-slate-100 pt-1.5 text-[11px] leading-5 text-slate-400">
@@ -171,10 +278,25 @@ function CompareBubble({ before, after }: { before: FunnelVerdict; after: Funnel
     lines.push(`表达分数：${before.presentation?.score ?? '—'} → ${after.presentation?.score ?? '—'}`);
   }
   lines.push(`红旗数：${flagCount(before)} → ${flagCount(after)}`);
+  const reasons: string[] = [];
+  if (bandName(before.strength?.band) === bandName(after.strength?.band)) {
+    reasons.push('内容强度未变：本轮修改没有改变可核验的结果或责任归因证据');
+  }
+  if (before.presentation?.score != null && before.presentation.score === after.presentation?.score) {
+    reasons.push('表达分数未变：修改没有命中当前表达问题，或修改稿尚未重新进入评估');
+  }
+  if (flagCount(before) === flagCount(after)) {
+    reasons.push('红旗未变：时间线等客观事实不会因措辞调整自动消失');
+  }
   return (
     <div className="max-w-[92%] rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-2.5 text-sm leading-7 text-slate-700 shadow-sm">
       <div className="mb-1 text-xs font-semibold text-slate-500">修改前后对比</div>
       <div className="whitespace-pre-wrap">{lines.join('\n')}</div>
+      {reasons.length > 0 && (
+        <div className="mt-1 border-t border-slate-100 pt-1 text-xs leading-5 text-slate-500">
+          {reasons.map((reason) => <div key={reason}>· {reason}</div>)}
+        </div>
+      )}
     </div>
   );
 }

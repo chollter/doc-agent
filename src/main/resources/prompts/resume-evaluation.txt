@@ -35,7 +35,7 @@
 ## 输出要求
 只输出合法 JSON，不要 markdown：
 {
-  "overall": "80字以内，最多两句。第一句是可证伪的判断：当前方向处于什么档位、初筛能否通过、最可能卡在哪。第二句只说最优先要改的一件事。没有JD时不得输出初筛淘汰结论",
+  "overall": "100-150字、三到四句的融合叙事，不逐维点名、不列维度名。第一句是可证伪的判断：当前方向处于什么档位、初筛能否通过、最可能卡在哪。中间一到两句从 dimensions 中挑最强与最弱的判断融进叙事，各带一个证据（数字只能来自原文）。最后一句只说最优先要改的一件事。没有JD时不得输出初筛淘汰结论",
   "dimensions": [{"dimension":"FACT_SPECIFICITY|PERSONAL_OWNERSHIP|TECHNICAL_DEPTH|RESULT_IMPACT|SCALE_COMPLEXITY|CREDIBILITY|READABILITY","level":"STRONG|MEDIUM|WEAK|UNKNOWN","comment":"40字以内：一句判断加一个证据，不展开影响分析","evidence":["原文连续短句或sectionId指向的事实"],"issueType":"CAPABILITY_GAP|EVIDENCE_INSUFFICIENT|EXPRESSION_PROBLEM|IRRELEVANT_TO_TARGET|NONE"}],
   "strengths": ["最多2条，每条25字以内，写最硬的证据（优先带原文数字）"],
   "weaknesses": ["最多4条，每条30字以内，格式：问题——对筛选或面试的影响。空窗/跳槽等红旗类问题不要写（代码已单独产出），只写证据与表达问题；不与 dimensions 机械重复"],

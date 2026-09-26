@@ -326,10 +326,12 @@ public class AlignmentAnalyzer {
     private String generateAfterExample(TargetProfile.Requirement req,
                                        String gap,
                                        boolean hasEvidence) {
+        // after 会被采纳引擎直接替换进修改稿，必须是可粘贴文稿；缺的事实用【填：…】槽位
+        // （GroundingValidator 豁免【】内数字），不把"补充xx"这类指令句混进文稿。
         if (hasEvidence) {
-            return "[原有内容] + 补充细节：" + gap;
+            return "保留既有事实并补上可验证结果：【填：结果指标与具体数值】";
         } else {
-            return "需要补充「" + req.requirement() + "」的真实案例";
+            return "补一段「" + req.requirement() + "」的真实案例：【填：案例背景、你的角色、可验证结果】";
         }
     }
 

@@ -14,8 +14,8 @@ function ModeBadge({ mode }: { mode: string | null | undefined }) {
   const label: Record<string, string> = {
     REACT: 'ReAct 工具循环',
     LLM: '直连 LLM（降级）',
-    FALLBACK: '规则摘要（兜底）',
-    MOCK: '演示数据',
+    FALLBACK: '历史规则结果',
+    MOCK: '演示数据（非真实分析）',
   };
   return (
     <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${config[mode] ?? 'bg-slate-100 text-slate-600'}`}>
