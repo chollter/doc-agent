@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   History,
   Loader2,
@@ -150,6 +150,90 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
+/** 总评引用角标：锚点是总评里真实出现的原文片段（数字或连续短句），点击展开出处 */
+interface CitationAnchor {
+  start: number;
+  end: number;
+  sectionId: string;
+  quote: string;
+}
+
+/**
+ * 在总评文本里定位引用锚点：先找整句原文，找不到再退到 7 字滑窗的最长公共片段。
+ * 只做确定性字符串匹配，不推断——总评没引用的证据不挂角标。
+ */
+function findCitationAnchors(conclusion: string, sources: { sectionId: string; quote: string }[]): CitationAnchor[] {
+  const anchors: CitationAnchor[] = [];
+  const taken: Array<[number, number]> = [];
+  const overlaps = (s: number, e: number) => taken.some(([ts, te]) => s < te && ts < e);
+  sources.forEach(({ sectionId, quote }) => {
+    const q = quote?.trim();
+    if (!q || q.length < 5) return;
+    let hit = conclusion.indexOf(q);
+    let len = q.length;
+    if (hit < 0) {
+      for (let w = Math.min(q.length, 14); w >= 7 && hit < 0; w -= 1) {
+        for (let i = 0; i + w <= q.length; i += 1) {
+          const frag = q.slice(i, i + w);
+          // 片段边缘的标点不进高亮/不参与匹配，避免「P50 63.8s、」这种带尾巴的角标
+          const lead = frag.length - frag.replace(/^[，。、；：！？,.;:!?（(「『"']+/, '').length;
+          const trail = frag.length - frag.replace(/[，。、；：！？,.;:!?）)」』"']+$/, '').length;
+          if (lead + trail >= frag.length) continue;
+          const core = frag.slice(lead, frag.length - trail);
+          if (core.length < 6) continue;
+          const idx = conclusion.indexOf(core);
+          if (idx >= 0 && !overlaps(idx, idx + core.length)) { hit = idx; len = core.length; break; }
+        }
+      }
+    }
+    if (hit >= 0 && !overlaps(hit, hit + len)) {
+      taken.push([hit, hit + len]);
+      anchors.push({ start: hit, end: hit + len, sectionId, quote: q });
+    }
+  });
+  return anchors.sort((a, b) => a.start - b.start);
+}
+
+/** 带角标的总评：正文按锚点切段，角标点击展开「依据 · 原文片段」 */
+function AnchoredConclusion({ text, anchors }: { text: string; anchors: CitationAnchor[] }) {
+  const [open, setOpen] = useState<number | null>(null);
+  if (anchors.length === 0) return <p className="leading-7 text-slate-700">{text}</p>;
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  anchors.forEach((a, i) => {
+    if (a.start > cursor) parts.push(text.slice(cursor, a.start));
+    parts.push(
+      <span key={`seg-${i}`} className="rounded bg-indigo-50 text-indigo-700">{text.slice(a.start, a.end)}</span>,
+    );
+    parts.push(
+      <sup key={`sup-${i}`}>
+        <button
+          type="button"
+          onClick={() => setOpen(open === i ? null : i)}
+          className="mx-0.5 cursor-pointer rounded px-1 text-[10px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700"
+          title="查看依据原文"
+        >
+          [{i + 1}]
+        </button>
+      </sup>,
+    );
+    cursor = a.end;
+  });
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  const active = open !== null ? anchors[open] : null;
+  return (
+    <div>
+      <p className="leading-7 text-slate-700">{parts}</p>
+      {active && (
+        <div className="mt-1 rounded border-l-2 border-indigo-300 bg-slate-50 px-2 py-1 text-xs leading-5 text-slate-600">
+          <span className="mr-1 font-medium text-indigo-600">依据{active.sectionId ? ` · ${active.sectionId}` : ''}</span>
+          {active.quote}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 报告消息（精简版）：总评 → 先处理 → 可以主打 → 改法卡片 → 页脚倒金字塔；维度判断融进总评叙事，不单独成块 */
 function ReportBubble({ result, mode, onReanalyze }: {
   result: AnalysisResult | null;
@@ -210,7 +294,10 @@ function ReportBubble({ result, mode, onReanalyze }: {
       {conclusion ? (
         <section>
           <SectionTitle>总评</SectionTitle>
-          <p className="leading-7 text-slate-700">{conclusion}</p>
+          <AnchoredConclusion text={conclusion} anchors={findCitationAnchors(conclusion, [
+            ...citations,
+            ...(ev?.dimensions ?? []).flatMap((d) => (d.evidence ?? []).map((quote) => ({ sectionId: d.dimension, quote }))),
+          ])} />
         </section>
       ) : null}
       {actions.length > 0 && (

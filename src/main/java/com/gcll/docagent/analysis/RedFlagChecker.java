@@ -50,6 +50,16 @@ public class RedFlagChecker {
     private static final int NEW_GRAD_SHORT_TENURE_MONTHS = 6;
 
     /**
+     * 空窗类红旗的可操作建议：代码无法判断空窗期做了什么，给出两条真实可执行的路径——
+     * 有可查证经历就补一行（时间线连续后红旗自然消失），没有就备面试口径，不发明事实。
+     */
+    private static final String GAP_ACTIONABLE_ADVICE =
+            "——空窗期有可查证的工作/全职活动（社保、个税可查）就在经历中补一行「时间｜行业｜岗位」，"
+                    + "时间线连续后此红旗消除；没有可查证经历则备一句面试口径，不写无法证明的内容";
+    private static final String COVERED_TRAILING_ADVICE =
+            "；若期间另有可查证的工作经历（社保、个税可查），补一行「时间｜行业｜岗位」更稳";
+
+    /**
      * 执行全部红旗检查。
      *
      * @param entities    规范化后的简历实体
@@ -99,7 +109,8 @@ public class RedFlagChecker {
                     flags.add(new RedFlag(RedFlag.TIMELINE_GAP, severity,
                             String.format("时间线疑似有 %d 个月空窗（段间：%s 至 %s，%s 已入职下一段，粗查）",
                                     gap, YearMonth.from(prevEnd.plusMonths(1)),
-                                    nextStart.minusMonths(1), nextStart)));
+                                    nextStart.minusMonths(1), nextStart)
+                                    + GAP_ACTIONABLE_ADVICE));
                 }
             }
             if (prevEnd == null || range[1].isAfter(prevEnd)) {
@@ -119,11 +130,13 @@ public class RedFlagChecker {
                     if (covered) {
                         flags.add(new RedFlag(RedFlag.EMPLOYMENT_GAP_COVERED, RedFlag.Severity.LOW,
                                 String.format("最后一段雇佣 %s 结束，至今约 %d 个月（尾部：有项目覆盖），粗查显示有开放经历覆盖"
-                                        + "——面试必问，备好口径", last[1], months)));
+                                        + "——面试必问，备好口径", last[1], months)
+                                        + COVERED_TRAILING_ADVICE));
                     } else {
                         flags.add(new RedFlag(RedFlag.TRAILING_GAP, RedFlag.Severity.MEDIUM,
                                 String.format("最后一段经历 %s 结束至今约 %d 个月（尾部：无覆盖，粗查）——初筛必问",
-                                        last[1], months)));
+                                        last[1], months)
+                                        + GAP_ACTIONABLE_ADVICE));
                     }
                 }
             }
@@ -219,7 +232,8 @@ public class RedFlagChecker {
                 YearMonth nextStart = YearMonth.from(periods.get(i)[0]);
                 flags.add(new RedFlag(RedFlag.TIMELINE_GAP, severity,
                         String.format("时间线有 %d 个月空窗（段间：%s 至 %s，%s 已入职下一段）", gap,
-                                YearMonth.from(prevEndExclusive), nextStart.minusMonths(1), nextStart)));
+                                YearMonth.from(prevEndExclusive), nextStart.minusMonths(1), nextStart)
+                                + GAP_ACTIONABLE_ADVICE));
             }
         }
         return flags;
@@ -272,12 +286,14 @@ public class RedFlagChecker {
         if (covered) {
             return new RedFlag(RedFlag.EMPLOYMENT_GAP_COVERED, RedFlag.Severity.LOW,
                     String.format("最后一段雇佣 %s 结束，至今约 %d 个月（尾部：有项目覆盖），期间有项目/独立经历覆盖——不是空窗，"
-                            + "但面试必问：备好项目成果数据与回归就业的口径", lastEmpEnd, months));
+                            + "但面试必问：备好项目成果数据与回归就业的口径", lastEmpEnd, months)
+                            + COVERED_TRAILING_ADVICE);
         }
         RedFlag.Severity severity = months > GAP_HIGH_MONTHS ? RedFlag.Severity.HIGH : RedFlag.Severity.MEDIUM;
         return new RedFlag(RedFlag.TRAILING_GAP, severity,
                 String.format("最后一段雇佣 %s 结束至今已约 %d 个月（尾部：无覆盖）——初筛必问，简历或面试需备口径",
-                        lastEmpEnd, months));
+                        lastEmpEnd, months)
+                        + GAP_ACTIONABLE_ADVICE);
     }
 
     private static boolean coversLeaving(ResumeEntity p, LocalDate leavingEnd) {

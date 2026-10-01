@@ -61,6 +61,31 @@ class RedFlagCheckerTest {
     }
 
     @Test
+    void gapFlagsShouldCarryActionableAdvice() {
+        // 空窗红旗不能只报诊断：必须给出两条真实可执行路径（可查证→补一行经历；不可查证→备面试口径）
+        List<RedFlag> flags = check(List.of(
+                period("2020.01-2021.02", "work"),
+                period("2022.01-2023.06", "work")));
+
+        assertThat(flags).anySatisfy(f -> {
+            assertThat(f.type()).isEqualTo(RedFlag.TIMELINE_GAP);
+            assertThat(f.message()).contains("补一行").contains("面试口径")
+                    .contains("不写无法证明的内容");
+        });
+    }
+
+    @Test
+    void roughScanGapFlagsShouldCarryActionableAdvice() {
+        List<RedFlag> flags = checker.checkFromText(
+                "工作经历\n2020.01-2021.02 某公司 开发\n2022.01-2023.06 另一公司 开发\n13800138000");
+
+        assertThat(flags).anySatisfy(f -> {
+            assertThat(f.type()).isEqualTo(RedFlag.TIMELINE_GAP);
+            assertThat(f.message()).contains("粗查").contains("补一行").contains("面试口径");
+        });
+    }
+
+    @Test
     void shouldFlagSmallGapAsMediumOnly() {
         // 含当月修正后真实空窗 = 2020.11~2021.01 共 3 个月 → MEDIUM
         List<RedFlag> flags = check(List.of(
