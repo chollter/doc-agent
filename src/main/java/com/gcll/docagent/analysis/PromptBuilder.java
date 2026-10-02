@@ -1,6 +1,7 @@
 package com.gcll.docagent.analysis;
 
 import com.gcll.docagent.domain.AgentRun;
+import com.gcll.docagent.llm.context.ContextAssembler;
 import com.gcll.docagent.loop.AgentLoop;
 import com.gcll.docagent.parsing.DocSection;
 import com.gcll.docagent.parsing.ParsedDocument;
@@ -168,8 +169,9 @@ public class PromptBuilder {
         return sb.toString().trim();
     }
 
-    /** 评价专调输入：方向锚点 + 代码预检事实 + 主分析结构化结论 + 简历全文。 */
-    public String buildEvaluationInput(AgentRun run, ResumeContext ctx, AnalysisResult result,
+    /** 评价专调输入拆成可预算的段：header（结构化事实，恒保留）+ 简历全文（唯一无界段，可折叠）。
+     *  走预算/快照的调用方用本方法 + ContextAssembler；只需旧字符串的用 {@link #buildEvaluationInput}。 */
+    public List<ContextAssembler.Segment> buildEvaluationSegments(AgentRun run, ResumeContext ctx, AnalysisResult result,
                                        LlmFunnelFields funnel,
                                        List<RequirementVerdict> requirementVerdicts) {
         StringBuilder sb = new StringBuilder();
@@ -202,7 +204,22 @@ public class PromptBuilder {
             funnel.leverageCards().forEach(c -> sb.append("- [").append(c.kind()).append("] ")
                     .append(c.point()).append('\n'));
         }
-        sb.append("\n## 简历全文\n").append(ctx.fullText());
-        return sb.toString();
+        // 全文不进 header，单独成段（唯一无界段），交由 ContextAssembler 预算折叠
+        return List.of(
+                ContextAssembler.Segment.of("eval-header", run.getId(), sb.toString()),
+                new ContextAssembler.Segment("fulltext", "resume", "\n## 简历全文\n",
+                        ctx.fullText() == null ? "" : ctx.fullText()));
+    }
+
+    /** 评价专调输入（逐字兼容旧输出）：header + 全文拼接，不经预算。
+     *  需要预算/快照的调用方改用 {@link #buildEvaluationSegments} + ContextAssembler。 */
+    public String buildEvaluationInput(AgentRun run, ResumeContext ctx, AnalysisResult result,
+                                       LlmFunnelFields funnel,
+                                       List<RequirementVerdict> requirementVerdicts) {
+        StringBuilder out = new StringBuilder();
+        for (ContextAssembler.Segment s : buildEvaluationSegments(run, ctx, result, funnel, requirementVerdicts)) {
+            out.append(s.prefix()).append(s.text());
+        }
+        return out.toString();
     }
 }

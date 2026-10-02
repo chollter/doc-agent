@@ -102,6 +102,14 @@ class DocumentAnalysisIntegrationTest {
         assertThat(steps.toString()).contains("PARSE").contains("DIRECT_LLM")
                 .contains("CITATION_VERIFY").contains("REPORT");
 
+        // 上下文快照账本落到 DIRECT_LLM step 的 inputSnapshot，可从审计端点反查——
+        // Phase 1 验收：判断可复现（这次喂了哪些段、是否折叠/丢弃）。默认预算不设限故全 KEPT。
+        assertThat(steps.toString())
+                .contains("DIRECT_LLM tokens=")
+                .contains("budget=unlimited")
+                .contains("instr(KEPT)")
+                .contains("fulltext(KEPT)");
+
         // 历史列表包含该 run
         MvcResult list = mockMvc.perform(get("/api/analysis/runs"))
                 .andExpect(status().isOk())

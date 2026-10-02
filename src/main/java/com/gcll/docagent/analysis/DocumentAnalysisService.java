@@ -10,6 +10,7 @@ import com.gcll.docagent.domain.AgentRun;
 import com.gcll.docagent.domain.AgentRunStatus;
 import com.gcll.docagent.langchain4j.ReActContextHolder;
 import com.gcll.docagent.llm.LlmGateway;
+import com.gcll.docagent.llm.context.ContextAssembler;
 import com.gcll.docagent.loop.AgentLoop;
 import com.gcll.docagent.loop.LoopCheckpointStore;
 import com.gcll.docagent.loop.LoopMessage;
@@ -88,6 +89,7 @@ public class DocumentAnalysisService {
     private final CitationVerifier citationVerifier;
     private final PromptBuilder promptBuilder;
     private final ResultAssembler resultAssembler;
+    private final ContextAssembler contextAssembler;
     private final boolean reactEnabled;
     private final boolean mockResultEnabled;
     private final AnalysisExecutionMode executionMode;
@@ -126,6 +128,7 @@ public class DocumentAnalysisService {
             CitationVerifier citationVerifier,
             PromptBuilder promptBuilder,
             ResultAssembler resultAssembler,
+            ContextAssembler contextAssembler,
             @Value("${docagent.analysis.react-enabled:true}") boolean reactEnabled,
             @Value("${docagent.analysis.mock-result-enabled:false}") boolean mockResultEnabled,
             @Value("${docagent.analysis.execution-mode:MOCK}") String executionMode,
@@ -156,6 +159,7 @@ public class DocumentAnalysisService {
         this.citationVerifier = citationVerifier;
         this.promptBuilder = promptBuilder;
         this.resultAssembler = resultAssembler;
+        this.contextAssembler = contextAssembler;
         this.reactEnabled = reactEnabled;
         this.mockResultEnabled = mockResultEnabled;
         // 兼容旧配置：显式开启 mock-result-enabled 时仍保持演示行为。
@@ -815,9 +819,19 @@ public class DocumentAnalysisService {
         tracer.recordMeta(stepId, true, "SpringAI");
         try {
             String carried = promptBuilder.renderObservations(observations);
-            String userContent = (enrichedUserMessage != null ? enrichedUserMessage : promptBuilder.buildUserMessage(run, doc))
-                    + (carried.isEmpty() ? "" : "\n\nAgent 此前已阅读的片段（降级续读，勿重复阅读）：\n" + carried)
-                    + "\n\n文档内容（[节ID] 标记了各节，引用时使用节ID）：\n" + promptBuilder.renderWithSectionIds(doc);
+            String head = enrichedUserMessage != null ? enrichedUserMessage : promptBuilder.buildUserMessage(run, doc);
+            // 三段按预算装配 + 产出上下文快照账本（prefix 保留旧分隔符，不设限时逐字等于旧裸拼接）
+            java.util.List<ContextAssembler.Segment> segments = new java.util.ArrayList<>();
+            segments.add(ContextAssembler.Segment.of("instr", runId, head));
+            if (!carried.isEmpty()) {
+                segments.add(new ContextAssembler.Segment("observations", runId,
+                        "\n\nAgent 此前已阅读的片段（降级续读，勿重复阅读）：\n", carried));
+            }
+            segments.add(new ContextAssembler.Segment("fulltext", doc.fileName(),
+                    "\n\n文档内容（[节ID] 标记了各节，引用时使用节ID）：\n", promptBuilder.renderWithSectionIds(doc)));
+            ContextAssembler.AssembledContext assembled = contextAssembler.assemble("DIRECT_LLM", segments);
+            tracer.recordInput(stepId, assembled.snapshot().describe());
+            String userContent = assembled.text();
             // 流式输出（2026-09-18）：主分析改 invokeStream，增量经节流后推给 SSE 订阅者，
             // 前端“实时生成”面板逐字显示；总耗时不变但感知等待大幅缩短
             StringBuilder liveBuffer = new StringBuilder();

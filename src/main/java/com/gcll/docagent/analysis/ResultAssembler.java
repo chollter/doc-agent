@@ -3,6 +3,7 @@ package com.gcll.docagent.analysis;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gcll.docagent.domain.AgentRun;
 import com.gcll.docagent.llm.LlmGateway;
+import com.gcll.docagent.llm.context.ContextAssembler;
 import com.gcll.docagent.observability.trace.TraceRecorder;
 import com.gcll.docagent.parsing.ParsedDocument;
 import com.gcll.docagent.resilience.LlmResponse;
@@ -32,6 +33,7 @@ public class ResultAssembler {
     private final ExperienceEvidenceEnricher evidenceEnricher;
     private final FunnelFieldsMapper funnelFieldsMapper;
     private final PromptBuilder promptBuilder;
+    private final ContextAssembler contextAssembler;
     private final ObjectProvider<LlmGateway> llmGatewayProvider;
     private final ObjectMapper objectMapper;
 
@@ -42,6 +44,7 @@ public class ResultAssembler {
                            ExperienceEvidenceEnricher evidenceEnricher,
                            FunnelFieldsMapper funnelFieldsMapper,
                            PromptBuilder promptBuilder,
+                           ContextAssembler contextAssembler,
                            ObjectProvider<LlmGateway> llmGatewayProvider,
                            ObjectMapper objectMapper) {
         this.alignmentAnalyzer = alignmentAnalyzer;
@@ -51,6 +54,7 @@ public class ResultAssembler {
         this.evidenceEnricher = evidenceEnricher;
         this.funnelFieldsMapper = funnelFieldsMapper;
         this.promptBuilder = promptBuilder;
+        this.contextAssembler = contextAssembler;
         this.llmGatewayProvider = llmGatewayProvider;
         this.objectMapper = objectMapper;
     }
@@ -204,8 +208,11 @@ public class ResultAssembler {
         String stepId = tracer.begin("EVALUATION_LLM", null);
         tracer.recordMeta(stepId, true, "SpringAI");
         try {
+            ContextAssembler.AssembledContext assembled = contextAssembler.assemble("EVALUATION",
+                    promptBuilder.buildEvaluationSegments(run, ctx, result, funnel, requirementVerdicts));
+            tracer.recordInput(stepId, assembled.snapshot().describe());
             LlmResponse response = llmGateway.invoke("llm.resume-evaluation", "resume-evaluation.txt",
-                    promptBuilder.buildEvaluationInput(run, ctx, result, funnel, requirementVerdicts), run.getId());
+                    assembled.text(), run.getId());
             FunnelVerdict.Evaluation evaluation = funnelFieldsMapper.parseEvaluationJson(response.content());
             tracer.end(stepId, evaluation != null ? "evaluation generated" : "evaluation empty", null);
             return evaluation;
