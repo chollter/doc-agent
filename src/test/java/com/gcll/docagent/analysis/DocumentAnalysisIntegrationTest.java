@@ -73,6 +73,9 @@ class DocumentAnalysisIntegrationTest {
         when(llmGateway.invokeStream(anyString(), anyString(), anyString(), anyString(), any()))
                 .thenReturn(LlmResponse.of(llmJson, 100, 50, "qwen-plus"));
 
+        // 2026-10-03：装配点预算由网关按模型窗口派生——桩返回 50000，验证派生值进账本
+        when(llmGateway.budgetForCall(anyString(), anyString())).thenReturn(50000);
+
         String runId = submit(MD, "提炼要点");
         awaitStatus(runId, "COMPLETED");
 
@@ -103,12 +106,13 @@ class DocumentAnalysisIntegrationTest {
                 .contains("CITATION_VERIFY").contains("REPORT");
 
         // 上下文快照账本落到 DIRECT_LLM step 的 inputSnapshot，可从审计端点反查——
-        // Phase 1 验收：判断可复现（这次喂了哪些段、是否折叠/丢弃）。默认预算不设限故全 KEPT。
+        // Phase 1 验收（血缘版）：判断可复现（喂了哪些段、各自为什么进、锚在哪节），
+        // 预算为网关派生的正数（桩 50000）而非 unlimited；小文档仍在预算内故全 KEPT。
         assertThat(steps.toString())
                 .contains("DIRECT_LLM tokens=")
-                .contains("budget=unlimited")
-                .contains("instr(KEPT)")
-                .contains("fulltext(KEPT)");
+                .contains("budget=50000")
+                .contains("instr(KEPT why=用户指令+结构化事实)")
+                .contains("fulltext(KEPT why=用户上传文档全文 anchors=sec-1,sec-2,sec-3)");
 
         // 历史列表包含该 run
         MvcResult list = mockMvc.perform(get("/api/analysis/runs"))

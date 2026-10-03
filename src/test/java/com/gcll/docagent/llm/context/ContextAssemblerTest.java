@@ -102,4 +102,23 @@ class ContextAssemblerTest {
         // 账本摘要把丢弃来源显式写出，不静默
         assertThat(result.snapshot().describe()).contains("DROPPED=").contains("sec-9");
     }
+
+    @Test
+    void describeRecordsSelectionLineage() {
+        ContextAssembler.Segment a = new ContextAssembler.Segment("fulltext", "doc", "", "正文内容",
+                "用户上传文档全文", List.of("sec-1", "sec-2", "sec-3", "sec-4", "sec-5"));
+        ContextAssembler.AssembledContext result = assembler.assemble("DIRECT_LLM", List.of(a), 5000);
+
+        // 账本能回答"这段为什么进上下文、锚在哪几节"；锚点超 3 个压缩为 +n
+        assertThat(result.snapshot().describe())
+                .contains("fulltext(KEPT why=用户上传文档全文 anchors=sec-1,sec-2,sec-3,+2)");
+        // 血缘字段不改变装配输出（逐字回归）
+        assertThat(result.text()).isEqualTo("正文内容");
+    }
+
+    @Test
+    void exposeBudgetOverrideForCallers() {
+        assertThat(new ContextAssembler(cwm, 1234).budgetOverride()).isEqualTo(1234);
+        assertThat(assembler.budgetOverride()).isEqualTo(0);
+    }
 }

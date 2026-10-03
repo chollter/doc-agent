@@ -208,8 +208,11 @@ public class ResultAssembler {
         String stepId = tracer.begin("EVALUATION_LLM", null);
         tracer.recordMeta(stepId, true, "SpringAI");
         try {
+            // 预算与 DIRECT_LLM 同策略：配置正数覆盖，否则按目标模型窗口派生
+            int budget = contextAssembler.budgetOverride() > 0 ? contextAssembler.budgetOverride()
+                    : Math.max(0, llmGateway.budgetForCall("llm.resume-evaluation", "resume-evaluation.txt"));
             ContextAssembler.AssembledContext assembled = contextAssembler.assemble("EVALUATION",
-                    promptBuilder.buildEvaluationSegments(run, ctx, result, funnel, requirementVerdicts));
+                    promptBuilder.buildEvaluationSegments(run, ctx, result, funnel, requirementVerdicts), budget);
             tracer.recordInput(stepId, assembled.snapshot().describe());
             LlmResponse response = llmGateway.invoke("llm.resume-evaluation", "resume-evaluation.txt",
                     assembled.text(), run.getId());

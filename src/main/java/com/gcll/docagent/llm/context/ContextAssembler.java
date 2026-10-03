@@ -27,38 +27,50 @@ public class ContextAssembler {
     private final ContextWindowManager windowManager;
 
     /**
-     * 默认 token 预算（{@code docagent.analysis.context-budget-tokens}，默认 0=不设限）。
-     * 默认不设限保证正常简历路径逐字零变化；快照账本仍照常记账（段来源、token 总量）。
-     * 配成正数即开启折叠/丢弃保护——简历通常远小于窗口，故默认关闭是安全的 Phase 1 选择。
+     * 预算覆盖值（{@code docagent.analysis.context-budget-tokens}，默认 0=不覆盖）。
+     * &gt;0 时装配点用它替代模型窗口派生预算（测试注入/手动收紧场景）；
+     * ≤0 表示"由调用方按 {@link com.gcll.docagent.llm.LlmGateway#budgetForCall} 窗口派生"。
      */
-    private final int defaultBudgetTokens;
+    private final int budgetOverrideTokens;
 
     public ContextAssembler(ContextWindowManager windowManager,
-                            @Value("${docagent.analysis.context-budget-tokens:0}") int defaultBudgetTokens) {
+                            @Value("${docagent.analysis.context-budget-tokens:0}") int budgetOverrideTokens) {
         this.windowManager = windowManager;
-        this.defaultBudgetTokens = defaultBudgetTokens;
+        this.budgetOverrideTokens = budgetOverrideTokens;
+    }
+
+    /** 手动预算覆盖值；≤0 表示未配置覆盖，调用方应走窗口派生。 */
+    public int budgetOverride() {
+        return budgetOverrideTokens;
     }
 
     /**
      * 一段候选上下文。
      *
-     * @param kind   段类型（instr / observations / fulltext / evidence ...）
-     * @param source 段的来源标识（runId、sectionId、doc 等），丢弃时进 droppedEvidence
-     * @param prefix 段前缀分隔符（旧裸拼接里这段之前的固定文本，如 "\n## 简历全文\n"）；不参与折叠
-     * @param text   段正文；超预算时被折叠
+     * @param kind    段类型（instr / observations / fulltext / eval-header ...）
+     * @param source  段的来源标识（runId、sectionId、doc 等），丢弃时进 droppedEvidence
+     * @param prefix  段前缀分隔符（旧裸拼接里这段之前的固定文本，如 "## 简历全文"）；不参与折叠
+     * @param text    段正文；超预算时被折叠
+     * @param why     入选理由短码——"这段为什么进上下文"（血缘记账）
+     * @param anchors 该段携带的证据锚点（节ID 等），回答"这段内容锚在简历哪几节"
      */
-    public record Segment(String kind, String source, String prefix, String text) {
+    public record Segment(String kind, String source, String prefix, String text,
+                          String why, java.util.List<String> anchors) {
+
+        public Segment(String kind, String source, String prefix, String text) {
+            this(kind, source, prefix, text, "", java.util.List.of());
+        }
+
         public static Segment of(String kind, String source, String text) {
-            return new Segment(kind, source, "", text);
+            return new Segment(kind, source, "", text, "", java.util.List.of());
+        }
+
+        public static Segment of(String kind, String source, String text, String why) {
+            return new Segment(kind, source, "", text, why, java.util.List.of());
         }
     }
 
     public record AssembledContext(String text, ContextSnapshot snapshot) {
-    }
-
-    /** 生产入口：用配置的默认预算组装。 */
-    public AssembledContext assemble(String callSite, List<Segment> segments) {
-        return assemble(callSite, segments, defaultBudgetTokens);
     }
 
     public AssembledContext assemble(String callSite, List<Segment> segments, int budgetTokens) {
@@ -77,7 +89,7 @@ public class ContextAssembler {
             int before = prefixTokens + textTokens;
             totalBefore += before;
 
-            // 预算关闭：全部原样保留，输出与旧裸拼接逐字一致
+            // 预算不设限（≤0，窗口派生失败/覆盖值未配且网关不可用时的回退）：原样保留，逐字等于旧裸拼接
             if (budgetTokens <= 0) {
                 out.append(prefix).append(text);
                 totalAfter += before;
@@ -113,6 +125,7 @@ public class ContextAssembler {
 
     private static ContextSnapshot.SegmentRecord record(
             Segment seg, int before, int after, ContextSnapshot.Disposition disposition) {
-        return new ContextSnapshot.SegmentRecord(seg.kind(), seg.source(), before, after, disposition);
+        return new ContextSnapshot.SegmentRecord(seg.kind(), seg.source(), before, after, disposition,
+                seg.why(), seg.anchors());
     }
 }

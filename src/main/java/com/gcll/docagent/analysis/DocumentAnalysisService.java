@@ -825,23 +825,32 @@ public class DocumentAnalysisService {
         try {
             String carried = promptBuilder.renderObservations(observations);
             String head = enrichedUserMessage != null ? enrichedUserMessage : promptBuilder.buildUserMessage(run, doc);
-            // 三段按预算装配 + 产出上下文快照账本（prefix 保留旧分隔符，不设限时逐字等于旧裸拼接）
+            // 三段按预算装配 + 产出上下文快照账本（prefix 保留旧分隔符，不设限时逐字等于旧裸拼接）。
+            // 预算默认由目标模型窗口派生（与网关终线截断同公式）——溢出在装配层折叠并记账，
+            // 而非到网关被字符级静默截断；配置正数仅作手动覆盖。
+            String callName = "llm." + skill.name();
+            int budget = contextAssembler.budgetOverride() > 0 ? contextAssembler.budgetOverride()
+                    : Math.max(0, llmGateway.budgetForCall(callName, skill.directPromptFile()));
             java.util.List<ContextAssembler.Segment> segments = new java.util.ArrayList<>();
-            segments.add(ContextAssembler.Segment.of("instr", runId, head));
+            segments.add(ContextAssembler.Segment.of("instr", runId, head, "用户指令+结构化事实"));
             if (!carried.isEmpty()) {
                 segments.add(new ContextAssembler.Segment("observations", runId,
-                        "\n\nAgent 此前已阅读的片段（降级续读，勿重复阅读）：\n", carried));
+                        "\n\nAgent 此前已阅读的片段（降级续读，勿重复阅读）：\n", carried,
+                        "降级续读:已读片段回带", java.util.List.of()));
             }
+            java.util.List<String> sectionIds = doc.sections().stream().map(s -> s.id()).toList();
             segments.add(new ContextAssembler.Segment("fulltext", doc.fileName(),
-                    "\n\n文档内容（[节ID] 标记了各节，引用时使用节ID）：\n", promptBuilder.renderWithSectionIds(doc)));
-            ContextAssembler.AssembledContext assembled = contextAssembler.assemble("DIRECT_LLM", segments);
+                    "\n\n文档内容（[节ID] 标记了各节，引用时使用节ID）：\n",
+                    promptBuilder.renderWithSectionIds(doc),
+                    "用户上传文档全文", sectionIds));
+            ContextAssembler.AssembledContext assembled = contextAssembler.assemble("DIRECT_LLM", segments, budget);
             tracer.recordInput(stepId, assembled.snapshot().describe());
             String userContent = assembled.text();
             // 流式输出（2026-09-18）：主分析改 invokeStream，增量经节流后推给 SSE 订阅者，
             // 前端“实时生成”面板逐字显示；总耗时不变但感知等待大幅缩短
             StringBuilder liveBuffer = new StringBuilder();
             LlmResponse response = llmGateway.invokeStream(
-                    "llm." + skill.name(), skill.directPromptFile(), userContent, runId,
+                    callName, skill.directPromptFile(), userContent, runId,
                     delta -> {
                         liveBuffer.append(delta);
                         // 48 字符节流：token 级推送事件量过大，攒小段再推（同时也是 SSE 保活）

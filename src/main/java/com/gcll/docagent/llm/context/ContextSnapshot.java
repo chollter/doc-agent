@@ -26,12 +26,20 @@ public record ContextSnapshot(
 
     public enum Disposition { KEPT, FOLDED, DROPPED }
 
+    /**
+     * 一段上下文的账本记录。
+     *
+     * @param why     入选理由短码（这段为什么进上下文），血缘记账
+     * @param anchors 该段携带的证据锚点（节ID 等），回答"判断锚在哪"
+     */
     public record SegmentRecord(
             String kind,
             String source,
             int tokensBefore,
             int tokensAfter,
-            Disposition disposition) {
+            Disposition disposition,
+            String why,
+            java.util.List<String> anchors) {
     }
 
     /** 是否发生过折叠或丢弃——true 说明窗口没装下全部候选上下文。 */
@@ -49,11 +57,24 @@ public record ContextSnapshot(
             if (s.disposition() != Disposition.KEPT) {
                 sb.append(' ').append(s.tokensAfter()).append('/').append(s.tokensBefore());
             }
+            if (s.why() != null && !s.why().isBlank()) {
+                sb.append(" why=").append(s.why());
+            }
+            if (s.anchors() != null && !s.anchors().isEmpty()) {
+                sb.append(" anchors=").append(anchorsRepr(s.anchors()));
+            }
             sb.append(')');
         }
         if (!droppedEvidence.isEmpty()) {
             sb.append(" | DROPPED=").append(droppedEvidence);
         }
         return sb.toString();
+    }
+
+    /** 锚点列表压缩表示：最多列 3 个节ID，其余计数（防一行账本被长列表撑爆）。 */
+    private static String anchorsRepr(java.util.List<String> anchors) {
+        int n = anchors.size();
+        String head = String.join(",", anchors.subList(0, Math.min(3, n)));
+        return n > 3 ? head + ",+" + (n - 3) : head;
     }
 }

@@ -204,11 +204,28 @@ public class PromptBuilder {
             funnel.leverageCards().forEach(c -> sb.append("- [").append(c.kind()).append("] ")
                     .append(c.point()).append('\n'));
         }
-        // 全文不进 header，单独成段（唯一无界段），交由 ContextAssembler 预算折叠
+        // 全文不进 header，单独成段（唯一无界段），交由 ContextAssembler 预算折叠。
+        // 血缘：header 的锚点=裁决/卡片字段实际引用的节ID（进上下文的证据为什么在），去重保序。
+        java.util.LinkedHashSet<String> anchors = new java.util.LinkedHashSet<>();
+        if (requirementVerdicts != null) {
+            requirementVerdicts.stream()
+                    .filter(v -> v.sectionIds() != null)
+                    .flatMap(v -> v.sectionIds().stream())
+                    .filter(id -> id != null && !id.isBlank())
+                    .forEach(anchors::add);
+        }
+        if (funnel != null && funnel.leverageCards() != null) {
+            funnel.leverageCards().stream()
+                    .map(LeverageCard::sectionId)
+                    .filter(id -> id != null && !id.isBlank())
+                    .forEach(anchors::add);
+        }
         return List.of(
-                ContextAssembler.Segment.of("eval-header", run.getId(), sb.toString()),
+                new ContextAssembler.Segment("eval-header", run.getId(), "", sb.toString(),
+                        "结构化事实:JD/预检红旗/裁决/亮点风险卡", new java.util.ArrayList<>(anchors)),
                 new ContextAssembler.Segment("fulltext", "resume", "\n## 简历全文\n",
-                        ctx.fullText() == null ? "" : ctx.fullText()));
+                        ctx.fullText() == null ? "" : ctx.fullText(),
+                        "简历全文(供评价引原文回溯)", java.util.List.of()));
     }
 
     /** 评价专调输入（逐字兼容旧输出）：header + 全文拼接，不经预算。

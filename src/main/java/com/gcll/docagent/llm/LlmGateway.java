@@ -331,18 +331,43 @@ public class LlmGateway {
             // 老路径（invoke(promptFile,content)）无 callName，退回固定字数截断（向后兼容）
             return contextWindowManager.truncate(userContent);
         }
+        int availableForContent = budgetForTemplate(callName, promptTemplate);
+        if (availableForContent <= 0) {
+            // 极端情况：系统提示+模板已撑满窗口，用保守固定截断
+            log.warn("No token budget left for userContent (callName={}), fallback to char truncate", callName);
+            return contextWindowManager.truncate(userContent);
+        }
+        return contextWindowManager.truncate(userContent, availableForContent);
+    }
+
+    /**
+     * 公开装配预算：调用点按目标模型窗口还能装多少 user 内容 token。
+     *
+     * <p>与 {@link #truncateByModelWindow} 终防线同一公式（窗口 − 系统提示 − prompt 模板 − 安全余量），
+     * 供 {@link com.gcll.docagent.llm.context.ContextAssembler} 调用点<b>先按预算装配并记账</b>——
+     * 溢出在装配层被折叠（FOLDED，进快照账本），而不是到这里被字符级静默截断。
+     * 装配到位后本类的终线截断即为 no-op，仍保留作兜底。
+     *
+     * @param callName   调用点标识（查模型窗口）
+     * @param promptFile classpath:prompts/ 下的模板文件名
+     * @return 剩余可用 token 预算；≤0 表示窗口已满或加载失败（调用方应回退不设限/兜底路径）
+     */
+    public int budgetForCall(String callName, String promptFile) {
+        try {
+            return budgetForTemplate(callName, loadPrompt(promptFile));
+        } catch (IOException ex) {
+            log.warn("budgetForCall failed to load prompt {}, caller falls back to unlimited: {}",
+                    promptFile, ex.getMessage());
+            return -1;
+        }
+    }
+
+    private int budgetForTemplate(String callName, String promptTemplate) {
         int modelWindow = modelRouter.windowFor(callName);
         int systemTokens = contextWindowManager.estimateTokens(systemBasePrompt);
         int promptTokens = contextWindowManager.estimateTokens(promptTemplate);
         // 安全余量：留给 completion 输出 + jtokkit 估算误差。取窗口的 25%（至少 1024）
         int safetyMargin = Math.max(1024, modelWindow / 4);
-        int availableForContent = modelWindow - systemTokens - promptTokens - safetyMargin;
-        if (availableForContent <= 0) {
-            // 极端情况：系统提示+模板已撑满窗口，用保守固定截断
-            log.warn("No token budget left for userContent (window={}, system={}, prompt={}), fallback to char truncate",
-                    modelWindow, systemTokens, promptTokens);
-            return contextWindowManager.truncate(userContent);
-        }
-        return contextWindowManager.truncate(userContent, availableForContent);
+        return modelWindow - systemTokens - promptTokens - safetyMargin;
     }
 }
