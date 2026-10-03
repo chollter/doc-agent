@@ -176,7 +176,7 @@ public class DocumentAnalysisService {
      * 执行由 RunQueuedEvent 即时触发认领（快路径），RunQueueScheduler 轮询兜底。 */
     public AgentRun start(MultipartFile file, String instruction, String skillName, String jobDescription,
                           String targetDirection, String persona, String promptVersion, String optimizationNote,
-                          boolean forceRefresh) {
+                          boolean forceRefresh, String baseRunId) {
         String fileName = file.getOriginalFilename();
         ParsedDocument doc;
         try {
@@ -185,23 +185,23 @@ public class DocumentAnalysisService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "读取上传文件失败: " + ex.getMessage());
         }
         return beginRun(doc, instruction, skillName, jobDescription, targetDirection,
-                persona, promptVersion, optimizationNote, forceRefresh);
+                persona, promptVersion, optimizationNote, forceRefresh, baseRunId);
     }
 
     /** 提交分析（免上传）：从简历档案取已存简历直接进入分析流程。 */
     public AgentRun startFromResume(String resumeId, String instruction, String skillName, String jobDescription,
                                     String targetDirection, String persona, String promptVersion,
-                                    String optimizationNote, boolean forceRefresh) {
+                                    String optimizationNote, boolean forceRefresh, String baseRunId) {
         ParsedDocument doc = resumeCacheService.loadDocument(resumeId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST,
                         "历史简历不存在或已失效: " + resumeId));
         return beginRun(doc, instruction, skillName, jobDescription, targetDirection,
-                persona, promptVersion, optimizationNote, forceRefresh);
+                persona, promptVersion, optimizationNote, forceRefresh, baseRunId);
     }
 
     private AgentRun beginRun(ParsedDocument doc, String instruction, String skillName, String jobDescription,
                               String targetDirection, String persona, String promptVersion, String optimizationNote,
-                              boolean forceRefresh) {
+                              boolean forceRefresh, String baseRunId) {
         SkillDefinition skill = skillRegistry.find(skillName)
                 .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST,
                         "未知技能: " + skillName + "（可用: " + skillRegistry.list().stream().map(SkillDefinition::name).toList() + ")"));
@@ -247,6 +247,11 @@ public class DocumentAnalysisService {
         // 简历建档（按内容哈希去重，不受缓存开关影响——免上传再分析依赖它）
         ResumeCacheService.ProfileRef profile = resumeCacheService.upsertProfile(doc);
         run.setContentHash(profile.contentHash());
+
+        // 迭代血缘：仅当用户显式传入基线 run 时才绑定，系统绝不自动推断上一版（避免静默错绑）。
+        if (baseRunId != null && !baseRunId.isBlank()) {
+            run.setBaseRunId(baseRunId.trim());
+        }
 
         // 演示/回放模式：不调 LLM，直接使用固定结果（优先于缓存探测，也不污染真实结论缓存）。
         if ((executionMode == AnalysisExecutionMode.MOCK || executionMode == AnalysisExecutionMode.EVAL)

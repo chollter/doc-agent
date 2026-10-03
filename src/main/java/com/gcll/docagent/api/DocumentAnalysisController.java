@@ -56,6 +56,7 @@ public class DocumentAnalysisController {
     private final com.gcll.docagent.analysis.CalibrationService calibrationService;
     private final com.gcll.docagent.analysis.SuggestionApplier suggestionApplier;
     private final com.gcll.docagent.analysis.RunMessageStore runMessageStore;
+    private final com.gcll.docagent.analysis.IterationDiffService iterationDiffService;
 
     public DocumentAnalysisController(DocumentAnalysisService analysisService,
                                       AgentRunRepository agentRunRepository,
@@ -67,7 +68,8 @@ public class DocumentAnalysisController {
                                       com.gcll.docagent.analysis.ResumeCacheService resumeCacheService,
                                       com.gcll.docagent.analysis.CalibrationService calibrationService,
                                       com.gcll.docagent.analysis.SuggestionApplier suggestionApplier,
-                                      com.gcll.docagent.analysis.RunMessageStore runMessageStore) {
+                                      com.gcll.docagent.analysis.RunMessageStore runMessageStore,
+                                      com.gcll.docagent.analysis.IterationDiffService iterationDiffService) {
         this.analysisService = analysisService;
         this.agentRunRepository = agentRunRepository;
         this.documentStore = documentStore;
@@ -79,6 +81,7 @@ public class DocumentAnalysisController {
         this.calibrationService = calibrationService;
         this.suggestionApplier = suggestionApplier;
         this.runMessageStore = runMessageStore;
+        this.iterationDiffService = iterationDiffService;
     }
 
     /** 提交分析：file/resumeId 二选一（同步解析建档，解析错误直接 400），异步执行（SSE/轮询获取进度）。
@@ -95,14 +98,15 @@ public class DocumentAnalysisController {
             @RequestParam(required = false) String persona,
             @RequestParam(required = false) String promptVersion,
             @RequestParam(required = false) String optimizationNote,
+            @RequestParam(required = false) String baseRunId,
             @RequestParam(required = false, defaultValue = "false") boolean forceRefresh) {
         AgentRun run;
         if (file != null) {
             run = analysisService.start(file, instruction, skill, jobDescription,
-                    targetDirection, persona, promptVersion, optimizationNote, forceRefresh);
+                    targetDirection, persona, promptVersion, optimizationNote, forceRefresh, baseRunId);
         } else if (resumeId != null && !resumeId.isBlank()) {
             run = analysisService.startFromResume(resumeId.trim(), instruction, skill, jobDescription,
-                    targetDirection, persona, promptVersion, optimizationNote, forceRefresh);
+                    targetDirection, persona, promptVersion, optimizationNote, forceRefresh, baseRunId);
         } else {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "请上传简历文件，或通过 resumeId 选择历史简历");
         }
@@ -268,6 +272,50 @@ public class DocumentAnalysisController {
             return calibrationService.compareRuns(runA, runB);
         }
         return calibrationService.compareVersions(fileName, baselineVersion, candidateVersion);
+    }
+
+    /**
+     * 迭代报告：当本次 run 显式绑定了基线（baseRunId）时，纯代码 diff 出"改了什么、改法是否落地"。
+     * 未绑定基线不报错——返回 degraded 报告，前端据此提示"非真实迭代对比"。绝不自动挑基线。
+     */
+    @GetMapping("/runs/{runId}/iteration")
+    public com.gcll.docagent.analysis.IterationReport iterationReport(@PathVariable String runId)
+            throws IOException {
+        AgentRun next = requireRun(runId);
+        String baseRunId = next.getBaseRunId();
+        if (baseRunId == null || baseRunId.isBlank() || next.getResultJson() == null) {
+            return com.gcll.docagent.analysis.IterationReport.unavailable(baseRunId, runId);
+        }
+        AgentRun base = agentRunRepository.findById(baseRunId)
+                .orElse(null);
+        if (base == null || base.getResultJson() == null) {
+            return com.gcll.docagent.analysis.IterationReport.unavailable(baseRunId, runId);
+        }
+        com.gcll.docagent.analysis.AnalysisResult baseResult =
+                objectMapper.readValue(base.getResultJson(), com.gcll.docagent.analysis.AnalysisResult.class);
+        com.gcll.docagent.analysis.AnalysisResult nextResult =
+                objectMapper.readValue(next.getResultJson(), com.gcll.docagent.analysis.AnalysisResult.class);
+        return iterationDiffService.diff(baseRunId, runId, baseResult, nextResult, next.getOriginalContent());
+    }
+
+    /**
+     * 基线候选：某用户最近完成的简历分析（新→旧），供用户在再分析前手动选定"上一版"。
+     * 系统不自动绑定——此处仅提供候选列表，选中后由提交时显式回传 baseRunId 才建立血缘。
+     */
+    @GetMapping("/baseline-candidates")
+    public List<BaselineCandidate> baselineCandidates(
+            @RequestParam(required = false, defaultValue = "demo-user") String userId,
+            @RequestParam(required = false, defaultValue = "10") int limit) {
+        return agentRunRepository.findRecentResumeRuns(userId, limit).stream()
+                .map(r -> new BaselineCandidate(r.getId(), r.getFileName(), r.getPromptVersion(),
+                        r.getScoreOverall(), r.getTargetDirection(), r.getCreatedAt()))
+                .toList();
+    }
+
+    /** 基线候选条目（供前端选择上一版）。 */
+    public record BaselineCandidate(String runId, String fileName, String promptVersion,
+                                    Integer scoreOverall, String targetDirection,
+                                    java.time.Instant createdAt) {
     }
 
     /**

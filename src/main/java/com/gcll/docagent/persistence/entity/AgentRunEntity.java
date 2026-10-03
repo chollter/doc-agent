@@ -36,6 +36,7 @@ public class AgentRunEntity {
     private Integer scoreOverall;
     private String scoreDimensions;
     private String contentHash;
+    private String baseRunId;
     private Instant startedAt;
     private Instant finishedAt;
     private String idempotencyKey;
@@ -158,6 +159,9 @@ public class AgentRunEntity {
 
     public String getContentHash() { return contentHash; }
     public void setContentHash(String contentHash) { this.contentHash = contentHash; }
+
+    public String getBaseRunId() { return baseRunId; }
+    public void setBaseRunId(String baseRunId) { this.baseRunId = baseRunId; }
 
     public Instant getStartedAt() { return startedAt; }
     public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }

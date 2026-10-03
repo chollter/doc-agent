@@ -42,6 +42,7 @@ public final class DomainEntityConverter {
         entity.setScoreOverall(run.getScoreOverall());
         entity.setScoreDimensions(run.getScoreDimensions());
         entity.setContentHash(run.getContentHash());
+        entity.setBaseRunId(run.getBaseRunId());
         entity.setStartedAt(run.getStartedAt());
         entity.setFinishedAt(run.getFinishedAt());
         entity.setIdempotencyKey(run.getIdempotencyKey());
@@ -80,6 +81,7 @@ public final class DomainEntityConverter {
         run.setScoreOverall(entity.getScoreOverall());
         run.setScoreDimensions(entity.getScoreDimensions());
         run.setContentHash(entity.getContentHash());
+        run.setBaseRunId(entity.getBaseRunId());
         run.setFinishedAt(entity.getFinishedAt());
         run.setIdempotencyKey(entity.getIdempotencyKey());
         run.setRequestId(entity.getRequestId());

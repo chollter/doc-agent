@@ -150,6 +150,8 @@ ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS target_direction VARCHAR(128);
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS persona VARCHAR(32);
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
 CREATE INDEX IF NOT EXISTS idx_agent_run_content_hash ON agent_run (content_hash);
+-- 版本迭代血缘：仅在用户显式确认基线时写入，系统绝不自动绑定；为空即首轮/无基线。
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS base_run_id VARCHAR(64);
 
 -- 简历档案：按内容哈希去重的已解析简历（相同简历免重复上传，再次分析直接取库）
 CREATE TABLE IF NOT EXISTS resume_profile (

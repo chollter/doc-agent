@@ -107,4 +107,20 @@ public class MyBatisAgentRunRepository implements AgentRunRepository {
     public void touch(String runId) {
         agentRunMapper.heartbeat(runId);
     }
+
+    @Override
+    public List<AgentRun> findRecentResumeRuns(String userId, int limit) {
+        if (userId == null || userId.isBlank()) {
+            return List.of();
+        }
+        return agentRunMapper.selectList(new LambdaQueryWrapper<AgentRunEntity>()
+                        .eq(AgentRunEntity::getUserId, userId)
+                        .eq(AgentRunEntity::getSkill, "resume-review")
+                        .eq(AgentRunEntity::getStatus, AgentRunStatus.COMPLETED.name())
+                        .orderByDesc(AgentRunEntity::getCreatedAt)
+                        .last("LIMIT " + Math.max(1, limit)))
+                .stream()
+                .map(DomainEntityConverter::toDomain)
+                .collect(Collectors.toList());
+    }
 }

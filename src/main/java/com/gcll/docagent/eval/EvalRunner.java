@@ -106,7 +106,7 @@ public class EvalRunner {
                 byte[] bytes = new ClassPathResource(evalCase.file()).getInputStream().readAllBytes();
                 AgentRun submitted = analysisService.start(
                         new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(),
-                        evalCase.jobDescription(), evalCase.targetDirection(), null, null, null, true);
+                        evalCase.jobDescription(), evalCase.targetDirection(), null, null, null, true, null);
                 int timeoutSeconds = evalCase.timeoutSeconds() > 0 ? evalCase.timeoutSeconds() : DEFAULT_TIMEOUT_SECONDS;
                 finishedRuns.add(awaitTerminal(submitted.getId(), timeoutSeconds));
             }
