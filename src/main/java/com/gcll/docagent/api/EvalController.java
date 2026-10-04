@@ -3,6 +3,7 @@ package com.gcll.docagent.api;
 import com.gcll.docagent.eval.EvalCase;
 import com.gcll.docagent.eval.EvalReportStore;
 import com.gcll.docagent.eval.EvalRunner;
+import com.gcll.docagent.eval.StabilityMeasurer;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -43,6 +44,20 @@ public class EvalController {
     public RunResult run() {
         EvalRunner.EvalReport report = evalRunner.runAll();
         return new RunResult(reportStore.save(report), report);
+    }
+
+    /**
+     * 判断稳定性度量——同用例真实跑 runs 次，逐字段跨跑一致率（分层：代码层应恒 100%，LLM 层如实报波动）。
+     * 同步执行且按 runs 次数消耗真实 LLM 调用，属手动/演示触发；不进 mvn test 自动门禁。
+     */
+    public record StabilityRunResult(String reportId, StabilityMeasurer.StabilityReport report) {
+    }
+
+    @PostMapping("/stability")
+    public StabilityRunResult stability(@RequestParam String caseName,
+                                        @RequestParam(defaultValue = "3") int runs) {
+        StabilityMeasurer.StabilityReport report = evalRunner.runStability(caseName, runs);
+        return new StabilityRunResult(reportStore.saveStability(report), report);
     }
 
     /** 历史报告 ID 列表（旧→新）。 */

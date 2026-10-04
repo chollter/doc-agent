@@ -13,6 +13,7 @@ import com.gcll.docagent.persistence.repository.PendingActionRepository;
 import com.gcll.docagent.persistence.repository.ToolExecutionLogRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -46,19 +47,23 @@ public class EvalRunner {
     private final ToolExecutionLogRepository toolExecutionLogRepository;
     private final PendingActionRepository pendingActionRepository;
     private final ObjectMapper objectMapper;
+    /** 一致率达标线：只决定 STABLE/DRIFT 标签，不改原始数字（默认 1.0=完全一致才算稳）。 */
+    private final double stabilityThreshold;
 
     public EvalRunner(DocumentAnalysisService analysisService,
                       AgentRunRepository agentRunRepository,
                       AgentStepRepository agentStepRepository,
                       ToolExecutionLogRepository toolExecutionLogRepository,
                       PendingActionRepository pendingActionRepository,
-                      ObjectMapper objectMapper) {
+                      ObjectMapper objectMapper,
+                      @Value("${docagent.eval.stability-agree-threshold:1.0}") double stabilityThreshold) {
         this.analysisService = analysisService;
         this.agentRunRepository = agentRunRepository;
         this.agentStepRepository = agentStepRepository;
         this.toolExecutionLogRepository = toolExecutionLogRepository;
         this.pendingActionRepository = pendingActionRepository;
         this.objectMapper = objectMapper;
+        this.stabilityThreshold = stabilityThreshold;
     }
 
     public List<EvalCase> loadCases() {
@@ -150,6 +155,37 @@ public class EvalRunner {
                 .sorted(java.util.Comparator.comparingInt(r -> r.getScoreOverall() == null ? 0 : r.getScoreOverall()))
                 .toList();
         return sorted.get(sorted.size() / 2);
+    }
+
+    /**
+     * 稳定性度量——同用例真实跑 runs 次（forceRefresh 绕缓存），逐字段算跨跑一致率。
+     * 断言不在这里做：报告给原始数字+STABLE/DRIFT 标签，判断留给读报告的人。
+     * 每次运行失败/无结果也入样本（观测全 null），不用"重跑一次试试"掩盖波动。
+     */
+    public StabilityMeasurer.StabilityReport runStability(String caseName, int runs) {
+        EvalCase evalCase = loadCases().stream()
+                .filter(c -> c.name().equals(caseName))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("未知评测用例: " + caseName));
+        int timeoutSeconds = evalCase.timeoutSeconds() > 0 ? evalCase.timeoutSeconds() : DEFAULT_TIMEOUT_SECONDS;
+        List<StabilityMeasurer.RunObservation> observations = new ArrayList<>();
+        for (int i = 0; i < Math.max(1, runs); i++) {
+            byte[] bytes;
+            try {
+                bytes = new ClassPathResource(evalCase.file()).getInputStream().readAllBytes();
+            } catch (IOException ex) {
+                throw new IllegalStateException("读取用例文档失败: " + evalCase.file(), ex);
+            }
+            AgentRun submitted = analysisService.start(
+                    new ClasspathFile(evalCase.file(), bytes), evalCase.instruction(), evalCase.skill(),
+                    evalCase.jobDescription(), evalCase.targetDirection(), null, null, null, true, null);
+            AgentRun finished = awaitTerminal(submitted.getId(), timeoutSeconds);
+            observations.add(StabilityMeasurer.observe(
+                    finished.getId(), finished.getExecutionMode(), parseResult(finished.getResultJson())));
+            log.info("Stability sample {}/{} case=[{}] run={} mode={}",
+                    i + 1, runs, caseName, finished.getId(), finished.getExecutionMode());
+        }
+        return StabilityMeasurer.measure(evalCase.name(), evalCase.file(), observations, stabilityThreshold);
     }
 
     private void autoConfirmPending(String runId) {
@@ -380,7 +416,8 @@ public class EvalRunner {
             List<Map<String, String>> mustHaveCoverage,
             List<Map<String, String>> leverageCards,
             Map<String, Object> positioning,
-            List<Map<String, String>> groundingFindings) {
+            List<Map<String, String>> groundingFindings,
+            Map<String, Object> evaluation) {
     }
 
     public record CaseResult(
