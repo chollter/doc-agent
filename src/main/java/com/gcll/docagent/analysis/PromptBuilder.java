@@ -239,4 +239,49 @@ public class PromptBuilder {
         }
         return out.toString();
     }
+
+    /**
+     * S3 增量评估上下文：在全量段序（header → fulltext）中间插入两段基线上下文——
+     * 确定性变化事实（权威依据）+ 基线版逐维评语（沿用基准）。
+     * <p>段序即折叠优先级：结构化事实先入账，简历全文（唯一无界段）最后承压。
+     * 每段带 why/anchors 血缘，账本可回答"基线内容为什么进上下文"。
+     */
+    public List<ContextAssembler.Segment> buildEvaluationIncrementalSegments(
+            AgentRun run, ResumeContext ctx, AnalysisResult result, LlmFunnelFields funnel,
+            List<RequirementVerdict> requirementVerdicts,
+            IterationDiffService.PreEvaluationFacts facts, String baseRunId,
+            FunnelVerdict.Evaluation baseEval) {
+        List<ContextAssembler.Segment> full =
+                buildEvaluationSegments(run, ctx, result, funnel, requirementVerdicts);
+        ContextAssembler.Segment header = full.get(0);
+        ContextAssembler.Segment fulltext = full.get(1);
+        ContextAssembler.Segment factsSeg = ContextAssembler.Segment.of("inc-facts", "diff:" + baseRunId,
+                "\n## 相对基线的变化事实（代码计算，权威）\n" + facts.digest() + "\n",
+                "S1确定性diff(基线→本版)");
+        ContextAssembler.Segment digestSeg = ContextAssembler.Segment.of("baseline-digest", "base:" + baseRunId,
+                renderBaselineDigest(baseEval),
+                "增量评估沿用基准(未变维度不重评)");
+        return List.of(header, factsSeg, digestSeg, fulltext);
+    }
+
+    /** 基线评价压成逐维一行摘要（总评+维度+强弱项），只给判断基准不给全文。 */
+    private static String renderBaselineDigest(FunnelVerdict.Evaluation eval) {
+        StringBuilder sb = new StringBuilder("\n## 基线版定性评价（未被变化事实波及的维度不要重写）\n");
+        if (eval.overall() != null && !eval.overall().isBlank()) {
+            sb.append("总评：").append(eval.overall()).append('\n');
+        }
+        if (eval.dimensions() != null) {
+            for (FunnelVerdict.Evaluation.DimensionComment d : eval.dimensions()) {
+                sb.append("- [").append(d.dimension()).append('|').append(d.level()).append("] ")
+                        .append(d.comment()).append('\n');
+            }
+        }
+        if (eval.strengths() != null && !eval.strengths().isEmpty()) {
+            sb.append("强项：").append(String.join("；", eval.strengths())).append('\n');
+        }
+        if (eval.weaknesses() != null && !eval.weaknesses().isEmpty()) {
+            sb.append("弱项：").append(String.join("；", eval.weaknesses())).append('\n');
+        }
+        return sb.toString();
+    }
 }

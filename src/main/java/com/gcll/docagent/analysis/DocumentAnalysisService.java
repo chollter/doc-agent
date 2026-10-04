@@ -623,9 +623,29 @@ public class DocumentAnalysisService {
         AnalysisResult result = citationVerifier.verify(candidate.result(), doc, tracer);
         if (resumeReview) {
             result = resultAssembler.assembleResumeResult(
-                    runId, run, doc, resumeCtx, tracer, result, candidate.funnelFields());
+                    runId, run, doc, resumeCtx, tracer, result, candidate.funnelFields(),
+                    loadBaseResult(run));
         }
         completeAnalysis(runId, run, doc, skill, tracer, result, candidate.mode(), candidate.tokensUsed(), resumeReview);
+    }
+
+    /** S3 增量评价的基线结果装载：仅显式绑定 baseRunId 时加载；缺失/解析失败返回 null（走全量评价），不阻塞主流程。 */
+    private AnalysisResult loadBaseResult(AgentRun run) {
+        String baseRunId = run.getBaseRunId();
+        if (baseRunId == null || baseRunId.isBlank()) {
+            return null;
+        }
+        AgentRun base = agentRunRepository.findById(baseRunId).orElse(null);
+        if (base == null || base.getResultJson() == null) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(base.getResultJson(), AnalysisResult.class);
+        } catch (Exception ex) {
+            log.warn("Base result parse failed, full evaluation instead, baseRunId={}: {}",
+                    baseRunId, ex.getMessage());
+            return null;
+        }
     }
 
     private record CandidateAnalysis(AnalysisResult result, LlmFunnelFields funnelFields,

@@ -189,4 +189,47 @@ class IterationDiffServiceTest {
         assertThat(r.dimensionChanges()).isEmpty();
         assertThat(r.strengthBandBefore()).isEqualTo(r.strengthBandAfter());
     }
+
+    // --- S3 评估前变化事实（增量评估驱动输入）---
+
+    @Test
+    void preEvalFactsNoChangeWhenFactsIdentical() {
+        FunnelVerdict base = fv(List.of(new RedFlag(RedFlag.OVERLAP, RedFlag.Severity.LOW, "重叠")),
+                new PositioningCheck(true, "AI 应用开发", null, null), ss(StrengthBand.MIXED), pres(75), null);
+
+        var facts = service.preEvaluationFacts(base, base.redFlags(), base.strength(),
+                base.presentation(), base.positioning(), List.of(), "全文");
+
+        assertThat(facts.hasChange()).isFalse();
+        // 无变化时如实说"无结构性变化"，不制造莫须有的改写依据
+        assertThat(facts.digest()).contains("无结构性变化");
+    }
+
+    @Test
+    void preEvalFactsDigestListsFlagAndBandChanges() {
+        FunnelVerdict base = fv(List.of(), null, ss(StrengthBand.MIXED), pres(70), null);
+        RedFlag newFlag = new RedFlag(RedFlag.TIMELINE_GAP, RedFlag.Severity.MEDIUM, "4 个月空窗");
+
+        var facts = service.preEvaluationFacts(base, List.of(newFlag), ss(StrengthBand.STRONG),
+                pres(70), null, List.of(), "全文");
+
+        assertThat(facts.hasChange()).isTrue();
+        assertThat(facts.digest())
+                .contains("新增红旗 [MEDIUM] 4 个月空窗")
+                .contains("强度档位：MIXED → STRONG");
+    }
+
+    @Test
+    void preEvalFactsLandedSuggestionCountsAsChange() {
+        FunnelVerdict base = fv(List.of(), null, ss(StrengthBand.MIXED), pres(70), null);
+        ActionableSuggestion s = new ActionableSuggestion("HIGH", "调度平台", "sec-8",
+                "参与开发", "负责模型调度与长任务恢复模块，异常场景均有兜底", "改法");
+
+        var facts = service.preEvaluationFacts(base, List.of(), base.strength(),
+                base.presentation(), base.positioning(), List.of(s),
+                "负责模型调度与长任务恢复模块，异常场景均有兜底");
+
+        assertThat(facts.hasChange()).isTrue();
+        assertThat(facts.digest()).contains("基线改法已落地：调度平台");
+    }
 }

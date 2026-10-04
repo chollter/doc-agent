@@ -123,6 +123,76 @@ public class IterationDiffService {
     }
 
     /**
+     * 评估前可算的变化事实（Phase 2 S3 增量评估的驱动输入）。
+     *
+     * <p>与 {@link #diff} 的区别：diff 要等两版完整 verdict 落库后才有 evaluation 维度对比；
+     * 本方法只用"基线 verdict + 本版流水线此刻已有的事实"（红旗/强度档/表达分/定位/改法落地），
+     * 恰好覆盖评价专调开始前能确定性算出的全部变化——零 token、纯代码，供增量 prompt 注入。
+     */
+    public PreEvaluationFacts preEvaluationFacts(FunnelVerdict base, List<RedFlag> newFlags,
+                                                 StrengthStats newStrength, Presentation newPresentation,
+                                                 PositioningCheck newPositioning,
+                                                 List<ActionableSuggestion> baseSuggestions, String newFullText) {
+        List<RedFlag> added = new ArrayList<>();
+        List<RedFlag> removed = new ArrayList<>();
+        diffRedFlags(base == null ? null : base.redFlags(), newFlags, added, removed);
+
+        String bandBefore = base == null || base.strength() == null ? null : base.strength().band().name();
+        String bandAfter = newStrength == null ? null : newStrength.band().name();
+        Integer scoreBefore = base == null || base.presentation() == null ? null : base.presentation().score();
+        Integer scoreAfter = newPresentation == null ? null : newPresentation.score();
+        String posBefore = base == null ? null : anchorOf(base.positioning());
+        String posAfter = anchorOf(newPositioning);
+        boolean posChanged = !safeEquals(posBefore, posAfter);
+        List<SuggestionLanding> landings = detectLandings(baseSuggestions, newFullText);
+
+        boolean hasChange = !added.isEmpty() || !removed.isEmpty()
+                || !safeEquals(bandBefore, bandAfter)
+                || !java.util.Objects.equals(scoreBefore, scoreAfter)
+                || posChanged
+                || landings.stream().anyMatch(l -> l.status() == LandingStatus.LANDED);
+        return new PreEvaluationFacts(added, removed, bandBefore, bandAfter, scoreBefore, scoreAfter,
+                posChanged, posBefore, posAfter, landings, hasChange);
+    }
+
+    /** 评估前变化事实——纯确定性，LLM 无权否认；digest() 是喂给增量 prompt 的权威文本。 */
+    public record PreEvaluationFacts(List<RedFlag> redFlagsAdded, List<RedFlag> redFlagsRemoved,
+                                     String strengthBandBefore, String strengthBandAfter,
+                                     Integer presentationBefore, Integer presentationAfter,
+                                     boolean positioningChanged, String positioningBefore, String positioningAfter,
+                                     List<SuggestionLanding> suggestionLandings, boolean hasChange) {
+
+        /** 压成事实清单文本。无变化时明确说"无结构性变化"，不制造莫须有的改动依据。 */
+        public String digest() {
+            if (!hasChange) {
+                return "相对基线无结构性变化（红旗集合、强度档位、表达分、定位锚点均未变，无改法判定为已落地）。";
+            }
+            StringBuilder sb = new StringBuilder();
+            for (RedFlag f : redFlagsAdded) {
+                sb.append("- 新增红旗 [").append(f.severity()).append("] ").append(f.message()).append('\n');
+            }
+            for (RedFlag f : redFlagsRemoved) {
+                sb.append("- 消除红旗 [").append(f.severity()).append("] ").append(f.message()).append('\n');
+            }
+            if (!java.util.Objects.equals(strengthBandBefore, strengthBandAfter)) {
+                sb.append("- 强度档位：").append(strengthBandBefore).append(" → ").append(strengthBandAfter).append('\n');
+            }
+            if (!java.util.Objects.equals(presentationBefore, presentationAfter)) {
+                sb.append("- 表达分：").append(presentationBefore).append(" → ").append(presentationAfter).append('\n');
+            }
+            if (positioningChanged) {
+                sb.append("- 定位锚点：").append(positioningBefore).append(" → ").append(positioningAfter).append('\n');
+            }
+            for (SuggestionLanding l : suggestionLandings) {
+                if (l.status() == LandingStatus.LANDED) {
+                    sb.append("- 基线改法已落地：").append(l.target()).append('\n');
+                }
+            }
+            return sb.toString().stripTrailing();
+        }
+    }
+
+    /**
      * 改法落地检测：基线每条 actionableSuggestion 的 {@code after}，去掉【填：…】占位符并规范化后，
      * 若足够长且作为连续子串出现在新版全文（同样规范化）→ LANDED；太短（改法几乎全是待填占位符）
      * → INDETERMINATE（不假装判得出）；否则 NOT_LANDED。

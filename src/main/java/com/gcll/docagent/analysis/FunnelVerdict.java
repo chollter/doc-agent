@@ -107,13 +107,26 @@ public record FunnelVerdict(
      * requirementVerdicts，dimensions 只给定性评语。各维度档位仍由代码侧计算
      *（内容强度/表达分/匹配率），避免 LLM 重评与代码结论打架。
      * 历史 run（v5 及以前）无此字段，前端需容忍 null。
+     * <p>S3 增量评估血缘：carriedDimensions 记录"本次未重写、沿自基线版"的维度名，
+     * 使每条评语可审计"是谁写的"。全量评估与历史 run 该字段为空。
      */
     public record Evaluation(
             String overall,
             List<DimensionComment> dimensions,
             List<String> strengths,
-            List<String> weaknesses
+            List<String> weaknesses,
+            List<String> carriedDimensions
     ) {
+        public Evaluation {
+            carriedDimensions = carriedDimensions == null ? List.of() : List.copyOf(carriedDimensions);
+        }
+
+        /** 全量评估构造便捷口：无沿用血缘。 */
+        public Evaluation(String overall, List<DimensionComment> dimensions,
+                          List<String> strengths, List<String> weaknesses) {
+            this(overall, dimensions, strengths, weaknesses, List.of());
+        }
+
         /**
          * 单一质量维度评估。comment 必须解释判断，evidence 必须回指简历原文；
          * issueType 用于区分能力缺失、证据不足、表达问题和与目标无关，避免把“没写”判成“不会”。
