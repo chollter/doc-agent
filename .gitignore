@@ -60,3 +60,6 @@ gui-test-screenshots/
 
 # Personal resume outputs (never upload)
 resume-output/
+
+# Local scratch run output (demo result dump)
+result.json
