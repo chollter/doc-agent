@@ -26,4 +26,10 @@ public interface AgentRunRepository {
 
     /** 重新入队（自愈路径）。 */
     boolean requeue(String runId, String fromStatus);
+
+    /** 心跳：推进 ANALYZING 状态 run 的 updated_at，防 stale 重排在执行中误触发（僵尸双执行）。 */
+    void touch(String runId);
+
+    /** 某用户最近的已完成简历分析，倒序取 limit 条——供迭代基线候选推荐（不自动绑定）。 */
+    List<AgentRun> findRecentResumeRuns(String userId, int limit);
 }

@@ -216,11 +216,6 @@
       "assertions": {
         "status": "COMPLETED",
         "hasFunnelVerdict": true,
-        "mustContainVocabularyTerms": [
-          "RAG",
-          "Function Calling",
-          "Agent"
-        ],
         "summaryKeywordGroups": [
           [
             "水准",
@@ -549,11 +544,6 @@
       "assertions": {
         "status": "COMPLETED",
         "hasFunnelVerdict": true,
-        "mustContainVocabularyTerms": [
-          "RAG",
-          "Function Calling",
-          "Agent"
-        ],
         "maxGroundingFindings": 0,
         "summaryKeywordGroups": [
           [

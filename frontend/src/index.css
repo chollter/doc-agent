@@ -48,3 +48,27 @@
     @apply bg-slate-300 rounded hover:bg-slate-400;
   }
 }
+
+/* 简历结论按文档呈现：白底深色文字，去掉彩色卡片和装饰阴影。 */
+.resume-plain-output details,
+.resume-plain-output > div,
+.resume-plain-output section {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.resume-plain-output details {
+  border: 0 !important;
+  border-top: 1px solid #e2e8f0 !important;
+  border-radius: 0 !important;
+  padding: 1rem 0 !important;
+}
+
+.resume-plain-output details div,
+.resume-plain-output details span,
+.resume-plain-output details button {
+  background-color: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: #334155 !important;
+}

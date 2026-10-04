@@ -42,9 +42,11 @@ class LlmGatewayRetryTest {
     @BeforeEach
     void setUp() throws Exception {
         when(chatClientBuilder.build()).thenReturn(chatClient);
-        // 阶段1/4：构造器新增 ModelRouter + ContextWindowManager 依赖；truncate 透传不截断
+        // 阶段1/4：构造器新增 ModelRouter + ContextWindowManager 依赖；truncate 透传不截断。
+        // 2026-09-18：新增 ObjectProvider（心跳，测试传 null）+ 读超时秒数两个参数。
         lenient().when(contextWindowManager.truncate(anyString())).thenAnswer(inv -> inv.getArgument(0));
-        llmGateway = new LlmGateway(chatClientBuilder, modelRouter, contextWindowManager, interactionMapper);
+        llmGateway = new LlmGateway(chatClientBuilder, modelRouter, contextWindowManager,
+                interactionMapper, null, 180);
     }
 
     @Test

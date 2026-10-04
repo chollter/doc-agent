@@ -24,6 +24,7 @@ public final class DomainEntityConverter {
         entity.setStatus(run.getStatus().name());
         entity.setOriginalContent(run.getOriginalContent());
         entity.setCurrentSummary(run.getCurrentSummary());
+        entity.setLastError(run.getLastError());
         entity.setFileName(run.getFileName());
         entity.setFileType(run.getFileType());
         entity.setSkill(run.getSkill());
@@ -40,6 +41,8 @@ public final class DomainEntityConverter {
         entity.setOptimizationNote(run.getOptimizationNote());
         entity.setScoreOverall(run.getScoreOverall());
         entity.setScoreDimensions(run.getScoreDimensions());
+        entity.setContentHash(run.getContentHash());
+        entity.setBaseRunId(run.getBaseRunId());
         entity.setStartedAt(run.getStartedAt());
         entity.setFinishedAt(run.getFinishedAt());
         entity.setIdempotencyKey(run.getIdempotencyKey());
@@ -60,6 +63,7 @@ public final class DomainEntityConverter {
         );
         run.setStatus(AgentRunStatus.valueOf(entity.getStatus()));
         run.setCurrentSummary(entity.getCurrentSummary());
+        run.setLastError(entity.getLastError());
         run.setFileName(entity.getFileName());
         run.setFileType(entity.getFileType());
         run.setSkill(entity.getSkill());
@@ -76,6 +80,8 @@ public final class DomainEntityConverter {
         run.setOptimizationNote(entity.getOptimizationNote());
         run.setScoreOverall(entity.getScoreOverall());
         run.setScoreDimensions(entity.getScoreDimensions());
+        run.setContentHash(entity.getContentHash());
+        run.setBaseRunId(entity.getBaseRunId());
         run.setFinishedAt(entity.getFinishedAt());
         run.setIdempotencyKey(entity.getIdempotencyKey());
         run.setRequestId(entity.getRequestId());

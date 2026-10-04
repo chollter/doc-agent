@@ -1,4 +1,4 @@
-import { AlertTriangle, Bookmark, ClipboardList, Lightbulb, ListChecks } from 'lucide-react';
+import { AlertTriangle, Bookmark, ClipboardList, ListChecks } from 'lucide-react';
 import type { AnalysisResult } from '../api/analysis';
 
 function ModeBadge({ mode }: { mode: string | null | undefined }) {
@@ -66,7 +66,6 @@ export default function ReportCard({ result, mode, onCitation }: {
 
       <Section icon={ListChecks} title="关键内容" items={result.keyPoints} color="text-indigo-600" />
       <Section icon={AlertTriangle} title="风险与问题" items={result.risks} color="text-rose-600" />
-      <Section icon={Lightbulb} title="建议" items={result.suggestions} color="text-emerald-600" />
 
       {result.citations?.length > 0 && (
         <div>

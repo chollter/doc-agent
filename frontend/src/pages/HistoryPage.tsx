@@ -125,7 +125,7 @@ export default function HistoryPage() {
             </div>
             {selected.detail.result ? (
               selected.detail.skill === 'resume-review' ? (
-                <ResumeReportCard result={selected.detail.result} mode={selected.detail.executionMode} />
+                <ResumeReportCard result={selected.detail.result} mode={selected.detail.executionMode} runId={selected.detail.runId} />
               ) : (
                 <ReportCard result={selected.detail.result} mode={selected.detail.executionMode} />
               )

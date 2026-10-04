@@ -10,9 +10,15 @@ import java.util.List;
  */
 public class ResumeEntities {
     private final List<ResumeEntity> entities;
+    private final List<ResumeProjectFact> projects;
 
     public ResumeEntities(List<ResumeEntity> entities) {
+        this(entities, List.of());
+    }
+
+    public ResumeEntities(List<ResumeEntity> entities, List<ResumeProjectFact> projects) {
         this.entities = entities != null ? new ArrayList<>(entities) : new ArrayList<>();
+        this.projects = projects != null ? new ArrayList<>(projects) : new ArrayList<>();
     }
 
     public List<ResumeEntity> getAll() {
@@ -21,6 +27,10 @@ public class ResumeEntities {
 
     public boolean isEmpty() {
         return entities.isEmpty();
+    }
+
+    public List<ResumeProjectFact> getProjects() {
+        return List.copyOf(projects);
     }
 
     public List<ResumeEntity> getByType(ResumeEntity.EntityType type) {

@@ -14,6 +14,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.output.TokenUsage;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,7 +22,9 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -48,6 +51,8 @@ public class AgentLoop {
     private final LoopCheckpointStore checkpointStore;
     private final LoopBudget budget;
     private final boolean parallelTools;
+    private final int maxObservationChars;
+    private final int maxDuplicateToolCalls;
     private final LlmInteractionMapper interactionMapper;
 
     /** 工具并行执行池（一轮内多个调用并发发出，如同时读 3 个节）。 */
@@ -57,6 +62,7 @@ public class AgentLoop {
         return t;
     });
 
+    @Autowired
     public AgentLoop(ChatModel chatModel,
                      LoopToolSpecs toolSpecs,
                      LoopCheckpointStore checkpointStore,
@@ -64,13 +70,30 @@ public class AgentLoop {
                      @Value("${docagent.analysis.loop.max-rounds:10}") int maxRounds,
                      @Value("${docagent.analysis.loop.max-tool-calls:16}") int maxToolCalls,
                      @Value("${docagent.analysis.loop.max-total-tokens:60000}") long maxTotalTokens,
-                     @Value("${docagent.analysis.loop.parallel-tools:true}") boolean parallelTools) {
+                     @Value("${docagent.analysis.loop.parallel-tools:true}") boolean parallelTools,
+                     @Value("${docagent.analysis.loop.max-observation-chars:6000}") int maxObservationChars,
+                     @Value("${docagent.analysis.loop.max-duplicate-tool-calls:2}") int maxDuplicateToolCalls) {
         this.chatModel = chatModel;
         this.toolSpecs = toolSpecs;
         this.checkpointStore = checkpointStore;
         this.interactionMapper = interactionMapper;
         this.budget = new LoopBudget(maxRounds, maxToolCalls, maxTotalTokens);
         this.parallelTools = parallelTools;
+        this.maxObservationChars = Math.max(256, maxObservationChars);
+        this.maxDuplicateToolCalls = Math.max(1, maxDuplicateToolCalls);
+    }
+
+    /** 保留给纯单元测试和已有调用方的兼容构造器，运行时边界使用安全默认值。 */
+    public AgentLoop(ChatModel chatModel,
+                     LoopToolSpecs toolSpecs,
+                     LoopCheckpointStore checkpointStore,
+                     LlmInteractionMapper interactionMapper,
+                     int maxRounds,
+                     int maxToolCalls,
+                     long maxTotalTokens,
+                     boolean parallelTools) {
+        this(chatModel, toolSpecs, checkpointStore, interactionMapper,
+                maxRounds, maxToolCalls, maxTotalTokens, parallelTools, 6000, 2);
     }
 
     /** 一次循环执行的完整输入。 */
@@ -115,6 +138,7 @@ public class AgentLoop {
         checkpointStore.save(ctx.runId(), state);
 
         List<ObservedFragment> observations = new ArrayList<>();
+        Map<String, Integer> toolCallCounts = new HashMap<>();
         String stopReason = null;
 
         while (true) {
@@ -176,7 +200,7 @@ public class AgentLoop {
                 checkpointStore.save(ctx.runId(), state);
                 continue;
             }
-            List<String> results = executeToolBatch(ctx, requests);
+            List<String> results = executeToolBatch(ctx, requests, toolCallCounts);
             int executedThisRound = 0;
             for (int i = 0; i < requests.size(); i++) {
                 ToolExecutionRequest request = requests.get(i);
@@ -184,7 +208,7 @@ public class AgentLoop {
                     stopReason = "BUDGET_TOOL_CALLS";
                     break;
                 }
-                String observation = results.get(i);
+                String observation = truncateObservation(results.get(i));
                 observations.add(new ObservedFragment(request.name(), request.arguments(), observation));
 
                 List<LoopMessage> withTool = new ArrayList<>(state.messages());
@@ -212,11 +236,12 @@ public class AgentLoop {
      * 执行一批工具调用，返回与请求顺序一致的观察列表。
      * 并行路径把 runId/trace 上下文显式传播到工具线程（ThreadLocal 不随线程池传递）。
      */
-    private List<String> executeToolBatch(LoopContext ctx, List<ToolExecutionRequest> requests) {
+    private List<String> executeToolBatch(LoopContext ctx, List<ToolExecutionRequest> requests,
+                                          Map<String, Integer> toolCallCounts) {
         List<String> results = new ArrayList<>(requests.size());
         if (!parallelTools || requests.size() <= 1) {
             for (ToolExecutionRequest request : requests) {
-                results.add(toolSpecs.execute(ctx.runId(), request.name(), request.arguments()));
+                results.add(executeGuarded(ctx, request, toolCallCounts));
             }
             return results;
         }
@@ -226,7 +251,7 @@ public class AgentLoop {
                 ToolExecutionHolder.setRunId(ctx.runId());
                 ReActContextHolder.set(ctx.systemPrompt(), ctx.tracer(), ctx.parentStepId());
                 try {
-                    return toolSpecs.execute(ctx.runId(), request.name(), request.arguments());
+                    return executeGuarded(ctx, request, toolCallCounts);
                 } finally {
                     ToolExecutionHolder.clear();
                     ReActContextHolder.clear();
@@ -241,6 +266,32 @@ public class AgentLoop {
             }
         }
         return results;
+    }
+
+    /**
+     * 工具调用不变量：相同工具+参数在一次 run 内超过阈值后不再重复执行。
+     * 这既限制模型循环失控，也避免未来接入有副作用工具时发生重复操作。
+     */
+    private String executeGuarded(LoopContext ctx, ToolExecutionRequest request,
+                                  Map<String, Integer> toolCallCounts) {
+        String key = request.name() + "\n" + (request.arguments() == null ? "" : request.arguments());
+        synchronized (toolCallCounts) {
+            int count = toolCallCounts.getOrDefault(key, 0);
+            if (count >= maxDuplicateToolCalls) {
+                return "【工具调用已拒绝】相同工具和参数已重复调用 " + count
+                        + " 次，请改用其他证据或直接输出结论。";
+            }
+            toolCallCounts.put(key, count + 1);
+        }
+        return toolSpecs.execute(ctx.runId(), request.name(), request.arguments());
+    }
+
+    private String truncateObservation(String observation) {
+        if (observation == null || observation.length() <= maxObservationChars) {
+            return observation == null ? "" : observation;
+        }
+        return observation.substring(0, maxObservationChars)
+                + "\n【工具结果已截断：超过最大观察长度 " + maxObservationChars + " 字符】";
     }
 
     /** 记录 ReAct 循环每轮交互——用于优化证据链。失败不影响主流程。 */

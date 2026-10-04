@@ -13,9 +13,9 @@ import java.util.Optional;
 
 /**
  * 方向画像注册表——加载 classpath:archetypes/*.json。
- * <p>方向短语 → 画像的解析优先走代码（id/name/alias 匹配），
- * 匹配不上再由服务层走一次便宜的 LLM 调用（archetype-map.txt），
- * 画像内容本身永远来自 curated 资源，LLM 不参与生成。
+ * <p>方向短语 → 画像的解析只走代码（id/name/alias 精确匹配），匹配不上返回 empty，
+ * 由调用方回落到"无画像"路径（简历自身质量评估 + 方向建议）。
+ * 画像内容永远来自 curated 资源，LLM 不参与生成。
  */
 @Component
 public class ArchetypeRegistry {

@@ -148,3 +148,42 @@ ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS score_overall INT;
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS score_dimensions TEXT;
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS target_direction VARCHAR(128);
 ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS persona VARCHAR(32);
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
+CREATE INDEX IF NOT EXISTS idx_agent_run_content_hash ON agent_run (content_hash);
+-- 版本迭代血缘：仅在用户显式确认基线时写入，系统绝不自动绑定；为空即首轮/无基线。
+ALTER TABLE agent_run ADD COLUMN IF NOT EXISTS base_run_id VARCHAR(64);
+
+-- 简历档案：按内容哈希去重的已解析简历（相同简历免重复上传，再次分析直接取库）
+CREATE TABLE IF NOT EXISTS resume_profile (
+    id           VARCHAR(64)  PRIMARY KEY,
+    content_hash VARCHAR(64)  NOT NULL,
+    file_name    VARCHAR(256),
+    file_type    VARCHAR(32),
+    char_count   INT,
+    parsed_json  TEXT         NOT NULL,
+    run_count    INT          NOT NULL DEFAULT 0,
+    created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_resume_profile_hash ON resume_profile (content_hash);
+
+-- 分析结论缓存：同简历 + 同分析输入（技能/指令/JD/方向/人群/prompt 版本）→ 复用历史结论
+CREATE TABLE IF NOT EXISTS analysis_cache (
+    id               VARCHAR(64)  PRIMARY KEY,
+    cache_key        VARCHAR(128) NOT NULL,
+    resume_id        VARCHAR(64)  NOT NULL,
+    skill            VARCHAR(64)  NOT NULL,
+    instruction      TEXT,
+    job_description  TEXT,
+    target_direction VARCHAR(128),
+    persona          VARCHAR(32),
+    prompt_version   VARCHAR(64),
+    result_json      TEXT         NOT NULL,
+    score_overall    INT,
+    score_dimensions TEXT,
+    source_run_id    VARCHAR(64),
+    created_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_analysis_cache_key ON analysis_cache (cache_key);
+CREATE INDEX IF NOT EXISTS idx_analysis_cache_resume ON analysis_cache (resume_id);

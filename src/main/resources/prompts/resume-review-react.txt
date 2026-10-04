@@ -27,7 +27,7 @@
 ## 输出格式（必须严格遵守）
 最终回答必须是一个合法 JSON 对象，不要包含 markdown 代码块或其他文字：
 {
-  "summary": "结论式总评（200字以内，判断先行，五要素缺一不可：①一句话水平判断——什么水准、这条简历能不能过目标方向的初筛；②最强证据——凭最硬的一条成就说话（带数字）；③最可能被追问/死在哪——1-2 处具体风险；④与目标方向（或JD）的匹配一句话；⑤若只改一处，先改什么。禁止纯描述式复述年限/技术栈/项目——读者是简历主人，复述他已知的信息没有价值",
+  "summary": "一句话总评，80字以内、最多两句：第一句下可证伪的判断——什么水准、能不能过目标方向的初筛；第二句（可选）只说先改什么。证据、风险、匹配已由 leverageCards/diagnoses/matchDimensions 承载，summary 禁止复述这些内容，也禁止复述年限/技术栈/项目——读者是简历主人，复述他已知的信息没有价值",
 
   "presentation": {
     "score": 62,
@@ -50,9 +50,6 @@
     {"kind": "RISK", "point": "风险一句话", "sectionId": "sec-X", "likelyQuestion": "面试官会从什么角度挑战", "defenseStrategy": "怎么答（口径+证据）"}
   ],
 
-  "keyPoints": ["纯文本亮点列表（从 leverageCards 的 STRENGTH 提取 point）"],
-  "risks": ["纯文本风险列表（从 leverageCards 的 RISK 提取 point）"],
-
   "citations": [{"sectionId": "sec-X", "quote": "原文短句（30字以内）"}],
 
   "matchDimensions": [
@@ -62,13 +59,10 @@
   "mustHaveCoverage": [
     {"requirementId": "画像共性要求id", "requirement": "要求描述", "status": "MET|PARTIAL|MISSING", "evidence": "简历原文证据（MET时必填）", "sectionId": "sec-X"}
   ],
-  "variantFit": [
-    {"variantId": "子方向id", "name": "子方向名", "fit": "HIGH|MEDIUM|LOW", "reason": "适配理由"}
-  ],
   "positioning": null
 }
 
-重要：matchDimensions、mustHaveCoverage、variantFit 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
+重要：matchDimensions、mustHaveCoverage 的每个元素必须是上述结构的对象，严禁输出纯字符串数组；无内容时输出空数组 []。
 
 ## experienceStrength 评估标准
 - star.result 判断该条经历是否给出可验证的结果（数字、规模、影响）
@@ -81,15 +75,23 @@
 - **如果用户消息包含"目标岗位JD"**：matchDimensions 必须逐条对照 JD 要求填写实际内容，reason 必须引用简历内容。
 - **如果用户消息包含"方向画像"（广撒网模式）**：
   - mustHaveCoverage 必须逐条对照画像的共性要求：status 取 MET/PARTIAL/MISSING，MET 必须给出简历原文证据，宁缺勿滥——共性要求缺失时广撒网救不了
-  - variantFit 按画像子方向逐个给 HIGH/MEDIUM/LOW 适配与理由（分化要求不报缺口，转为定位）
   - positioning 判断简历摘要/头衔是否锚定到最适合的子方向：{"anchored": false, "currentAnchor": "后端工程师", "suggestedAnchor": "AI 应用工程师（Agent 方向）", "comment": "..."}
 - **两者都没有**：以上匹配字段全部设为空数组/null。
+
+## 诊断卡（最终 JSON 必须包含 diagnoses）
+- 针对 3-6 条最影响初筛的经历输出 diagnosis：原文 claim、问题类型、造成的筛选/面试后果、缺失事实、补强方向和验证问题。
+- strengtheningDirection 只能要求用户补充真实事实，不得发明数字、规模、结果或经历。
 
 ## 强制规则
 - 本轮只输出结论（诊断），不输出改写建议：不要给 before/after、不要给“怎么改”——具体建议由用户追问时另行生成，擅自输出会污染结论区
 - leverageCards 3-6 张，亮点与风险都要有，每张必须有 likelyQuestion
 - presentation.score 按 rubric 使用整个区间，issues 定位到 sectionId（issues 是诊断，不是改写建议）
-- keyPoints/risks 必须从结构化字段提取，保持一致性
+- keyPoints/risks 不要输出：系统从 leverageCards 自动派生，模型手抄只会制造两份不一致的真相
+
+## 文风（summary 与所有自由文本生效）
+短句，主语明确，动词开头。判断要下得了赌注（写「初筛能过」，不写「具有一定竞争力」）。
+数字只能来自原文，没有数字就不写数字。
+禁用词：整体而言、综上所述、较为、一定程度上、有待加强、进一步提升。
 
 
 ## citations 规则

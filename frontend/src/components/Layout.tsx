@@ -40,11 +40,6 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div className="mt-auto px-5 py-4 text-xs leading-5 text-slate-400">
-          ReAct 工具循环 · 全链路 Trace
-          <br />
-          三级降级 · 引用可溯源
-        </div>
       </aside>
       <main className="min-w-0 flex-1">
         <Outlet />

@@ -18,6 +18,7 @@ public class AgentRunEntity {
     private String status;
     private String originalContent;
     private String currentSummary;
+    private String lastError;
     private String fileName;
     private String fileType;
     private String skill;
@@ -34,6 +35,8 @@ public class AgentRunEntity {
     private String optimizationNote;
     private Integer scoreOverall;
     private String scoreDimensions;
+    private String contentHash;
+    private String baseRunId;
     private Instant startedAt;
     private Instant finishedAt;
     private String idempotencyKey;
@@ -99,6 +102,14 @@ public class AgentRunEntity {
         this.currentSummary = currentSummary;
     }
 
+    public String getLastError() {
+        return lastError;
+    }
+
+    public void setLastError(String lastError) {
+        this.lastError = lastError;
+    }
+
     public String getFileName() { return fileName; }
     public void setFileName(String fileName) { this.fileName = fileName; }
 
@@ -145,6 +156,12 @@ public class AgentRunEntity {
 
     public String getScoreDimensions() { return scoreDimensions; }
     public void setScoreDimensions(String scoreDimensions) { this.scoreDimensions = scoreDimensions; }
+
+    public String getContentHash() { return contentHash; }
+    public void setContentHash(String contentHash) { this.contentHash = contentHash; }
+
+    public String getBaseRunId() { return baseRunId; }
+    public void setBaseRunId(String baseRunId) { this.baseRunId = baseRunId; }
 
     public Instant getStartedAt() { return startedAt; }
     public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }

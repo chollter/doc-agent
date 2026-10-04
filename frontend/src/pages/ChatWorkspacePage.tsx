@@ -1,184 +1,401 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  ArrowRight,
-  Check,
-  CheckCircle2,
+  GitCompare,
+  History,
   Loader2,
+  RotateCcw,
   Send,
-  ShieldAlert,
   Sparkles,
-  Target,
-  TrendingUp,
   Upload,
 } from 'lucide-react';
 import {
   analysisApi,
   getErrorMessage,
   type ActionableSuggestion,
-  type AppliedRevision,
+  type AnalysisResult,
   type AuditStep,
+  type BaselineCandidate,
   type FunnelVerdict,
+  type ResumeItem,
 } from '../api/analysis';
 import ExecutionChain from '../components/ExecutionChain';
+import IterationSection from '../components/IterationSection';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
-/** 对话消息——报告/建议/链路等都以消息形态进入对话流 */
+/** 对话消息——报告/链路等都以消息形态进入对话流 */
 type ChatMessage =
   | { id: string; role: 'user'; text: string }
   | { id: string; role: 'assistant'; text: string }
-  | { id: string; role: 'report'; verdict: FunnelVerdict; summary: string; mode: string | null; round: number }
-  | { id: string; role: 'suggestions'; runId: string; suggestions: ActionableSuggestion[]; round: number }
-  | { id: string; role: 'chain'; steps: AuditStep[] }
+  | { id: string; role: 'report'; result: AnalysisResult | null; mode: string | null; round: number; runId: string }
   | { id: string; role: 'compare'; before: FunnelVerdict; after: FunnelVerdict };
 
 let seq = 0;
 const nextId = () => `msg-${++seq}`;
 
-/** 精简版报告消息（详细卡片去 /classic 看，对话里给结论级信息） */
-function ReportBubble({ verdict, summary, mode }: { verdict: FunnelVerdict; summary: string; mode: string | null }) {
+/** 去重关键词桶：红旗/需注意/建议命中同一桶视为同一件事，先出现的保留（红旗带严重度，优先） */
+const ISSUE_BUCKETS: Array<[string, RegExp]> = [
+  ['空窗', /空窗|空白期|待业|中断/i],
+  ['量化', /量化|结果佐证|数据支撑|指标|qps|错误率|性能/],
+  ['术语', /术语|关键词|检索词|同义词/],
+  ['跳槽', /跳槽|频繁|短任期|稳定性/],
+  ['表达', /动词|表述|表达|措辞|格式|排版/],
+];
+
+const bucketOf = (text: string): string | null =>
+  ISSUE_BUCKETS.find(([, re]) => re.test(text))?.[0] ?? null;
+
+/** 展示层分类：一眼区分时间线硬伤与内容/表达问题；只加前缀，不参与去重 */
+const TAG_TIMELINE = /空窗|空白期|待业|中断|间隔|无在职|无就业|任期/;
+const TAG_CONTENT = /量化|结果佐证|数据支撑|指标|动词|表述|表达|措辞|格式|排版|术语|关键词/;
+const tagOf = (text: string): string | null =>
+  TAG_TIMELINE.test(text) ? '时间线' : TAG_CONTENT.test(text) ? '内容' : null;
+
+/**
+ * 行动清单：红旗（按严重度）→ 需注意（与红旗去重）→ 未被引用的改写建议，≤4 条。
+ * 每条尽量挂 actionableSuggestions 的 after 作为改法，匹配不上就只陈述问题——宁缺毋滥，不硬配。
+ */
+function buildActionItems(
+  verdict: FunnelVerdict | null,
+  weaknesses: string[],
+  suggestions: ActionableSuggestion[],
+): string[] {
+  const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 } as const;
+  const sevLabel: Record<string, string> = { HIGH: '高危', MEDIUM: '中风险', LOW: '提示' };
+  const taken = new Set<string>();
+  const usedSug = new Set<number>();
+  const lines: string[] = [];
+  // 下方会渲染成「原文→判断→改法」卡片的建议（与 ReportBubble 的 slice(0,3) 保持一致）
+  const cardTags = new Set(
+    suggestions.slice(0, 3).map((s) => tagOf(`${s.target} ${s.reason}`)).filter((t): t is string => t !== null),
+  );
+
+  const matchFix = (text: string): string | null => {
+    const b = bucketOf(text);
+    const idx = suggestions.findIndex((s, i) => !usedSug.has(i)
+      && ((b !== null && bucketOf(`${s.target} ${s.reason} ${s.after}`) === b) || text.includes(s.target)));
+    if (idx < 0) return null;
+    usedSug.add(idx);
+    return suggestions[idx].after;
+  };
+
+  const push = (text: string, fix?: string, severity?: string) => {
+    const b = bucketOf(text);
+    if (b && taken.has(b)) return;
+    if (b) taken.add(b);
+    const resolved = fix ?? matchFix(text);
+    const tag = tagOf(text);
+    const head = severity ? `【${tag ? `${tag}·` : ''}${severity}】` : tag ? `【${tag}】` : '';
+    // 同类问题下方已有卡片给改法时只指路，不在清单里复述改法
+    const tail = !resolved && tag !== null && cardTags.has(tag) ? '（对应改法见下方卡片）' : '';
+    lines.push(resolved ? `${head}${text} → 「${resolved}」` : `${head}${text}${tail}`);
+  };
+
+  [...(verdict?.redFlags ?? [])]
+    .sort((a, b) => rank[a.severity] - rank[b.severity])
+    .forEach((f) => push(f.message, undefined, sevLabel[f.severity] ?? f.severity));
+  weaknesses.forEach((w) => push(w));
+  suggestions.forEach((s, i) => {
+    if (!usedSug.has(i)) push(`${s.target}「${s.before}」`, s.after);
+  });
+  return lines.slice(0, 4);
+}
+
+/** 把已有的原文引用带进摘要，避免结论只剩标签。这里只展示已有证据，不让前端自行推断。 */
+function buildEvidenceItems(result: AnalysisResult | null): string[] {
+  if (!result) return [];
+  const items: string[] = [];
+  const dimensions = result.funnelVerdict?.evaluation?.dimensions ?? [];
+  dimensions.forEach((dimension) => {
+    (dimension.evidence ?? []).forEach((evidence) => {
+      if (evidence && !items.includes(evidence)) items.push(`${dimension.dimension}：${evidence}`);
+    });
+  });
+  (result.funnelVerdict?.evidenceAssessments ?? []).forEach((assessment) => {
+    const quote = assessment.sourceQuote || assessment.evidenceFound?.[0];
+    if (quote && !items.includes(quote)) {
+      items.push(`${assessment.sectionId ? `[${assessment.sectionId}] ` : ''}${quote}`);
+    }
+  });
+  result.citations?.forEach((citation) => {
+    const item = `[${citation.sectionId}] ${citation.quote}`;
+    if (!items.some((existing) => existing.includes(citation.quote))) items.push(item);
+  });
+  return items.slice(0, 3);
+}
+
+/** 证据链：把一条原文、一个判断和一个改法放在同一张卡片里。 */
+function EvidenceChain({ suggestion, citation }: {
+  suggestion: ActionableSuggestion;
+  citation?: { sectionId: string; quote: string };
+}) {
+  const quote = citation?.quote || suggestion.before;
   return (
-    <div className="space-y-2.5 rounded-2xl rounded-tl-sm border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-sm leading-7 text-slate-800">{summary}</div>
-
-      {/* 定性评价（v6）：总评 + 强项/需注意——气泡里给结论级评价，不止指标标签 */}
-      {verdict.evaluation && (
-        <div className="space-y-2 rounded-xl bg-slate-50 p-3">
-          {verdict.evaluation.overall && (
-            <div className="text-xs font-semibold leading-6 text-slate-800">{verdict.evaluation.overall}</div>
-          )}
-          {((verdict.evaluation.strengths?.length ?? 0) > 0 || (verdict.evaluation.weaknesses?.length ?? 0) > 0) && (
-            <div className="grid gap-2 md:grid-cols-2">
-              {(verdict.evaluation.strengths?.length ?? 0) > 0 && (
-                <div className="rounded-lg bg-emerald-50 p-2.5">
-                  <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
-                    <CheckCircle2 size={12} /> 强项
-                  </div>
-                  <ul className="space-y-0.5 text-[11px] leading-5 text-slate-700">
-                    {verdict.evaluation.strengths!.map((s, i) => <li key={i}>· {s}</li>)}
-                  </ul>
-                </div>
-              )}
-              {(verdict.evaluation.weaknesses?.length ?? 0) > 0 && (
-                <div className="rounded-lg bg-amber-50 p-2.5">
-                  <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-amber-700">
-                    <ShieldAlert size={12} /> 需注意
-                  </div>
-                  <ul className="space-y-0.5 text-[11px] leading-5 text-slate-700">
-                    {verdict.evaluation.weaknesses!.map((s, i) => <li key={i}>· {s}</li>)}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {verdict.analysisDegraded && (
-        <div className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-700">
-          事实层抽取降级：红旗为文本级粗查、画像缺失；其余角度基于 LLM 直读原文。
-        </div>
-      )}
-
-      <div className="flex flex-wrap gap-1.5">
-        {verdict.strength && (
-          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-            verdict.strength.band === 'STRONG' ? 'bg-emerald-100 text-emerald-700'
-              : verdict.strength.band === 'MIXED' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-            内容强度 {verdict.strength.band === 'STRONG' ? '强' : verdict.strength.band === 'MIXED' ? '混合' : '弱'}
-            <span className="ml-1 font-normal opacity-70">
-              结果{Math.round(verdict.strength.resultRate * 100)}% · 主导{Math.round(verdict.strength.ownerRate * 100)}%
-            </span>
-          </span>
-        )}
-        {verdict.presentation && (
-          <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-700">
-            表达 {verdict.presentation.score} 分（{verdict.presentation.band} 档）
-          </span>
-        )}
-        {verdict.matchMode === 'DIRECTION' && (
-          <span className="flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700">
-            <Target size={11} /> 方向匹配
-          </span>
-        )}
-        {mode && <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] text-slate-500">{mode}</span>}
+    <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs leading-5">
+      <div className="mb-1 font-semibold text-slate-800">{suggestion.target}</div>
+      <div className="rounded border-l-2 border-indigo-300 bg-white px-2 py-1 text-slate-600">
+        <span className="mr-1 font-medium text-indigo-600">原文{citation?.sectionId ? ` · ${citation.sectionId}` : ''}</span>
+        {quote || '未找到可展示的原文片段'}
       </div>
+      <div className="mt-1 text-amber-700"><span className="font-medium">判断：</span>{suggestion.reason}</div>
+      <div className="mt-1 text-emerald-700"><span className="font-medium">改法：</span>{suggestion.after}</div>
+    </div>
+  );
+}
 
-      {verdict.redFlags && verdict.redFlags.length > 0 && (
-        <div className="space-y-1">
-          {(verdict.redFlags ?? []).slice(0, 4).map((f, i) => (
-            <div key={i} className={`rounded-lg px-3 py-1.5 text-[11px] leading-5 ${
-              f.severity === 'HIGH' ? 'bg-rose-50 text-rose-700' : f.severity === 'MEDIUM' ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-500'}`}>
-              <ShieldAlert size={11} className="mr-1 inline" />[{f.severity}] {f.message}
-            </div>
-          ))}
-          {verdict.redFlags.length > 4 && (
-            <div className="text-[11px] text-slate-400">…共 {verdict.redFlags.length} 条</div>
-          )}
-        </div>
-      )}
+/** 区块小标题：左侧色条 + 灰色小字，统一气泡内总评/先处理/可以主打/依据的层级 */
+function SectionTitle({ children }: { children: string }) {
+  return (
+    <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-slate-500">
+      <span className="h-3 w-1 rounded-full bg-indigo-300" />
+      {children}
+    </div>
+  );
+}
 
-      {verdict.vocabularyGaps && verdict.vocabularyGaps.length > 0 && (
-        <div className="rounded-lg bg-sky-50/70 px-3 py-2 text-[11px] leading-5 text-sky-700">
-          {verdict.vocabularyGaps.slice(0, 3).map((v, i) => (
-            <div key={i}>「{v.usedSynonym}」→ 建议补术语「{v.term}」</div>
-          ))}
-        </div>
-      )}
+/** 总评引用角标：锚点是总评里真实出现的原文片段（数字或连续短句），点击展开出处 */
+interface CitationAnchor {
+  start: number;
+  end: number;
+  sectionId: string;
+  quote: string;
+}
 
-      {verdict.groundingFindings && verdict.groundingFindings.length > 0 && (
-        <div className="rounded-lg bg-rose-50/70 px-3 py-2 text-[11px] leading-5 text-rose-600">
-          落地性校验：{verdict.groundingFindings.length} 处建议含无出处数字/失锚引文（程序标记，采纳前注意核对）
+/**
+ * 在总评文本里定位引用锚点：先找整句原文，找不到再退到 7 字滑窗的最长公共片段。
+ * 只做确定性字符串匹配，不推断——总评没引用的证据不挂角标。
+ */
+function findCitationAnchors(conclusion: string, sources: { sectionId: string; quote: string }[]): CitationAnchor[] {
+  const anchors: CitationAnchor[] = [];
+  const taken: Array<[number, number]> = [];
+  const overlaps = (s: number, e: number) => taken.some(([ts, te]) => s < te && ts < e);
+  sources.forEach(({ sectionId, quote }) => {
+    const q = quote?.trim();
+    if (!q || q.length < 5) return;
+    let hit = conclusion.indexOf(q);
+    let len = q.length;
+    if (hit < 0) {
+      for (let w = Math.min(q.length, 14); w >= 7 && hit < 0; w -= 1) {
+        for (let i = 0; i + w <= q.length; i += 1) {
+          const frag = q.slice(i, i + w);
+          // 片段边缘的标点不进高亮/不参与匹配，避免「P50 63.8s、」这种带尾巴的角标
+          const lead = frag.length - frag.replace(/^[，。、；：！？,.;:!?（(「『"']+/, '').length;
+          const trail = frag.length - frag.replace(/[，。、；：！？,.;:!?）)」』"']+$/, '').length;
+          if (lead + trail >= frag.length) continue;
+          const core = frag.slice(lead, frag.length - trail);
+          if (core.length < 6) continue;
+          const idx = conclusion.indexOf(core);
+          if (idx >= 0 && !overlaps(idx, idx + core.length)) { hit = idx; len = core.length; break; }
+        }
+      }
+    }
+    if (hit >= 0 && !overlaps(hit, hit + len)) {
+      taken.push([hit, hit + len]);
+      anchors.push({ start: hit, end: hit + len, sectionId, quote: q });
+    }
+  });
+  return anchors.sort((a, b) => a.start - b.start);
+}
+
+/** 带角标的总评：正文按锚点切段，角标点击展开「依据 · 原文片段」 */
+function AnchoredConclusion({ text, anchors }: { text: string; anchors: CitationAnchor[] }) {
+  const [open, setOpen] = useState<number | null>(null);
+  if (anchors.length === 0) return <p className="leading-7 text-slate-700">{text}</p>;
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  anchors.forEach((a, i) => {
+    if (a.start > cursor) parts.push(text.slice(cursor, a.start));
+    parts.push(
+      <span key={`seg-${i}`} className="rounded bg-indigo-50 text-indigo-700">{text.slice(a.start, a.end)}</span>,
+    );
+    parts.push(
+      <sup key={`sup-${i}`}>
+        <button
+          type="button"
+          onClick={() => setOpen(open === i ? null : i)}
+          className="mx-0.5 cursor-pointer rounded px-1 text-[10px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700"
+          title="查看依据原文"
+        >
+          [{i + 1}]
+        </button>
+      </sup>,
+    );
+    cursor = a.end;
+  });
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  const active = open !== null ? anchors[open] : null;
+  return (
+    <div>
+      <p className="leading-7 text-slate-700">{parts}</p>
+      {active && (
+        <div className="mt-1 rounded border-l-2 border-indigo-300 bg-slate-50 px-2 py-1 text-xs leading-5 text-slate-600">
+          <span className="mr-1 font-medium text-indigo-600">依据{active.sectionId ? ` · ${active.sectionId}` : ''}</span>
+          {active.quote}
         </div>
       )}
     </div>
   );
 }
 
-/** 前后对比卡：修改稿再分析后，53→75 的闭环在这里可见 */
-function CompareBubble({ before, after }: { before: FunnelVerdict; after: FunnelVerdict }) {
-  const rows: Array<{ label: string; a: string; b: string; better: boolean | null }> = [];
-  const bandName = (b?: string) => (b === 'STRONG' ? '强' : b === 'MIXED' ? '混合' : b === 'WEAK' ? '弱' : b ?? '—');
-  if (before.strength || after.strength) {
-    rows.push({ label: '内容强度', a: bandName(before.strength?.band), b: bandName(after.strength?.band),
-      better: before.strength?.band !== after.strength?.band });
+/** 报告消息（精简版）：总评 → 先处理 → 可以主打 → 改法卡片 → 页脚倒金字塔；维度判断融进总评叙事，不单独成块 */
+function ReportBubble({ result, mode, runId, onReanalyze }: {
+  result: AnalysisResult | null;
+  mode: string | null;
+  runId: string;
+  onReanalyze?: () => void;
+}) {
+  const verdict = result?.funnelVerdict ?? null;
+  const ev = verdict?.evaluation ?? null;
+
+  // L1 结论：evaluation.overall 优先，无评价时（历史/降级 run）回退 summary，二者只渲染其一。
+  const conclusion = ev?.overall ?? result?.summary;
+
+  // L2 先处理：红旗 + 需注意（无评价时回退旧字段 risks）合并去重，改法来自 actionableSuggestions。
+  const weaknessPool = ev ? (ev.weaknesses ?? []) : (result?.risks ?? []);
+  const actions = buildActionItems(verdict, weaknessPool, result?.actionableSuggestions ?? []);
+
+  // L3 可以主打：strengths，无评价时回退旧字段 keyPoints。
+  const highlights = (ev?.strengths?.length ? ev.strengths : result?.keyPoints ?? []).slice(0, 2);
+  const evidence = buildEvidenceItems(result);
+  const suggestions = result?.actionableSuggestions ?? [];
+  const citations = result?.citations ?? [];
+  const evidenceChains = suggestions.slice(0, 3).map((suggestion) => ({
+    suggestion,
+    citation: citations.find((citation) => citation.sectionId === suggestion.sectionId),
+  }));
+
+  const degraded = !!verdict?.analysisDegraded;
+  const empty = !conclusion && actions.length === 0 && highlights.length === 0;
+
+  // 页脚：画像/指标/定位压成一行小字（分维评价已在上方折叠给出，推荐方向等论据不进聊天回复）。
+  const foot: string[] = [];
+  if (result?.profile) {
+    const p = result.profile;
+    foot.push(`${p.name ?? '未具名'}·${p.yearsOfExperience}年${p.currentRole ? `·${p.currentRole}` : ''}`);
   }
-  if (before.presentation || after.presentation) {
-    rows.push({ label: '表达分数', a: String(before.presentation?.score ?? '—'), b: String(after.presentation?.score ?? '—'),
-      better: (after.presentation?.score ?? 0) > (before.presentation?.score ?? 0) ? true
-        : (after.presentation?.score ?? 0) < (before.presentation?.score ?? 0) ? false : null });
+  if (verdict?.strength) {
+    const band = verdict.strength.band === 'STRONG' ? '强' : verdict.strength.band === 'MIXED' ? '混合' : '弱';
+    const s = verdict.strength;
+    // 给条数而非百分比：resultRate 是"有可核验结果的经历占比"，百分号会被误读成打分
+    const counted = s.entryCount > 0 ? `（${Math.round(s.resultRate * s.entryCount)}/${s.entryCount}条有可验证结果）` : '';
+    foot.push(`内容强度${band}${counted}`);
   }
-  const flagCount = (v: FunnelVerdict) => v.redFlags?.length ?? 0;
-  rows.push({ label: '红旗数', a: String(flagCount(before)), b: String(flagCount(after)),
-    better: flagCount(after) < flagCount(before) ? true : flagCount(after) > flagCount(before) ? false : null });
-  const metCount = (v: FunnelVerdict) => v.mustHaveCoverage?.filter((c) => c.status === 'MET').length ?? 0;
-  if (before.mustHaveCoverage || after.mustHaveCoverage) {
-    rows.push({ label: '共性要求 MET', a: String(metCount(before)), b: String(metCount(after)),
-      better: metCount(after) > metCount(before) ? true : metCount(after) < metCount(before) ? false : null });
+  if (verdict?.presentation) foot.push(`表达${verdict.presentation.score}分（${verdict.presentation.band}档）`);
+  if (verdict?.positioning) {
+    foot.push(verdict.positioning.anchored
+      ? `定位「${verdict.positioning.currentAnchor ?? '—'}」`
+      : (verdict.positioning.suggestedAnchor ? `建议定位「${verdict.positioning.suggestedAnchor}」` : '定位未锚定'));
+  }
+  if (mode) {
+    const modeLabel: Record<string, string> = {
+      REACT: '完整分析', LLM: '降级直连', FALLBACK: '历史规则结果', MOCK: '演示数据（非真实分析）', CACHE_HIT: '历史结论·未重新分析',
+    };
+    foot.push(modeLabel[mode] ?? mode);
   }
 
   return (
-    <div className="rounded-2xl rounded-tl-sm border border-emerald-200 bg-gradient-to-br from-emerald-50/70 to-sky-50/50 p-4 shadow-sm">
-      <div className="mb-2.5 flex items-center gap-1.5 text-sm font-bold text-emerald-700">
-        <TrendingUp size={15} /> 修改前后对比
-      </div>
-      <div className="space-y-1">
-        {rows.map((r, i) => (
-          <div key={i} className="flex items-center gap-2 rounded-lg bg-white/80 px-3 py-1.5 text-xs">
-            <span className="w-24 shrink-0 text-slate-500">{r.label}</span>
-            <span className="flex-1 text-slate-500">{r.a}</span>
-            <ArrowRight size={12} className="shrink-0 text-slate-300" />
-            <span className="flex-1 font-semibold text-slate-700">{r.b}</span>
-            {r.better === true && <span className="shrink-0 text-emerald-500">↑</span>}
-            {r.better === false && <span className="shrink-0 text-rose-500">↓</span>}
-          </div>
-        ))}
-      </div>
+    <div className="max-w-[92%] rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-2.5 text-sm leading-7 text-slate-700 shadow-sm">
+      {conclusion ? (
+        <section>
+          <SectionTitle>总评</SectionTitle>
+          <AnchoredConclusion text={conclusion} anchors={findCitationAnchors(conclusion, [
+            ...citations,
+            ...(ev?.dimensions ?? []).flatMap((d) => (d.evidence ?? []).map((quote) => ({ sectionId: d.dimension, quote }))),
+          ])} />
+        </section>
+      ) : null}
+      {actions.length > 0 && (
+        <section className="mt-3">
+          <SectionTitle>先处理</SectionTitle>
+          <ol className="list-decimal space-y-1 pl-5 leading-6 marker:text-slate-400">
+            {actions.map((a, i) => <li key={i}>{a}</li>)}
+          </ol>
+        </section>
+      )}
+      {highlights.length > 0 && (
+        <section className="mt-3">
+          <SectionTitle>可以主打</SectionTitle>
+          <ul className="list-disc space-y-1 pl-5 leading-6 marker:text-slate-400">
+            {highlights.map((h, i) => <li key={i}>{h}</li>)}
+          </ul>
+        </section>
+      )}
+      {evidence.length > 0 && evidenceChains.length === 0 && (
+        <section className="mt-3">
+          <SectionTitle>依据（原文）</SectionTitle>
+          <ul className="list-disc space-y-1 pl-5 leading-6 marker:text-slate-400">
+            {evidence.map((e, i) => <li key={i}>{e}</li>)}
+          </ul>
+        </section>
+      )}
+      {degraded && (
+        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs leading-5 text-amber-700">
+          ⚠️ 事实层抽取降级，红旗为文本级粗查、画像缺失；其余角度基于 LLM 直读原文。
+        </div>
+      )}
+      {empty && <div className="whitespace-pre-wrap">（无分析结论）</div>}
+      {evidenceChains.length > 0 && (
+        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+          <SectionTitle>原文 → 判断 → 改法</SectionTitle>
+          {evidenceChains.map(({ suggestion, citation }) => (
+            <EvidenceChain key={`${suggestion.target}-${suggestion.sectionId ?? 'unknown'}`} suggestion={suggestion} citation={citation} />
+          ))}
+        </div>
+      )}
+      <IterationSection runId={runId} />
+      {foot.length > 0 && (
+        <div className="mt-2 border-t border-slate-100 pt-1.5 text-[11px] leading-5 text-slate-400">
+          {foot.join(' ｜ ')}
+        </div>
+      )}
+      {onReanalyze && (
+        <button
+          type="button"
+          onClick={onReanalyze}
+          className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 transition-colors hover:text-indigo-600"
+        >
+          <RotateCcw size={11} /> 重新分析
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 前后对比（精简版）：纯文本行 */
+function CompareBubble({ before, after }: { before: FunnelVerdict; after: FunnelVerdict }) {
+  const bandName = (b?: string) => (b === 'STRONG' ? '强' : b === 'MIXED' ? '混合' : b === 'WEAK' ? '弱' : b ?? '—');
+  const flagCount = (v: FunnelVerdict) => v.redFlags?.length ?? 0;
+  const lines = [`内容强度：${bandName(before.strength?.band)} → ${bandName(after.strength?.band)}`];
+  if (before.presentation || after.presentation) {
+    lines.push(`表达分数：${before.presentation?.score ?? '—'} → ${after.presentation?.score ?? '—'}`);
+  }
+  lines.push(`红旗数：${flagCount(before)} → ${flagCount(after)}`);
+  const reasons: string[] = [];
+  if (bandName(before.strength?.band) === bandName(after.strength?.band)) {
+    reasons.push('内容强度未变：本轮修改没有改变可核验的结果或责任归因证据');
+  }
+  if (before.presentation?.score != null && before.presentation.score === after.presentation?.score) {
+    reasons.push('表达分数未变：修改没有命中当前表达问题，或修改稿尚未重新进入评估');
+  }
+  if (flagCount(before) === flagCount(after)) {
+    reasons.push('红旗未变：时间线等客观事实不会因措辞调整自动消失');
+  }
+  return (
+    <div className="max-w-[92%] rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-2.5 text-sm leading-7 text-slate-700 shadow-sm">
+      <div className="mb-1 text-xs font-semibold text-slate-500">修改前后对比</div>
+      <div className="whitespace-pre-wrap">{lines.join('\n')}</div>
+      {reasons.length > 0 && (
+        <div className="mt-1 border-t border-slate-100 pt-1 text-xs leading-5 text-slate-500">
+          {reasons.map((reason) => <div key={reason}>· {reason}</div>)}
+        </div>
+      )}
     </div>
   );
 }
 
 /**
- * 对话式简历工作台——上传在左、对话流占满其余宽度（右侧预览面板暂时下线）。
- * 分析报告/建议/链路都以消息进入对话流；采纳建议后修改稿暂存 state（面板恢复即用）。
+ * 对话式简历工作台——上传在左、对话流占满其余宽度。
+ * 报告以一段纯文本进入对话流（精简版，不卡片化）。
  */
 export default function ChatWorkspacePage() {
   const [file, setFile] = useState<File | null>(null);
@@ -188,16 +405,30 @@ export default function ChatWorkspacePage() {
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chainSteps, setChainSteps] = useState<AuditStep[]>([]);
-  const [applied, setApplied] = useState<Set<number>>(new Set());
-  // 修改稿暂存：右侧预览面板暂时下线，仅保留采纳状态的后端同步（恢复面板时读回返回值即可）
-  const [, setRevision] = useState<AppliedRevision | null>(null);
-  const [applying, setApplying] = useState(false);
   const [followUpText, setFollowUpText] = useState('');
   const [sendingFollowUp, setSendingFollowUp] = useState(false);
   const [lastRunId, setLastRunId] = useState<string | null>(null);
-  // 最新结论暂存：再分析前后对比功能随右侧面板下线，恢复时读回 lastVerdict 即可
-  const [, setLastVerdict] = useState<FunnelVerdict | null>(null);
+  // 最新结论暂存：重新分析时用于前后对比（CompareBubble）
+  const [lastVerdict, setLastVerdict] = useState<FunnelVerdict | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  // 历史简历（简历档案）：选中后免上传直接分析
+  const [resumes, setResumes] = useState<ResumeItem[]>([]);
+  const [selectedResumeId, setSelectedResumeId] = useState<string | null>(null);
+  // 最近一次提交来源（文件/历史简历）——"重新分析"按原来源强制重跑
+  const [lastSubmit, setLastSubmit] = useState<{ file: File | null; resumeId: string | null }>({ file: null, resumeId: null });
+  // 迭代基线：候选列表供手动选定"上一版"，默认不绑定——与后端"不静默绑定"同一血缘口径
+  const [candidates, setCandidates] = useState<BaselineCandidate[]>([]);
+  const [baseRunId, setBaseRunId] = useState<string | null>(null);
+
+  const selectedResume = resumes.find((r) => r.id === selectedResumeId) ?? null;
+
+  const refreshResumes = useCallback(() => {
+    analysisApi.listResumes().then(setResumes).catch(() => {});
+  }, []);
+  const refreshCandidates = useCallback(() => {
+    analysisApi.getBaselineCandidates().then(setCandidates).catch(() => {});
+  }, []);
+  useEffect(() => { refreshResumes(); refreshCandidates(); }, [refreshResumes, refreshCandidates]);
 
   const closeStreamRef = useRef<(() => void) | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -216,9 +447,46 @@ export default function ChatWorkspacePage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  /** 等待 run 完成，产出报告消息序列 */
+  /** 等待 run 完成，产出报告消息 */
   const awaitRun = useCallback((runId: string, userMsgText: string, isReAnalysis: boolean, prevVerdict: FunnelVerdict | null) => {
     setMessages((prev) => [...prev, { id: nextId(), role: 'user', text: userMsgText }]);
+
+    // SSE 流式订阅：实时更新左侧栏 ExecutionChain
+    const es = new EventSource(`/api/analysis/runs/${runId}/stream`);
+    closeStreamRef.current = () => es.close();
+
+    es.addEventListener('step', (e) => {
+      const step = JSON.parse(e.data);
+      setChainSteps((prev) => {
+        const existing = prev.findIndex((s) => s.id === step.stepId);
+        const auditStep: AuditStep = {
+          id: step.stepId,
+          parentStepId: null,
+          stepName: step.stepName,
+          status: step.status,
+          inputSnapshot: null,
+          outputSnapshot: step.message || null,
+          llmUsed: false,
+          toolUsed: null,
+          costMs: 0,
+          errorMessage: null,
+          createdAt: new Date(step.timestamp).toISOString(),
+        };
+        if (existing >= 0) {
+          const next = [...prev];
+          next[existing] = auditStep;
+          return next;
+        }
+        return [...prev, auditStep];
+      });
+    });
+
+    es.onerror = () => {
+      es.close();
+      closeStreamRef.current = null;
+      // SSE 断线回退到轮询（下方 setInterval 继续兜底）
+    };
+
     pollRef.current = window.setInterval(async () => {
       try {
         const d = await analysisApi.getRun(runId);
@@ -228,22 +496,25 @@ export default function ChatWorkspacePage() {
           setLastRunId(runId);
           analysisApi.getAudit(runId).then((steps) => {
             setChainSteps(steps);
-            setMessages((prev) => [...prev, { id: nextId(), role: 'chain', steps }]);
           }).catch(() => {});
           const verdict = d.result?.funnelVerdict ?? null;
           setLastVerdict(verdict);
           if (verdict && prevVerdict && isReAnalysis) {
             setMessages((prev) => [...prev, { id: nextId(), role: 'compare', before: prevVerdict, after: verdict }]);
           }
-          if (d.result) {
+          if (d.result || d.summary) {
             setMessages((prev) => [
               ...prev,
-              { id: nextId(), role: 'report', verdict: verdict ?? ({} as FunnelVerdict), summary: d.result?.summary ?? '', mode: d.executionMode, round: 0 },
+              {
+                id: nextId(), role: 'report',
+                result: d.result,
+                mode: d.executionMode,
+                round: 0,
+                runId,
+              },
             ]);
-            const suggestions = d.result.actionableSuggestions ?? [];
-            if (suggestions.length > 0) {
-              setMessages((prev) => [...prev, { id: nextId(), role: 'suggestions', runId, suggestions, round: 0 }]);
-            }
+            // 本次 run 完成即成为新的基线候选（新→旧排在最前）
+            refreshCandidates();
           }
         } else if (d.status === 'FAILED') {
           cleanup();
@@ -255,55 +526,39 @@ export default function ChatWorkspacePage() {
         /* 下一轮轮询兜底 */
       }
     }, 2000);
-  }, [cleanup]);
+  }, [cleanup, refreshCandidates]);
 
-  const start = async () => {
-    if (!file || phase === 'running') return;
+  /** 提交分析。forceRefresh=true：按最近一次提交的来源强制重跑（跳过结论缓存），完成后覆盖缓存并出对比 */
+  const start = async (forceRefresh = false) => {
+    const useFile = forceRefresh ? lastSubmit.file : file;
+    const useResumeId = forceRefresh ? lastSubmit.resumeId : selectedResumeId;
+    if ((!useFile && !useResumeId) || phase === 'running') return;
     setError(null);
-    setMessages([]);
-    setApplied(new Set());
-    setRevision(null);
-    setChainSteps([]);
-    setLastVerdict(null);
+    if (!forceRefresh) {
+      setMessages([]);
+      setChainSteps([]);
+      setLastVerdict(null);
+    }
     setPhase('running');
     try {
       const { runId } = await analysisApi.submit(
-        file, '按方向画像分析这份简历', 'resume-review',
+        useFile, '按方向画像分析这份简历', 'resume-review',
         undefined,
         targetDirection.trim() || undefined,
         persona || undefined,
+        undefined,
+        undefined,
+        { resumeId: useResumeId ?? undefined, forceRefresh, baseRunId: baseRunId ?? undefined },
       );
       setLastRunId(runId);
-      awaitRun(runId, `分析这份简历${targetDirection.trim() ? `（方向：${targetDirection.trim()}）` : ''}`, false, null);
+      setLastSubmit({ file: useFile, resumeId: useResumeId });
+      const dirSuffix = targetDirection.trim() ? `（方向：${targetDirection.trim()}）` : '';
+      awaitRun(runId, `${forceRefresh ? '重新分析' : '分析'}这份简历${dirSuffix}`, forceRefresh, forceRefresh ? lastVerdict : null);
+      // 提交即建档/更新使用计数，刷新档案列表
+      refreshResumes();
     } catch (ex) {
       setPhase('failed');
       setError(getErrorMessage(ex));
-    }
-  };
-
-  /** 采纳/取消一条建议 → 携带全部已选集请求修改稿 */
-  const toggleApply = async (runId: string, index: number) => {
-    if (applying || !lastRunId) return;
-    const next = new Set(applied);
-    if (next.has(index)) {
-      next.delete(index);
-    } else {
-      next.add(index);
-    }
-    setApplied(next);
-    if (next.size === 0) {
-      setRevision(null);
-      return;
-    }
-    setApplying(true);
-    try {
-      setRevision(await analysisApi.applySuggestions(runId, [...next]));
-    } catch (ex) {
-      setError(getErrorMessage(ex));
-      // 失败回滚选择
-      setApplied(applied);
-    } finally {
-      setApplying(false);
     }
   };
 
@@ -317,7 +572,6 @@ export default function ChatWorkspacePage() {
     try {
       await analysisApi.followUp(lastRunId, text);
       // 轮询消息直到新 ASSISTANT 消息出现
-      const before = messages.length;
       const timer = window.setInterval(async () => {
         const msgs = await analysisApi.getMessages(lastRunId).catch(() => []);
         const last = msgs[msgs.length - 1];
@@ -330,7 +584,6 @@ export default function ChatWorkspacePage() {
           });
         }
       }, 1500);
-      void before;
     } catch (ex) {
       setSendingFollowUp(false);
       setError(getErrorMessage(ex));
@@ -350,18 +603,28 @@ export default function ChatWorkspacePage() {
             e.preventDefault();
             setDragOver(false);
             const f = e.dataTransfer.files?.[0];
-            if (f) setFile(f);
+            if (f) {
+              setFile(f);
+              setSelectedResumeId(null);
+              setBaseRunId(null);
+            }
           }}
           className={`flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed p-5 text-center transition-colors ${
             dragOver ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 bg-white'}`}
         >
           <Upload size={20} className="text-indigo-400" />
-          <div className="text-xs font-medium text-slate-600">{file ? file.name : '拖入或选择简历'}</div>
+          <div className="max-w-full truncate text-xs font-medium text-slate-600">
+            {file ? file.name : selectedResume ? `历史简历：${selectedResume.fileName ?? '未命名'}` : '拖入或选择简历'}
+          </div>
           <div className="text-[10px] text-slate-400">PDF / Word / Markdown</div>
           <input
             type="file"
             accept=".pdf,.docx,.doc,.md,.txt"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              setFile(e.target.files?.[0] ?? null);
+              setSelectedResumeId(null);
+              setBaseRunId(null);
+            }}
             className="hidden"
             id="chat-file-input"
           />
@@ -369,6 +632,63 @@ export default function ChatWorkspacePage() {
             选择文件
           </label>
         </div>
+
+        {resumes.length > 0 && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-3">
+            <div className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-500">
+              <History size={13} /> 历史简历（免上传）
+            </div>
+            <div className="max-h-44 space-y-1 overflow-y-auto">
+              {resumes.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => {
+                    if (selectedResumeId === r.id) {
+                      setSelectedResumeId(null);
+                    } else {
+                      setSelectedResumeId(r.id);
+                      setFile(null);
+                    }
+                    setBaseRunId(null);
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition-colors ${
+                    selectedResumeId === r.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <span className="min-w-0 truncate">{r.fileName ?? '（未命名）'}</span>
+                  <span className="shrink-0 text-[10px] text-slate-400">
+                    {r.charCount != null ? `${r.charCount}字 · ` : ''}分析{r.runCount ?? 0}次
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {candidates.length > 0 && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-3">
+            <div className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-500">
+              <GitCompare size={13} /> 迭代基线（可选）
+            </div>
+            <select
+              value={baseRunId ?? ''}
+              onChange={(e) => setBaseRunId(e.target.value || null)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 outline-none focus:border-indigo-400"
+            >
+              <option value="">不绑定基线（默认——非迭代对比）</option>
+              {candidates.map((c) => (
+                <option key={c.runId} value={c.runId}>
+                  {c.fileName ?? '未命名'} · {c.promptVersion ?? '—'} · {new Date(c.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </option>
+              ))}
+            </select>
+            <div className="mt-1 text-[10px] leading-4 text-slate-400">
+              {baseRunId
+                ? '已绑定：本次将按血缘重评变化区域，未重评维度沿用基线并挂血缘。'
+                : '选中"上一版"后本次才是真实迭代对比——系统不自动挑基线。'}
+            </div>
+          </div>
+        )}
 
         <div className="space-y-2.5 rounded-2xl border border-slate-200 bg-white p-3">
           <label className="block text-xs">
@@ -402,8 +722,8 @@ export default function ChatWorkspacePage() {
 
         <button
           type="button"
-          onClick={start}
-          disabled={!file || running}
+          onClick={() => start()}
+          disabled={(!file && !selectedResumeId) || running}
           className="flex items-center justify-center gap-2 rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:bg-slate-300"
         >
           {running ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
@@ -425,7 +745,7 @@ export default function ChatWorkspacePage() {
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-slate-400">
               <Sparkles size={22} className="text-indigo-300" />
-              上传简历并开始分析——报告、建议、面试预演都会出现在这个对话里。
+              上传简历并开始分析——报告会出现在这个对话里。
             </div>
           )}
           {messages.map((m) => {
@@ -440,80 +760,30 @@ export default function ChatWorkspacePage() {
             }
             if (m.role === 'assistant') {
               return (
-                <div key={m.id} className="max-w-[92%] whitespace-pre-wrap rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-2.5 text-sm leading-7 text-slate-700 shadow-sm">
-                  {m.text}
+                <div key={m.id} className="max-w-[92%] rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-2.5 text-sm leading-7 text-slate-700 shadow-sm">
+                  <div className="prose prose-sm prose-slate max-w-none [&_p]:my-1.5 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_strong]:text-slate-900">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                  </div>
                 </div>
               );
             }
             if (m.role === 'report') {
-              return <ReportBubble key={m.id} verdict={m.verdict} summary={m.summary} mode={m.mode} />;
-            }
-            if (m.role === 'compare') {
-              return <CompareBubble key={m.id} before={m.before} after={m.after} />;
-            }
-            if (m.role === 'chain') {
               return (
-                <div key={m.id} className="max-w-[95%]">
-                  <ExecutionChain steps={m.steps} defaultCollapsed />
-                </div>
+                <ReportBubble
+                  key={m.id}
+                  result={m.result}
+                  mode={m.mode}
+                  runId={m.runId}
+                  onReanalyze={running ? undefined : () => start(true)}
+                />
               );
             }
-            // suggestions
-            return (
-              <div key={m.id} className="max-w-[95%] space-y-2">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-                  <CheckCircle2 size={13} className="text-indigo-400" />
-                  改进建议（点击采纳）
-                </div>
-                {m.suggestions.map((s, i) => {
-                  const isApplied = applied.has(i);
-                  return (
-                    <div key={i} className={`rounded-2xl rounded-tl-sm border p-3.5 shadow-sm transition-colors ${
-                      isApplied ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-white'}`}>
-                      <div className="mb-2 flex items-center gap-2">
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                          s.severity === 'HIGH' ? 'bg-rose-100 text-rose-600'
-                            : s.severity === 'MEDIUM' ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
-                          {s.severity}
-                        </span>
-                        <span className="text-xs font-medium text-slate-600">{s.target}</span>
-                        {s.sectionId && (
-                          <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-600">
-                            {s.sectionId}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          disabled={applying}
-                          onClick={() => toggleApply(m.runId, i)}
-                          className={`ml-auto flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
-                            isApplied
-                              ? 'bg-emerald-600 text-white'
-                              : 'border border-indigo-200 bg-white text-indigo-600 hover:bg-indigo-50'}`}
-                        >
-                          {isApplied ? <Check size={12} /> : <CheckCircle2 size={12} />}
-                          {isApplied ? '已采纳' : '采纳'}
-                        </button>
-                      </div>
-                      <div className="space-y-1.5 text-xs leading-6">
-                        <div className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-slate-500 line-through decoration-rose-300">
-                          {s.before}
-                        </div>
-                        <div className="rounded-lg bg-emerald-50 px-2.5 py-1.5 font-medium text-slate-700">
-                          {s.after}
-                        </div>
-                        <div className="text-[11px] text-slate-400">{s.reason}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            );
+            return <CompareBubble key={m.id} before={m.before} after={m.after} />;
           })}
           {(running || sendingFollowUp) && (
             <div className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-400 shadow-sm">
               <Loader2 size={13} className="animate-spin" />
-              {running ? 'Agent 正在分析（解析 → 抽取 → 红旗 → 分析 → 校验）…' : '思考中…'}
+              {running ? '正在分析…' : '思考中…'}
             </div>
           )}
           <div ref={bottomRef} />

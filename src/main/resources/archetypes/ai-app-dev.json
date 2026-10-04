@@ -1,77 +1,103 @@
 {
   "id": "ai-app-dev",
-  "version": "1",
-  "name": "AI 应用开发",
-  "aliases": ["ai应用开发", "llm应用开发", "大模型应用", "agent开发", "ai全栈", "ai应用工程师", "llm应用"],
-  "summary": "基于大模型构建应用层产品的工程岗位簇：Agent 编排、RAG 系统、Copilot、AI 平台。",
+  "version": "2024-q4",
+  "name": "AI应用开发",
+  "summary": "基于LLM构建应用产品，涉及prompt工程、RAG、Agent等",
+  "aliases": ["AI应用", "LLM应用", "大模型应用"],
   "mustHaves": [
     {
-      "id": "llm-integration",
-      "requirement": "LLM API 集成与工程化经验（调用封装、流式输出、函数调用、多模型路由）",
-      "evidenceHints": ["封装 LLM SDK/API", "Function Calling", "流式输出", "多模型适配", "重试与降级"]
+      "id": "llm-api",
+      "priority": "MUST",
+      "requirement": "LLM API调用与集成（OpenAI/Claude/开源模型）",
+      "evidenceExpected": ["API调用代码", "token优化", "错误重试", "流式输出"],
+      "evidenceHints": ["OpenAI", "ChatGPT", "GPT-4", "Claude", "Llama", "通义千问", "文心一言", "API"]
     },
     {
-      "id": "shipped-app",
-      "requirement": "至少一个完整落地的 AI 应用（RAG / Agent / Copilot 任一形态，有真实用户或完整链路）",
-      "evidenceHints": ["检索问答系统", "Agent 编排", "智能助手", "端到端上线"]
+      "id": "backend-3y",
+      "priority": "MUST",
+      "requirement": "3年以上后端开发经验",
+      "evidenceExpected": ["Web框架", "RESTful API", "数据库", "并发处理"],
+      "evidenceHints": ["Spring", "Spring Boot", "Flask", "FastAPI", "Express", "Django", "后端", "API"]
     },
     {
-      "id": "engineering",
-      "requirement": "扎实的后端工程能力（服务端开发、API 设计、并发与稳定性）",
-      "evidenceHints": ["高并发", "系统设计", "服务化", "性能优化", "可用性"]
-    },
-    {
-      "id": "prompt-eval",
-      "requirement": "提示词工程与效果评测意识（prompt 迭代、评测集、效果回归）",
-      "evidenceHints": ["prompt 设计", "评测集", "golden case", "A/B 对比", "效果回归"]
+      "id": "prompt-eng",
+      "priority": "IMPORTANT",
+      "requirement": "Prompt工程与优化",
+      "evidenceExpected": ["prompt模板", "few-shot示例", "输出解析", "效果评估"],
+      "evidenceHints": ["prompt", "提示词", "指令", "few-shot", "CoT", "Chain of Thought"]
     }
   ],
   "variants": [
     {
-      "id": "agent-eng",
-      "name": "Agent 开发",
-      "differentiators": ["多轮编排/状态机", "工具调用与执行", "记忆与上下文管理", "Agent 评测"]
+      "id": "rag",
+      "name": "RAG系统开发",
+      "differentiators": ["向量检索", "文档切片", "embedding", "混合检索"],
+      "additionalRequirements": [
+        {
+          "id": "rag-vector-db",
+          "priority": "MUST",
+          "requirement": "向量数据库实战（Pinecone/Milvus/Weaviate/Qdrant）",
+          "evidenceExpected": ["向量存储", "相似度搜索", "索引优化"],
+          "evidenceHints": ["Pinecone", "Milvus", "Chroma", "FAISS", "Weaviate", "Qdrant", "向量", "embedding", "检索"]
+        },
+        {
+          "id": "rag-chunking",
+          "priority": "IMPORTANT",
+          "requirement": "文档处理与检索优化",
+          "evidenceExpected": ["分块策略", "重排序", "混合检索"],
+          "evidenceHints": ["chunk", "分块", "rerank", "BM25", "混合检索", "文档切片"]
+        }
+      ]
     },
     {
-      "id": "rag-eng",
-      "name": "RAG 工程",
-      "differentiators": ["向量库与检索", "分块与召回策略", "引用校验", "知识库建设"]
+      "id": "agent",
+      "name": "AI Agent开发",
+      "differentiators": ["工具调用", "多轮对话", "规划", "ReAct"],
+      "additionalRequirements": [
+        {
+          "id": "agent-tool-calling",
+          "priority": "MUST",
+          "requirement": "Function calling / Tool use实现",
+          "evidenceExpected": ["工具定义", "参数解析", "执行结果回填"],
+          "evidenceHints": ["function calling", "tool use", "工具调用", "ReAct", "function", "tool"]
+        },
+        {
+          "id": "agent-planning",
+          "priority": "IMPORTANT",
+          "requirement": "多轮对话与任务规划",
+          "evidenceExpected": ["对话管理", "上下文保持", "任务分解"],
+          "evidenceHints": ["多轮", "对话", "规划", "plan", "context", "memory"]
+        }
+      ]
     },
     {
-      "id": "ai-fullstack",
-      "name": "AI 全栈",
-      "differentiators": ["流式前端交互", "产品化落地", "全链路交付"]
-    },
-    {
-      "id": "ai-platform",
-      "name": "AI 平台/基础设施",
-      "differentiators": ["网关与路由", "成本与限流", "可观测性", "多租户"]
-    },
-    {
-      "id": "algo-adjacent",
-      "name": "偏算法落地",
-      "differentiators": ["微调/训练经验", "数据构建", "模型评估"]
+      "id": "prompt-specialist",
+      "name": "Prompt工程师",
+      "differentiators": ["prompt模板", "few-shot", "CoT", "评测"],
+      "additionalRequirements": [
+        {
+          "id": "prompt-optimization",
+          "priority": "MUST",
+          "requirement": "Prompt效果优化与评测",
+          "evidenceExpected": ["A/B测试", "效果对比", "评测指标"],
+          "evidenceHints": ["优化", "评测", "A/B", "测试", "指标", "效果"]
+        }
+      ]
     }
   ],
   "vocabulary": [
-    {"term": "RAG", "synonyms": ["检索增强", "文档问答", "知识库问答"]},
-    {"term": "Agent", "synonyms": ["智能体", "代理"]},
-    {"term": "Function Calling", "synonyms": ["函数调用", "工具调用"]},
-    {"term": "LangChain", "synonyms": ["LangGraph", "langchain4j"]},
-    {"term": "Prompt", "synonyms": ["提示词", "prompt 工程"]},
-    {"term": "向量数据库", "synonyms": ["向量库", "embedding 检索", "milvus", "qdrant", "weaviate"]},
-    {"term": "评测", "synonyms": ["eval", "golden case", "评估集"]},
-    {"term": "MCP", "synonyms": ["模型上下文协议"]},
-    {"term": "微调", "synonyms": ["fine-tuning", "finetune", "sft", "lora"]},
-    {"term": "幻觉", "synonyms": ["hallucination", "模型编造"]},
-    {"term": "流式输出", "synonyms": ["streaming", "sse", "打字机效果"]},
-    {"term": "多模态", "synonyms": ["multimodal", "图文理解"]}
+    {
+      "term": "RAG",
+      "synonyms": ["检索增强", "知识检索", "向量检索"]
+    },
+    {
+      "term": "LangChain",
+      "synonyms": ["大模型框架", "LLM框架"]
+    }
   ],
   "screeningQuestions": [
-    "你的 Agent 工具调用失败或超时怎么处理？降级链路是什么？",
-    "RAG 召回率上不去，你怎么排查（分块/检索/重排各环节）？",
-    "怎么评估一次 prompt 改动是变好还是变坏？有评测集吗？",
-    "LLM 应用的成本和延迟怎么控制？",
-    "模型输出不稳定时你怎么保证下游链路的可靠性？"
+    "你在项目中如何处理LLM的幻觉问题？",
+    "描述一个你优化prompt效果的案例，前后对比数据是什么？",
+    "如何评估RAG系统的检索质量？"
   ]
 }

@@ -1,7 +1,11 @@
 package com.gcll.docagent.analysis;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
@@ -22,14 +26,16 @@ public class RedFlagChecker {
     private static final Pattern PHONE = Pattern.compile("1[3-9]\\d{9}|\\d{3,4}-\\d{7,8}");
     private static final Pattern EMAIL = Pattern.compile("[\\w.+-]+@[\\w-]+\\.[\\w.]+");
 
-    private static final List<String> SENIOR_MARKERS = List.of(
-            "高级", "资深", "首席", "专家", "principal", "senior", "lead", "staff");
+    /**
+     * 审查词表（职级词、教育行词）——是随语言/市场增长的数据而非代码，
+     * 从 classpath:lexicons/screening-lexicon.json 加载；缺失或空组直接失败，
+     * 不静默降级（空教育词表会让时间线粗查把教育年限算成空窗）。
+     */
+    private static final ScreeningLexicon LEXICON = ScreeningLexicon.load();
+    private static final List<String> SENIOR_MARKERS = LEXICON.seniorTitleMarkers();
 
     /** 教育行关键词——文本粗查无法语义分流，按行级词汇排除教育经历。 */
-    private static final List<String> EDUCATION_LINE_MARKERS = List.of(
-            "大学", "学院", "学校", "中学", "高中", "小学", "硕士", "本科", "大专", "专科",
-            "学位", "毕业", "入学", "在读", "教育经历",
-            "university", "college", "school", "bachelor", "master", "phd", "mba");
+    private static final List<String> EDUCATION_LINE_MARKERS = LEXICON.educationMarkers();
 
     /** 空窗阈值（月）：超过为 MEDIUM，超过此值为 HIGH。 */
     private static final int GAP_MEDIUM_MONTHS = 2;
@@ -42,6 +48,16 @@ public class RedFlagChecker {
     /** 高级头衔但总经验低于此年限（月）视为不匹配。 */
     private static final int SENIOR_MIN_TOTAL_MONTHS = 24;
     private static final int NEW_GRAD_SHORT_TENURE_MONTHS = 6;
+
+    /**
+     * 空窗类红旗的可操作建议：代码无法判断空窗期做了什么，给出两条真实可执行的路径——
+     * 有可查证经历就补一行（时间线连续后红旗自然消失），没有就备面试口径，不发明事实。
+     */
+    private static final String GAP_ACTIONABLE_ADVICE =
+            "——空窗期有可查证的工作/全职活动（社保、个税可查）就在经历中补一行「时间｜行业｜岗位」，"
+                    + "时间线连续后此红旗消除；没有可查证经历则备一句面试口径，不写无法证明的内容";
+    private static final String COVERED_TRAILING_ADVICE =
+            "；若期间另有可查证的工作经历（社保、个税可查），补一行「时间｜行业｜岗位」更稳";
 
     /**
      * 执行全部红旗检查。
@@ -91,9 +107,10 @@ public class RedFlagChecker {
                             ? RedFlag.Severity.MEDIUM : RedFlag.Severity.LOW;
                     YearMonth nextStart = YearMonth.from(range[0]);
                     flags.add(new RedFlag(RedFlag.TIMELINE_GAP, severity,
-                            String.format("时间线疑似有 %d 个月空窗（%s 至 %s，%s 已入职下一段，粗查）",
+                            String.format("时间线疑似有 %d 个月空窗（段间：%s 至 %s，%s 已入职下一段，粗查）",
                                     gap, YearMonth.from(prevEnd.plusMonths(1)),
-                                    nextStart.minusMonths(1), nextStart)));
+                                    nextStart.minusMonths(1), nextStart)
+                                    + GAP_ACTIONABLE_ADVICE));
                 }
             }
             if (prevEnd == null || range[1].isAfter(prevEnd)) {
@@ -112,12 +129,14 @@ public class RedFlagChecker {
                             && ResumeDateParser.isOpenEnded(lastLineContaining(resumeText, r)));
                     if (covered) {
                         flags.add(new RedFlag(RedFlag.EMPLOYMENT_GAP_COVERED, RedFlag.Severity.LOW,
-                                String.format("最后一段雇佣 %s 结束，至今约 %d 个月，粗查显示有开放经历覆盖"
-                                        + "——面试必问，备好口径", last[1], months)));
+                                String.format("最后一段雇佣 %s 结束，至今约 %d 个月（尾部：有项目覆盖），粗查显示有开放经历覆盖"
+                                        + "——面试必问，备好口径", last[1], months)
+                                        + COVERED_TRAILING_ADVICE));
                     } else {
                         flags.add(new RedFlag(RedFlag.TRAILING_GAP, RedFlag.Severity.MEDIUM,
-                                String.format("最后一段经历 %s 结束至今约 %d 个月且无覆盖（粗查）——初筛必问",
-                                        last[1], months)));
+                                String.format("最后一段经历 %s 结束至今约 %d 个月（尾部：无覆盖，粗查）——初筛必问",
+                                        last[1], months)
+                                        + GAP_ACTIONABLE_ADVICE));
                     }
                 }
             }
@@ -212,8 +231,9 @@ public class RedFlagChecker {
                 // 下段开始日不是空窗，写进区间会被读成"空窗持续到入职月"（线上被用户判错）
                 YearMonth nextStart = YearMonth.from(periods.get(i)[0]);
                 flags.add(new RedFlag(RedFlag.TIMELINE_GAP, severity,
-                        String.format("时间线有 %d 个月空窗（%s 至 %s，%s 已入职下一段）", gap,
-                                YearMonth.from(prevEndExclusive), nextStart.minusMonths(1), nextStart)));
+                        String.format("时间线有 %d 个月空窗（段间：%s 至 %s，%s 已入职下一段）", gap,
+                                YearMonth.from(prevEndExclusive), nextStart.minusMonths(1), nextStart)
+                                + GAP_ACTIONABLE_ADVICE));
             }
         }
         return flags;
@@ -265,13 +285,15 @@ public class RedFlagChecker {
                 && coversLeaving(p, lastEmpEnd));
         if (covered) {
             return new RedFlag(RedFlag.EMPLOYMENT_GAP_COVERED, RedFlag.Severity.LOW,
-                    String.format("最后一段雇佣 %s 结束，至今约 %d 个月，期间有项目/独立经历覆盖——不是空窗，"
-                            + "但面试必问：备好项目成果数据与回归就业的口径", lastEmpEnd, months));
+                    String.format("最后一段雇佣 %s 结束，至今约 %d 个月（尾部：有项目覆盖），期间有项目/独立经历覆盖——不是空窗，"
+                            + "但面试必问：备好项目成果数据与回归就业的口径", lastEmpEnd, months)
+                            + COVERED_TRAILING_ADVICE);
         }
         RedFlag.Severity severity = months > GAP_HIGH_MONTHS ? RedFlag.Severity.HIGH : RedFlag.Severity.MEDIUM;
         return new RedFlag(RedFlag.TRAILING_GAP, severity,
-                String.format("最后一段雇佣 %s 结束至今已约 %d 个月且无覆盖——初筛必问，简历或面试需备口径",
-                        lastEmpEnd, months));
+                String.format("最后一段雇佣 %s 结束至今已约 %d 个月（尾部：无覆盖）——初筛必问，简历或面试需备口径",
+                        lastEmpEnd, months)
+                        + GAP_ACTIONABLE_ADVICE);
     }
 
     private static boolean coversLeaving(ResumeEntity p, LocalDate leavingEnd) {
@@ -381,5 +403,24 @@ public class RedFlagChecker {
                             ratio * 100, entities.getMetrics().size(), claims.size()));
         }
         return null;
+    }
+
+    /** 红旗词表资源（lexicons/screening-lexicon.json），字段名与 JSON 键一致。 */
+    record ScreeningLexicon(List<String> seniorTitleMarkers, List<String> educationMarkers) {
+
+        static ScreeningLexicon load() {
+            try {
+                String json = new ClassPathResource("lexicons/screening-lexicon.json")
+                        .getContentAsString(StandardCharsets.UTF_8);
+                ScreeningLexicon lexicon = new ObjectMapper().readValue(json, ScreeningLexicon.class);
+                if (lexicon == null || lexicon.seniorTitleMarkers().isEmpty()
+                        || lexicon.educationMarkers().isEmpty()) {
+                    throw new IllegalStateException("screening lexicon groups must not be empty");
+                }
+                return lexicon;
+            } catch (IOException ex) {
+                throw new IllegalStateException("screening lexicon missing or unreadable", ex);
+            }
+        }
     }
 }

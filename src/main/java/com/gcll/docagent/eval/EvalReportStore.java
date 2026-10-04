@@ -50,6 +50,19 @@ public class EvalReportStore {
         }
     }
 
+    /** 稳定性报告落盘（stability- 前缀，与 golden 报告同目录、list 可见）。 */
+    public String saveStability(StabilityMeasurer.StabilityReport report) {
+        try {
+            Files.createDirectories(dir);
+            String id = "stability-" + TS.format(Instant.now());
+            Files.writeString(dir.resolve(id + ".json"), objectMapper.writeValueAsString(report));
+            return id;
+        } catch (IOException ex) {
+            log.warn("Failed to persist stability report: {}", ex.getMessage());
+            return null;
+        }
+    }
+
     public List<String> list() {
         if (!Files.isDirectory(dir)) {
             return List.of();

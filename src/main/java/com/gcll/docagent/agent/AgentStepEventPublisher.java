@@ -48,6 +48,34 @@ public class AgentStepEventPublisher {
         }
     }
 
+    /**
+     * 流式 token 增量事件（2026-09-18）：LLM 流式输出逐段推给前端，
+     * 前端按 runId/stepId 拼接到“实时生成”面板。空增量不发送。
+     */
+    public void publishToken(String runId, String stepId, String delta) {
+        if (delta == null || delta.isEmpty()) {
+            return;
+        }
+        List<SseEmitter> runEmitters = emitters.get(runId);
+        if (runEmitters == null) {
+            return;
+        }
+        for (SseEmitter emitter : runEmitters) {
+            try {
+                emitter.send(SseEmitter.event()
+                        .name("token")
+                        .data(Map.of(
+                                "runId", runId,
+                                "stepId", stepId == null ? "" : stepId,
+                                "delta", delta,
+                                "timestamp", System.currentTimeMillis()
+                        )));
+            } catch (IOException | IllegalStateException ex) {
+                remove(runId, emitter);
+            }
+        }
+    }
+
     private void remove(String runId, SseEmitter emitter) {
         List<SseEmitter> runEmitters = emitters.get(runId);
         if (runEmitters != null) {

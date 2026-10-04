@@ -42,11 +42,6 @@ export interface ResumeProfile {
   education: EducationEntry[];
 }
 
-export interface QualityScore {
-  overall: number;
-  dimensions: Record<string, number>;
-}
-
 export interface ActionableSuggestion {
   severity: 'HIGH' | 'MEDIUM' | 'LOW';
   target: string;
@@ -54,20 +49,6 @@ export interface ActionableSuggestion {
   before: string;
   after: string;
   reason: string;
-}
-
-export interface EnhancedKeyPoint {
-  point: string;
-  evidence: string;
-  sectionId: string | null;
-  interviewValue: string;
-}
-
-export interface EnhancedRisk {
-  risk: string;
-  detail: string;
-  sectionId: string | null;
-  challengeAngle: string;
 }
 
 // ---- P12 漏斗式结论类型 ----
@@ -78,41 +59,11 @@ export interface RedFlag {
   message: string;
 }
 
-export interface MustHaveCoverage {
-  requirementId: string;
-  requirement: string;
-  status: 'MET' | 'PARTIAL' | 'MISSING';
-  evidence: string | null;
-  sectionId: string | null;
-}
-
-export interface VariantFit {
-  variantId: string;
-  name: string;
-  fit: 'HIGH' | 'MEDIUM' | 'LOW';
-  reason: string;
-}
-
-export interface VocabularyGap {
-  term: string;
-  usedSynonym: string;
-  suggestion: string;
-}
-
 export interface PositioningCheck {
   anchored: boolean;
   currentAnchor: string | null;
   suggestedAnchor: string | null;
   comment: string | null;
-}
-
-export interface ExperienceStrength {
-  sectionId: string | null;
-  entryRef: string | null;
-  star: Record<string, boolean> | null;
-  resultQuality: 'NONE' | 'TASK' | 'PROJECT' | 'BUSINESS' | null;
-  attribution: 'OBSERVER' | 'PARTICIPANT' | 'OWNER' | 'LEAD' | null;
-  concern: string | null;
 }
 
 export interface StrengthStats {
@@ -130,37 +81,46 @@ export interface Presentation {
   issues: string[];
 }
 
-export interface LeverageCard {
-  kind: 'STRENGTH' | 'RISK';
-  point: string;
-  sectionId: string | null;
-  likelyQuestion: string | null;
-  prepHint: string | null;
-  defenseStrategy: string | null;
-}
-
 export interface FunnelVerdict {
   redFlags: RedFlag[] | null;
   matchMode: 'JD' | 'DIRECTION' | 'NONE';
   archetypeId: string | null;
-  mustHaveCoverage: MustHaveCoverage[] | null;
-  variantFit: VariantFit[] | null;
-  vocabularyGaps: VocabularyGap[] | null;
   positioning: PositioningCheck | null;
-  experienceStrength: ExperienceStrength[] | null;
   strength: StrengthStats | null;
   presentation: Presentation | null;
-  leverageCards: LeverageCard[] | null;
   analysisDegraded: boolean;
-  groundingFindings?: GroundingFinding[] | null;
   /** 定性评价（v6）；历史 run 无此字段 */
   evaluation?: Evaluation | null;
+  /** 无 JD 时从简历自身证据推断的方向建议；tier 由后端按证据强度判定 */
+  recommendedDirections?: DirectionRecommendation[] | null;
+  /** 只展示由证据探索器补充并通过原文锚定的结果证据。 */
+  evidenceAssessments?: EvidenceAssessment[] | null;
+}
+
+export interface EvidenceAssessment {
+  claim: string;
+  sectionId: string | null;
+  sourceQuote: string;
+  evidenceLevel: 'L0_KEYWORD' | 'L1_ACTIVITY' | 'L2_METHOD' | 'L3_RESULT' | 'L4_TRADE_OFF';
+  evidenceFound: string[];
+  missingFacts: string[];
+  evidenceSource?: 'RULE' | 'REACT' | string;
+}
+
+export interface DirectionRecommendation {
+  direction: string;
+  tier: 'BEST_FIT' | 'STRETCH';
+  evidence: string[];
+  sectionId: string | null;
 }
 
 /** 维度评语：档位由代码侧计算，评语归 LLM */
 export interface EvaluationDimension {
   dimension: string;
+  level?: 'STRONG' | 'MEDIUM' | 'WEAK' | 'UNKNOWN' | string;
   comment: string;
+  evidence?: string[];
+  issueType?: 'CAPABILITY_GAP' | 'EVIDENCE_INSUFFICIENT' | 'EXPRESSION_PROBLEM' | 'IRRELEVANT_TO_TARGET' | 'NONE' | string;
 }
 
 export interface Evaluation {
@@ -170,10 +130,47 @@ export interface Evaluation {
   weaknesses: string[] | null;
 }
 
-export interface GroundingFinding {
-  type: 'FABRICATED_NUMBER' | 'UNGROUNDED_BEFORE';
-  ref: string;
-  detail: string;
+// ---- 迭代报告类型（确定性 diff，纯代码零 token） ----
+
+export type LandingStatus = 'LANDED' | 'NOT_LANDED' | 'INDETERMINATE';
+
+export interface SuggestionLanding {
+  target: string;
+  status: LandingStatus;
+}
+
+export interface DimensionChange {
+  dimension: string;
+  levelBefore: string | null;
+  levelAfter: string | null;
+}
+
+/** degraded=true 表示缺基线/基线结果不全——"非真实迭代对比"，前端只提示不编造差异 */
+export interface IterationReport {
+  baseRunId: string | null;
+  newRunId: string;
+  degraded: boolean;
+  redFlagsAdded: RedFlag[];
+  redFlagsRemoved: RedFlag[];
+  strengthBandBefore: string | null;
+  strengthBandAfter: string | null;
+  presentationScoreBefore: number | null;
+  presentationScoreAfter: number | null;
+  positioningChanged: boolean;
+  positioningBefore: string | null;
+  positioningAfter: string | null;
+  dimensionChanges: DimensionChange[];
+  suggestionLandings: SuggestionLanding[];
+}
+
+/** 基线候选：用户再分析前手动选定"上一版"，系统绝不自动绑定 */
+export interface BaselineCandidate {
+  runId: string;
+  fileName: string | null;
+  promptVersion: string | null;
+  scoreOverall: number | null;
+  targetDirection: string | null;
+  createdAt: string;
 }
 
 // ---- 校准对照类型（53→75 的证据链） ----
@@ -232,44 +229,16 @@ export interface AppliedRevision {
   changedSectionIds: string[];
 }
 
-// ---- JD 匹配类型 ----
-
-export interface MatchDimension {
-  name: string;
-  level: '高' | '中' | '低';
-  reason: string;
-}
-
-export interface Gap {
-  requirement: string;
-  gap: string;
-  suggestion: string;
-}
-
-export interface InterviewQuestion {
-  question: string;
-  intent: string;
-  suggestedAnswer: string;
-  isGapPrep: boolean;
-}
-
 export interface AnalysisResult {
   summary: string;
   keyPoints: string[];
   risks: string[];
-  suggestions: string[];
   citations: Citation[];
-  // JD 匹配（resume-review + JD 时产出）
-  matchDimensions?: MatchDimension[] | null;
-  gaps?: Gap[] | null;
-  interviewQuestions?: InterviewQuestion[] | null;
-  // 简历深度分析（resume-review skill 产出）
+  // 候选人画像
   profile?: ResumeProfile | null;
-  qualityScore?: QualityScore | null;
+  // 可执行建议（before→after）
   actionableSuggestions?: ActionableSuggestion[] | null;
-  enhancedKeyPoints?: EnhancedKeyPoint[] | null;
-  enhancedRisks?: EnhancedRisk[] | null;
-  // P12 漏斗式结论（新主结果；历史 run 为 null）
+  // P12 漏斗式结论（主结果）
   funnelVerdict?: FunnelVerdict | null;
 }
 
@@ -278,17 +247,25 @@ export interface RunStart {
   status: string;
 }
 
+/** 简历档案条目（历史简历——免上传再分析的数据源） */
+export interface ResumeItem {
+  id: string;
+  fileName: string | null;
+  fileType: string | null;
+  charCount: number | null;
+  runCount: number | null;
+  createdAt: string;
+  lastUsedAt: string;
+}
+
 export interface RunSummary {
   runId: string;
   fileName: string;
-  fileType: string;
   skill: string | null;
   instruction: string;
   status: string;
   executionMode: string | null;
-  sectionCount: number | null;
   createdAt: string;
-  finishedAt: string | null;
 }
 
 export interface HumanActionDto {
@@ -302,6 +279,7 @@ export interface HumanActionDto {
 }
 
 export interface RunDetail extends RunSummary {
+  finishedAt: string | null;
   summary: string | null;
   result: AnalysisResult | null;
   lastError: string | null;
@@ -382,9 +360,18 @@ export interface StepEvent {
   timestamp: number;
 }
 
+/** SSE token 事件（LLM 流式增量，2026-09-18） */
+export interface TokenEvent {
+  runId: string;
+  stepId: string;
+  delta: string;
+  timestamp: number;
+}
+
 export const analysisApi = {
+  /** 提交分析：file 与 opts.resumeId 二选一（免上传用 resumeId）；forceRefresh 跳过结论缓存强制重跑；baseRunId 显式绑定迭代基线（不传即不绑定，走全量） */
   submit(
-    file: File,
+    file: File | null,
     instruction: string,
     skill?: string,
     jobDescription?: string,
@@ -392,9 +379,10 @@ export const analysisApi = {
     persona?: string,
     promptVersion?: string,
     optimizationNote?: string,
+    opts?: { resumeId?: string; forceRefresh?: boolean; baseRunId?: string },
   ): Promise<RunStart> {
     const form = new FormData();
-    form.append('file', file);
+    if (file) form.append('file', file);
     form.append('instruction', instruction);
     if (skill) form.append('skill', skill);
     if (jobDescription) form.append('jobDescription', jobDescription);
@@ -402,7 +390,15 @@ export const analysisApi = {
     if (persona) form.append('persona', persona);
     if (promptVersion) form.append('promptVersion', promptVersion);
     if (optimizationNote) form.append('optimizationNote', optimizationNote);
+    if (opts?.resumeId) form.append('resumeId', opts.resumeId);
+    if (opts?.forceRefresh) form.append('forceRefresh', 'true');
+    if (opts?.baseRunId) form.append('baseRunId', opts.baseRunId);
     return request.upload('/api/analysis/runs', form);
+  },
+
+  /** 简历档案列表（最近使用在前） */
+  listResumes(): Promise<ResumeItem[]> {
+    return request.get('/api/analysis/resumes');
   },
 
   confirmAction(id: string): Promise<void> {
@@ -467,16 +463,28 @@ export const analysisApi = {
   getMessages(runId: string): Promise<MessageDto[]> {
     return request.get(`/api/analysis/runs/${runId}/messages`);
   },
+
+  /** 迭代报告：run 绑定了基线时返回确定性 diff，否则返回 degraded（非真实迭代对比） */
+  getIterationReport(runId: string): Promise<IterationReport> {
+    return request.get(`/api/analysis/runs/${runId}/iteration`);
+  },
+
+  /** 基线候选（新→旧）：仅供用户手动选定"上一版"，选中后提交时回传 baseRunId 才建立血缘 */
+  getBaselineCandidates(limit = 10): Promise<BaselineCandidate[]> {
+    return request.get(`/api/analysis/baseline-candidates?limit=${limit}`);
+  },
 };
 
 /**
  * 订阅 run 的步骤流（EventSource）。
  * 返回关闭函数。onEvent 收到的是"合并视图"——同一步骤的 RUNNING 与终态按 stepId 更新。
+ * onToken（可选）接收 LLM 流式增量（DIRECT_LLM 实时生成）。
  */
 export function subscribeSteps(
   runId: string,
   onEvent: (event: StepEvent) => void,
   onError?: (message: string) => void,
+  onToken?: (event: TokenEvent) => void,
 ): () => void {
   const source = new EventSource(`${SSE_BASE}/api/analysis/runs/${runId}/stream`);
   source.addEventListener('step', (e) => {
@@ -486,6 +494,15 @@ export function subscribeSteps(
       // 忽略畸形事件
     }
   });
+  if (onToken) {
+    source.addEventListener('token', (e) => {
+      try {
+        onToken(JSON.parse((e as MessageEvent).data) as TokenEvent);
+      } catch {
+        // 忽略畸形事件
+      }
+    });
+  }
   source.onerror = () => {
     // EventSource 断开会自动重连；这里只上报，由调用方决定是否轮询兜底
     onError?.('SSE 连接中断，将按轮询兜底');

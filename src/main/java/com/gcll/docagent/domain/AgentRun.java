@@ -32,6 +32,10 @@ public class AgentRun {
     private String optimizationNote;
     private Integer scoreOverall;
     private String scoreDimensions;
+    /** 简历内容哈希——关联 resume_profile 档案与文档视图兜底 */
+    private String contentHash;
+    /** 谱系基线：本次分析对照的上一版 run id。仅在用户显式确认时写入，系统绝不自动绑定。 */
+    private String baseRunId;
     private Instant startedAt;
     private Instant finishedAt;
     private String idempotencyKey;
@@ -128,6 +132,12 @@ public class AgentRun {
 
     public String getScoreDimensions() { return scoreDimensions; }
     public void setScoreDimensions(String scoreDimensions) { this.scoreDimensions = scoreDimensions; }
+
+    public String getContentHash() { return contentHash; }
+    public void setContentHash(String contentHash) { this.contentHash = contentHash; }
+
+    public String getBaseRunId() { return baseRunId; }
+    public void setBaseRunId(String baseRunId) { this.baseRunId = baseRunId; }
 
     public Instant getStartedAt() { return startedAt; }
     public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }
