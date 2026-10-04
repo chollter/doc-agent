@@ -2,6 +2,7 @@ import { AlertTriangle, Bookmark, Briefcase, ClipboardList, GraduationCap, Light
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AnalysisResult, Evaluation, ResumeProfile, SkillMatrix, FunnelVerdict } from '../api/analysis';
+import IterationSection from './IterationSection';
 
 function ModeBadge({ mode }: { mode: string | null | undefined }) {
   if (!mode) return null;
@@ -381,9 +382,10 @@ function FunnelVerdictSection({ verdict, onCitation }: {
 }
 
 /** 简历专属分析报告 */
-export default function ResumeReportCard({ result, mode, onCitation }: {
+export default function ResumeReportCard({ result, mode, runId, onCitation }: {
   result: AnalysisResult;
   mode: string | null | undefined;
+  runId?: string | null;
   onCitation?: (sectionId: string) => void;
 }) {
   const hasProfile = result.profile != null;
@@ -400,6 +402,9 @@ export default function ResumeReportCard({ result, mode, onCitation }: {
 
       {/* P12 漏斗式结论（新主结果，按"会死在哪一关"排序） */}
       {result.funnelVerdict && <FunnelVerdictSection verdict={result.funnelVerdict} onCitation={onCitation} />}
+
+      {/* 迭代对比：仅当能定位到具体 run 时懒加载确定性 diff（未绑定基线只提示，不编造差异） */}
+      {runId && <IterationSection runId={runId} />}
 
       {/* 候选人画像（LLM 总结；判断在结论区顶部的一句话裁决，不再混在一起） */}
       {/* evaluation.overall 与 summary 是同一裁决，避免重复渲染。 */}

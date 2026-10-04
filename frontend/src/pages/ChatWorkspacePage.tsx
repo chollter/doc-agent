@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  GitCompare,
   History,
   Loader2,
   RotateCcw,
@@ -13,10 +14,12 @@ import {
   type ActionableSuggestion,
   type AnalysisResult,
   type AuditStep,
+  type BaselineCandidate,
   type FunnelVerdict,
   type ResumeItem,
 } from '../api/analysis';
 import ExecutionChain from '../components/ExecutionChain';
+import IterationSection from '../components/IterationSection';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -24,7 +27,7 @@ import remarkGfm from 'remark-gfm';
 type ChatMessage =
   | { id: string; role: 'user'; text: string }
   | { id: string; role: 'assistant'; text: string }
-  | { id: string; role: 'report'; result: AnalysisResult | null; mode: string | null; round: number }
+  | { id: string; role: 'report'; result: AnalysisResult | null; mode: string | null; round: number; runId: string }
   | { id: string; role: 'compare'; before: FunnelVerdict; after: FunnelVerdict };
 
 let seq = 0;
@@ -235,9 +238,10 @@ function AnchoredConclusion({ text, anchors }: { text: string; anchors: Citation
 }
 
 /** 报告消息（精简版）：总评 → 先处理 → 可以主打 → 改法卡片 → 页脚倒金字塔；维度判断融进总评叙事，不单独成块 */
-function ReportBubble({ result, mode, onReanalyze }: {
+function ReportBubble({ result, mode, runId, onReanalyze }: {
   result: AnalysisResult | null;
   mode: string | null;
+  runId: string;
   onReanalyze?: () => void;
 }) {
   const verdict = result?.funnelVerdict ?? null;
@@ -338,6 +342,7 @@ function ReportBubble({ result, mode, onReanalyze }: {
           ))}
         </div>
       )}
+      <IterationSection runId={runId} />
       {foot.length > 0 && (
         <div className="mt-2 border-t border-slate-100 pt-1.5 text-[11px] leading-5 text-slate-400">
           {foot.join(' ｜ ')}
@@ -411,13 +416,19 @@ export default function ChatWorkspacePage() {
   const [selectedResumeId, setSelectedResumeId] = useState<string | null>(null);
   // 最近一次提交来源（文件/历史简历）——"重新分析"按原来源强制重跑
   const [lastSubmit, setLastSubmit] = useState<{ file: File | null; resumeId: string | null }>({ file: null, resumeId: null });
+  // 迭代基线：候选列表供手动选定"上一版"，默认不绑定——与后端"不静默绑定"同一血缘口径
+  const [candidates, setCandidates] = useState<BaselineCandidate[]>([]);
+  const [baseRunId, setBaseRunId] = useState<string | null>(null);
 
   const selectedResume = resumes.find((r) => r.id === selectedResumeId) ?? null;
 
   const refreshResumes = useCallback(() => {
     analysisApi.listResumes().then(setResumes).catch(() => {});
   }, []);
-  useEffect(() => { refreshResumes(); }, [refreshResumes]);
+  const refreshCandidates = useCallback(() => {
+    analysisApi.getBaselineCandidates().then(setCandidates).catch(() => {});
+  }, []);
+  useEffect(() => { refreshResumes(); refreshCandidates(); }, [refreshResumes, refreshCandidates]);
 
   const closeStreamRef = useRef<(() => void) | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -499,8 +510,11 @@ export default function ChatWorkspacePage() {
                 result: d.result,
                 mode: d.executionMode,
                 round: 0,
+                runId,
               },
             ]);
+            // 本次 run 完成即成为新的基线候选（新→旧排在最前）
+            refreshCandidates();
           }
         } else if (d.status === 'FAILED') {
           cleanup();
@@ -512,7 +526,7 @@ export default function ChatWorkspacePage() {
         /* 下一轮轮询兜底 */
       }
     }, 2000);
-  }, [cleanup]);
+  }, [cleanup, refreshCandidates]);
 
   /** 提交分析。forceRefresh=true：按最近一次提交的来源强制重跑（跳过结论缓存），完成后覆盖缓存并出对比 */
   const start = async (forceRefresh = false) => {
@@ -534,7 +548,7 @@ export default function ChatWorkspacePage() {
         persona || undefined,
         undefined,
         undefined,
-        { resumeId: useResumeId ?? undefined, forceRefresh },
+        { resumeId: useResumeId ?? undefined, forceRefresh, baseRunId: baseRunId ?? undefined },
       );
       setLastRunId(runId);
       setLastSubmit({ file: useFile, resumeId: useResumeId });
@@ -592,6 +606,7 @@ export default function ChatWorkspacePage() {
             if (f) {
               setFile(f);
               setSelectedResumeId(null);
+              setBaseRunId(null);
             }
           }}
           className={`flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed p-5 text-center transition-colors ${
@@ -608,6 +623,7 @@ export default function ChatWorkspacePage() {
             onChange={(e) => {
               setFile(e.target.files?.[0] ?? null);
               setSelectedResumeId(null);
+              setBaseRunId(null);
             }}
             className="hidden"
             id="chat-file-input"
@@ -634,6 +650,7 @@ export default function ChatWorkspacePage() {
                       setSelectedResumeId(r.id);
                       setFile(null);
                     }
+                    setBaseRunId(null);
                   }}
                   className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition-colors ${
                     selectedResumeId === r.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -644,6 +661,31 @@ export default function ChatWorkspacePage() {
                   </span>
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {candidates.length > 0 && (
+          <div className="rounded-2xl border border-slate-200 bg-white p-3">
+            <div className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-500">
+              <GitCompare size={13} /> 迭代基线（可选）
+            </div>
+            <select
+              value={baseRunId ?? ''}
+              onChange={(e) => setBaseRunId(e.target.value || null)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 outline-none focus:border-indigo-400"
+            >
+              <option value="">不绑定基线（默认——非迭代对比）</option>
+              {candidates.map((c) => (
+                <option key={c.runId} value={c.runId}>
+                  {c.fileName ?? '未命名'} · {c.promptVersion ?? '—'} · {new Date(c.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </option>
+              ))}
+            </select>
+            <div className="mt-1 text-[10px] leading-4 text-slate-400">
+              {baseRunId
+                ? '已绑定：本次将按血缘重评变化区域，未重评维度沿用基线并挂血缘。'
+                : '选中"上一版"后本次才是真实迭代对比——系统不自动挑基线。'}
             </div>
           </div>
         )}
@@ -731,6 +773,7 @@ export default function ChatWorkspacePage() {
                   key={m.id}
                   result={m.result}
                   mode={m.mode}
+                  runId={m.runId}
                   onReanalyze={running ? undefined : () => start(true)}
                 />
               );

@@ -462,7 +462,7 @@ export default function AnalysisPage() {
       <div className="col-span-5 flex min-w-0 flex-col gap-4 overflow-y-auto">
         {detail?.result && (
           detail.skill === 'resume-review'
-            ? <ResumeReportCard result={detail.result} mode={detail.executionMode} onCitation={setHighlight} />
+            ? <ResumeReportCard result={detail.result} mode={detail.executionMode} runId={detail.runId} onCitation={setHighlight} />
             : <ReportCard result={detail.result} mode={detail.executionMode} onCitation={setHighlight} />
         )}
 

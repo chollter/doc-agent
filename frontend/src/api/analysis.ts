@@ -130,6 +130,49 @@ export interface Evaluation {
   weaknesses: string[] | null;
 }
 
+// ---- 迭代报告类型（确定性 diff，纯代码零 token） ----
+
+export type LandingStatus = 'LANDED' | 'NOT_LANDED' | 'INDETERMINATE';
+
+export interface SuggestionLanding {
+  target: string;
+  status: LandingStatus;
+}
+
+export interface DimensionChange {
+  dimension: string;
+  levelBefore: string | null;
+  levelAfter: string | null;
+}
+
+/** degraded=true 表示缺基线/基线结果不全——"非真实迭代对比"，前端只提示不编造差异 */
+export interface IterationReport {
+  baseRunId: string | null;
+  newRunId: string;
+  degraded: boolean;
+  redFlagsAdded: RedFlag[];
+  redFlagsRemoved: RedFlag[];
+  strengthBandBefore: string | null;
+  strengthBandAfter: string | null;
+  presentationScoreBefore: number | null;
+  presentationScoreAfter: number | null;
+  positioningChanged: boolean;
+  positioningBefore: string | null;
+  positioningAfter: string | null;
+  dimensionChanges: DimensionChange[];
+  suggestionLandings: SuggestionLanding[];
+}
+
+/** 基线候选：用户再分析前手动选定"上一版"，系统绝不自动绑定 */
+export interface BaselineCandidate {
+  runId: string;
+  fileName: string | null;
+  promptVersion: string | null;
+  scoreOverall: number | null;
+  targetDirection: string | null;
+  createdAt: string;
+}
+
 // ---- 校准对照类型（53→75 的证据链） ----
 
 export interface OptimizationHistoryItem {
@@ -326,7 +369,7 @@ export interface TokenEvent {
 }
 
 export const analysisApi = {
-  /** 提交分析：file 与 opts.resumeId 二选一（免上传用 resumeId）；forceRefresh 跳过结论缓存强制重跑 */
+  /** 提交分析：file 与 opts.resumeId 二选一（免上传用 resumeId）；forceRefresh 跳过结论缓存强制重跑；baseRunId 显式绑定迭代基线（不传即不绑定，走全量） */
   submit(
     file: File | null,
     instruction: string,
@@ -336,7 +379,7 @@ export const analysisApi = {
     persona?: string,
     promptVersion?: string,
     optimizationNote?: string,
-    opts?: { resumeId?: string; forceRefresh?: boolean },
+    opts?: { resumeId?: string; forceRefresh?: boolean; baseRunId?: string },
   ): Promise<RunStart> {
     const form = new FormData();
     if (file) form.append('file', file);
@@ -349,6 +392,7 @@ export const analysisApi = {
     if (optimizationNote) form.append('optimizationNote', optimizationNote);
     if (opts?.resumeId) form.append('resumeId', opts.resumeId);
     if (opts?.forceRefresh) form.append('forceRefresh', 'true');
+    if (opts?.baseRunId) form.append('baseRunId', opts.baseRunId);
     return request.upload('/api/analysis/runs', form);
   },
 
@@ -418,6 +462,16 @@ export const analysisApi = {
   /** 消息历史（面试对话回放） */
   getMessages(runId: string): Promise<MessageDto[]> {
     return request.get(`/api/analysis/runs/${runId}/messages`);
+  },
+
+  /** 迭代报告：run 绑定了基线时返回确定性 diff，否则返回 degraded（非真实迭代对比） */
+  getIterationReport(runId: string): Promise<IterationReport> {
+    return request.get(`/api/analysis/runs/${runId}/iteration`);
+  },
+
+  /** 基线候选（新→旧）：仅供用户手动选定"上一版"，选中后提交时回传 baseRunId 才建立血缘 */
+  getBaselineCandidates(limit = 10): Promise<BaselineCandidate[]> {
+    return request.get(`/api/analysis/baseline-candidates?limit=${limit}`);
   },
 };
 
